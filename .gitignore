@@ -1,0 +1,15 @@
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+benchmarks/raw/*
+!benchmarks/raw/.gitkeep
+benchmarks/reviews/
+benchmarks/results/
+*.keystore
+*.jks
