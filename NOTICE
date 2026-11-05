@@ -1,0 +1,9 @@
+PhoneCam OBS original source is licensed under GPL-2.0-or-later.
+See LICENSE for the GNU General Public License version 2 text.
+
+The generated Gradle wrapper is distributed by the Gradle project under
+the Apache License 2.0; its script headers retain the original notice.
+The wrapper JAR is generated from the checksum-verified Gradle 8.13 distribution.
+
+Android, Kotlin, Gradle, OBS, scrcpy and FFmpeg are external development or
+benchmark tools. No OBS or scrcpy source has been copied into this prototype.

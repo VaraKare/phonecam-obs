@@ -35,3 +35,5 @@ Android 10+ is the API minimum, not a universal compatibility guarantee. Profile
 Reference Mac during development: Apple M1, macOS 26.6.2, OBS 33.0.0. The supplied Vivo model will be confirmed from the device at the first physical test. No phone was available during initial implementation.
 
 See [plan](docs/PLAN.md), [phase tracker](docs/PHASES.md), [branch workflow](CONTRIBUTING.md), and [data handling](docs/DATA.md).
+
+Original source: GPL-2.0-or-later; see LICENSE and NOTICE for third-party tooling notices.
