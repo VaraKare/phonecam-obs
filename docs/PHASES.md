@@ -5,17 +5,19 @@ Update evidence and status together. A build or synthetic test cannot pass a phy
 | Milestone | Status | Evidence required |
 |---|---|---|
 | Repository and tooling | Software implemented and locally checked | APK, tests, lint; CI configured, not yet run remotely |
-| Capability scanner | First physical scan succeeded on Vivo V2437 / Android 16; capture validation pending | Actual phone report collected; supported capture still required |
-| Camera-quality research | Probe and review tooling implemented; experiment pending | Four scenes, three winning repeats, blind review, frame timing |
+| Capability scanner | Physical scan and first rear-camera 1080p30 H.264 recordings succeeded on Vivo V2437 / Android 16 | Raw reports and two decoded recordings collected; other profiles remain unverified |
+| Camera-quality research | Capture path confirmed; controlled comparison pending | Four scenes, three winning repeats, blind review, frame timing |
 | USB to OBS feasibility | Blocked by quality gate | Same-profile optical p95 below 100 ms |
 | Video reliability | Not started | Two hours, 20 reconnects, no accumulating resources |
 | Audio | Not started | Within 33 ms for one hour |
 | Broader device qualification | Not started | Vivo plus two manufacturers |
 | Public alpha | Not started | Clean-Mac install and distribution tests |
 
-Current gate decision: **inconclusive — first device scan collected, recording and comparison footage pending**. Do not build later milestones around an assumed pass.
+Current gate decision: **inconclusive — two valid smoke-test recordings collected; matched stock/scrcpy footage and quality review pending**. Do not build later milestones around an assumed pass.
 
 Physical evidence: [Vivo V2437 capability scan](research/VIVO_V2437_CAPABILITIES.md). No quality or latency gate has passed.
+
+Capture evidence: [First recording results](research/VIVO_V2437_FIRST_RECORDINGS.md). The actual initial profile requested 5 Mb/s, not the planned 10 Mb/s.
 
 ## Current working folder
 
