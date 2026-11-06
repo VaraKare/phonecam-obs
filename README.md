@@ -1,8 +1,8 @@
 # PhoneCam OBS
 
-Research toward using an Android phone as a native camera source in OBS on a Mac, over USB. **The current deliverable is a camera capability scanner and recording probe, not an OBS plugin.** No device is verified yet.
+Research toward using an Android phone as a native camera source in OBS on a Mac, over USB. **The research build includes a capability scanner, recording probe, and experimental native OBS USB source.** No device is verified yet.
 
-The first question is whether an ordinary Android app can approach the stock camera's normal video quality. Only a passing quality experiment permits the USB-to-OBS latency experiment. A public product requires both targets at the same settings.
+The first question is whether an ordinary Android app can approach the stock camera's normal video quality. On 6 November 2026 the user elected to begin USB-to-OBS research before completing the controlled quality comparison. This changes the research sequence, not the acceptance criteria: a public product still requires both targets at the same settings.
 
 ## Build
 
@@ -28,11 +28,15 @@ The APK is `app/build/outputs/apk/debug/app-debug.apk`. It is a debug-signed res
 
 Recordings live in the app's private `files/benchmarks` directory until **Delete benchmark files** or uninstall. Collection copies files; it does not delete them. The app displays paths and deletion results. There is no background recording, microphone capture, or network permission.
 
+## Experimental USB live mode
+
+Follow [USB live setup](docs/USB_LIVE.md). Native code currently targets Apple Silicon and OBS 33.0.0 or 33.0.1, using Apple command-line tools. Build/install the plugin with `python3 tools/build_native.py --install`; prepare forwarding with `python3 tools/live.py prepare`. Add **PhoneCam USB (Research)** to an OBS scene, then tap **Start USB live** in the foreground phone app. Live mode saves no media and uses no Internet permission.
+
 ## Status and support
 
 Android 10+ is the API minimum, not a universal compatibility guarantee. Profiles are **compatible, unverified** until physically tested, **limited** only with explicit opt-in, or **unsupported** with a reason. A verified label requires the complete quality, optical-latency, and stability evidence; this probe does not assign it.
 
-Reference Mac during development: Apple M1, macOS 26.6.2, OBS 33.0.0. The supplied Vivo model will be confirmed from the device at the first physical test. No phone was available during initial implementation.
+Reference Mac during development: Apple M1, macOS 26.6.2, OBS 33.0.1 (initially 33.0.0). The reference Vivo identifies itself as V2437, Android 16. Short rear 1080p30 AVC/HEVC recordings succeeded, including applied HIGH_QUALITY processing; controlled quality, live optical latency, and sustained reliability remain unverified.
 
 See [plan](docs/PLAN.md), [phase tracker](docs/PHASES.md), [branch workflow](CONTRIBUTING.md), and [data handling](docs/DATA.md).
 

@@ -6,6 +6,10 @@ Separate repository; Android 10+ and Apple Silicon Mac first. ADB over USB is ac
 
 The reference phone must approach stock **normal SDR rear-camera video** and reach optical latency p95 below 100 ms at the same profile before a full product commitment. Older phones may opt into limited modes. Stock HDR/beauty/night processing, iPhone, Windows/Linux, Wi-Fi, virtual camera, multiple phones, SwiftUI and installers are later investigations.
 
+## Research sequencing exception — 6 November 2026
+
+After confirming AVC/HEVC capture and applied HIGH_QUALITY processing, the user explicitly requested proceeding with USB/OBS research. Controlled stock/probe quality remains **inconclusive**. The decision map below remains the product qualification rule; this exception permits exploratory implementation without declaring any gate passed. See [USB live setup and limitations](USB_LIVE.md).
+
 ## Phase gates
 
 ```mermaid

@@ -6,4 +6,4 @@ the Apache License 2.0; its script headers retain the original notice.
 The wrapper JAR is generated from the checksum-verified Gradle 8.13 distribution.
 
 Android, Kotlin, Gradle, OBS, scrcpy and FFmpeg are external development or
-benchmark tools. No OBS or scrcpy source has been copied into this prototype.
+benchmark tools. OBS 33.0.0/33.0.1 headers (GPL-2.0-or-later) and SIMDe v0.8.2 headers (MIT) are fetched into ignored native/build directories with pinned SHA-256 checksums for native builds. They are not vendored in Git. The local plugin bundle includes the project GPL text and SIMDe license. No scrcpy source is incorporated.

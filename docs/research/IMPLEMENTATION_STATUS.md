@@ -1,5 +1,7 @@
 # Research software handoff
 
+**Historical first handoff.** Subsequent physical captures and the user-authorized USB research phase supersede the original scope/next-step statements below. See [USB research handoff](USB_IMPLEMENTATION_STATUS.md) and [current phase tracker](../PHASES.md).
+
 Date: 5 November 2026. Repository `phonecam-obs`, branch `research/camera-quality`.
 
 ## Implemented

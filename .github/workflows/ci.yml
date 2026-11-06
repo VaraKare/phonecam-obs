@@ -15,6 +15,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y ffmpeg
       - run: python3 -m unittest discover -s tools/tests -v
+      - name: Native wire parser with sanitizers
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined native/protocol_test.cpp -o /tmp/phonecam-protocol-test
+          /tmp/phonecam-protocol-test
   android:
     runs-on: ubuntu-latest
     steps:

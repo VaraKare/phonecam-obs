@@ -7,13 +7,13 @@ Update evidence and status together. A build or synthetic test cannot pass a phy
 | Repository and tooling | Software implemented and locally checked | APK, tests, lint; CI configured, not yet run remotely |
 | Capability scanner | Physical scan and rear-camera 1080p30 AVC and HEVC captures succeeded on Vivo V2437 / Android 16 | Raw reports and decoded recordings collected; other profiles remain unverified |
 | Camera-quality research | HEVC FAST and HIGH_QUALITY processing confirmed at approximately 30 fps; controlled stock-quality comparison pending | Four scenes, three winning repeats, blind review, frame timing |
-| USB to OBS feasibility | Blocked by quality gate | Same-profile optical p95 below 100 ms |
+| USB to OBS feasibility | Prototype implemented; physical live/optical test pending, quality remains inconclusive | Same-profile optical p95 below 100 ms |
 | Video reliability | Not started | Two hours, 20 reconnects, no accumulating resources |
 | Audio | Not started | Within 33 ms for one hour |
 | Broader device qualification | Not started | Vivo plus two manufacturers |
 | Public alpha | Not started | Clean-Mac install and distribution tests |
 
-Current gate decision: **inconclusive — AVC/HEVC capture and requested HIGH_QUALITY processing work in short tests; stock/probe framing and scene conditions are not matched, so visual quality remains unqualified**. An interrupted short clip is excluded. Do not build later milestones around an assumed pass.
+Current gate decision: **inconclusive — AVC/HEVC capture and requested HIGH_QUALITY processing work in short tests; stock/probe framing and scene conditions are not matched, so visual quality remains unqualified**. An interrupted short clip is excluded. The user elected on 6 November 2026 to begin USB/OBS research despite this unresolved comparison. This is an explicit sequencing exception, not a gate pass. See [USB live](USB_LIVE.md) and the [implementation handoff](research/USB_IMPLEMENTATION_STATUS.md).
 
 Physical evidence: [Vivo V2437 capability scan](research/VIVO_V2437_CAPABILITIES.md). No quality or latency gate has passed.
 
@@ -27,13 +27,11 @@ Processing comparison: [FAST and HIGH_QUALITY settings confirmed at 30 fps](rese
 
 ## Current working folder
 
-The repository moved on 5 November 2026 to `/Users/owner/Desktop/Projects/Camera Max Camera Mix`. Git history and the `research/camera-quality` branch are preserved.
+The repository moved on 5 November 2026 to `/Users/owner/Desktop/Projects/Camera Max Camera Mix`. Git history and the `research/camera-quality` branch are preserved. USB work is on `research/usb-obs-latency`, branched from the camera research implementation; no quality-pass merge to main has been made.
 
 ## Next phase steps
 
-Complete these in order, recording evidence before advancing:
-
-1. **Confirm device and capabilities:** connect and authorize the Vivo, run the host doctor, install the probe, scan capabilities, and collect the actual model/OS/camera/encoder report.
-2. **Prove recording:** make a timed landscape H.264 benchmark at a declared 1080p30 profile; check that the MP4 plays and the sidecar shows successful completion, observed processing, and frame timing. Test 4K30 only where supported.
-3. **Run the quality experiment:** follow `docs/BENCHMARKS.md`, select a winning configuration, record the four scenes three times, and complete the matched stock/scrcpy blind review.
-4. **Record the gate decision:** pass permits USB-to-OBS latency research; fail permits the single bounded tuning cycle; inconclusive requires the missing evidence. No later phase starts on an assumed pass.
+1. Start an explicit phone-to-OBS live session using [USB live setup](USB_LIVE.md), initially rear 1080p30 HEVC at 10 Mb/s with HIGH_QUALITY selected to match the recent capture experiment.
+2. Confirm visible decoded video, hardware decode, Stop/background behavior, and a short sustained connection. Record physical results separately from synthetic tests.
+3. Measure optical latency externally. Complete the controlled quality comparison before making any combined premium-quality/latency claim.
+4. Advance to reliability/audio only after documenting the feasibility decision. Two-hour/reconnect, audio, broader-device and public-distribution gates remain outstanding.
