@@ -5,15 +5,15 @@ Update evidence and status together. A build or synthetic test cannot pass a phy
 | Milestone | Status | Evidence required |
 |---|---|---|
 | Repository and tooling | Software implemented and locally checked | APK, tests, lint; CI configured, not yet run remotely |
-| Capability scanner | Physical scan and first rear-camera 1080p30 H.264 recordings succeeded on Vivo V2437 / Android 16 | Raw reports and two decoded recordings collected; other profiles remain unverified |
-| Camera-quality research | Capture path confirmed; controlled comparison pending | Four scenes, three winning repeats, blind review, frame timing |
+| Capability scanner | Physical scan and rear-camera 1080p30 AVC and HEVC captures succeeded on Vivo V2437 / Android 16 | Raw reports and decoded recordings collected; other profiles remain unverified |
+| Camera-quality research | AVC and HEVC capture paths confirmed; controlled FAST/HIGH_QUALITY comparison pending | Four scenes, three winning repeats, blind review, frame timing |
 | USB to OBS feasibility | Blocked by quality gate | Same-profile optical p95 below 100 ms |
 | Video reliability | Not started | Two hours, 20 reconnects, no accumulating resources |
 | Audio | Not started | Within 33 ms for one hour |
 | Broader device qualification | Not started | Vivo plus two manufacturers |
 | Public alpha | Not started | Clean-Mac install and distribution tests |
 
-Current gate decision: **inconclusive — three valid timed AVC probe smoke-test recordings and one stock HEVC reference collected; HEVC probe capture, matched comparisons and quality review pending**. An interrupted short clip is excluded. Do not build later milestones around an assumed pass.
+Current gate decision: **inconclusive — valid timed AVC/HEVC probe smoke tests and one stock HEVC reference collected; controlled comparisons and quality review pending**. An interrupted short clip is excluded. Do not build later milestones around an assumed pass.
 
 Physical evidence: [Vivo V2437 capability scan](research/VIVO_V2437_CAPABILITIES.md). No quality or latency gate has passed.
 
@@ -21,7 +21,7 @@ Capture evidence: [First recording results](research/VIVO_V2437_FIRST_RECORDINGS
 
 Stock reference: [First stock-camera reference](research/VIVO_V2437_STOCK_REFERENCE.md). Stock uses HEVC; next capture a matching 1080p30 HEVC probe clip before drawing visual conclusions.
 
-The intended rear-camera 1080p HEVC / 10 Mb/s profile has been selected and read back on the idle phone app. User-initiated recording is next; no HEVC probe recording has yet been qualified.
+HEVC capture evidence: [First HEVC probe recording](research/VIVO_V2437_HEVC_CAPTURE.md). Next collect FAST and HIGH_QUALITY clips of the same fixed, well-lit physical detail scene, followed by a matched stock baseline. This qualifies neither visual quality nor latency yet.
 
 ## Current working folder
 
