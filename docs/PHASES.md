@@ -13,13 +13,15 @@ Update evidence and status together. A build or synthetic test cannot pass a phy
 | Broader device qualification | Not started | Vivo plus two manufacturers |
 | Public alpha | Not started | Clean-Mac install and distribution tests |
 
-Current gate decision: **inconclusive — two valid probe smoke-test recordings and one stock-camera reference collected; matched probe/scrcpy comparisons and quality review pending**. Do not build later milestones around an assumed pass.
+Current gate decision: **inconclusive — three valid timed AVC probe smoke-test recordings and one stock HEVC reference collected; HEVC probe capture, matched comparisons and quality review pending**. An interrupted short clip is excluded. Do not build later milestones around an assumed pass.
 
 Physical evidence: [Vivo V2437 capability scan](research/VIVO_V2437_CAPABILITIES.md). No quality or latency gate has passed.
 
 Capture evidence: [First recording results](research/VIVO_V2437_FIRST_RECORDINGS.md). The actual initial profile requested 5 Mb/s, not the planned 10 Mb/s.
 
 Stock reference: [First stock-camera reference](research/VIVO_V2437_STOCK_REFERENCE.md). Stock uses HEVC; next capture a matching 1080p30 HEVC probe clip before drawing visual conclusions.
+
+The intended rear-camera 1080p HEVC / 10 Mb/s profile has been selected and read back on the idle phone app. User-initiated recording is next; no HEVC probe recording has yet been qualified.
 
 ## Current working folder
 

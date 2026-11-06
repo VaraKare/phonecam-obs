@@ -24,3 +24,13 @@ Default FFmpeg null-output timing initially produced one non-monotonic DTS warni
 A representative frame shows the Mac screen. This is an exploratory monitor reference, not the full controlled four-scene benchmark. The older probe clips use AVC and were made at a different time/framing; do not treat them as a matched visual comparison.
 
 Next request: rear camera `0`, 1920×1080 at 30 fps, HEVC at requested 10 Mb/s, FAST processing, 15-second probe capture. Keep framing and lighting fixed against the stock reference where possible. If the scene has changed, collect a new matched stock/probe pair before scoring. The complete quality and optical-latency gates remain pending.
+
+## Follow-up capture and profile correction
+
+The next collection, `benchmarks/raw/20261106T005129Z-e09570`, contained four probe sessions. The latest timed clip, `4b9173cb-6ccd-4bba-96b8-ad987448029b.mp4`, was successfully finalized and decoded, but still used the default AVC request at 5,000,000 bit/s instead of the instructed HEVC request at 10,000,000 bit/s.
+
+It contains 454 frames over 15.133056 seconds, averaging 30.00055 fps; maximum encoded PTS gap 33.425 ms, no non-monotonic PTS, no processing mismatches/unconfirmed frames, and no errors during full timestamp-preserving decode. Actual video bitrate is 7,116,731 bit/s. A representative frame has wider/different framing from the stock reference; it cannot establish a matched visual comparison. Local structured results: `benchmarks/results/vivo-v2437-latest-probe-check.json`.
+
+An additional older clip in that collection, `2cd22158-9a9a-4511-9cc6-18e0e89fc32d`, stopped when the app was backgrounded after roughly 2.4 seconds. Its 25.48-fps average and 133.237-ms maximum gap do not qualify; exclude it from the timed benchmark. The MP4's successful finalization flag does not imply benchmark completion.
+
+To remove ambiguity in selecting the long profile list, the assistant opened the idle app's profile selector and selected **Camera 0 · 1920×1080 · H.265 · 10 Mb/s · unverified** through ADB UI input. The selected label was then read back and confirmed. No Record action was sent. The user must initiate the next recording on the phone. HEVC probe capture and the quality gate remain unverified until that new clip is collected.
