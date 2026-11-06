@@ -6,14 +6,14 @@ Update evidence and status together. A build or synthetic test cannot pass a phy
 |---|---|---|
 | Repository and tooling | Software implemented and locally checked | APK, tests, lint; CI configured, not yet run remotely |
 | Capability scanner | Physical scan and rear-camera 1080p30 AVC and HEVC captures succeeded on Vivo V2437 / Android 16 | Raw reports and decoded recordings collected; other profiles remain unverified |
-| Camera-quality research | AVC and HEVC capture paths confirmed; controlled FAST/HIGH_QUALITY comparison pending | Four scenes, three winning repeats, blind review, frame timing |
+| Camera-quality research | HEVC FAST and HIGH_QUALITY processing confirmed at approximately 30 fps; controlled stock-quality comparison pending | Four scenes, three winning repeats, blind review, frame timing |
 | USB to OBS feasibility | Blocked by quality gate | Same-profile optical p95 below 100 ms |
 | Video reliability | Not started | Two hours, 20 reconnects, no accumulating resources |
 | Audio | Not started | Within 33 ms for one hour |
 | Broader device qualification | Not started | Vivo plus two manufacturers |
 | Public alpha | Not started | Clean-Mac install and distribution tests |
 
-Current gate decision: **inconclusive — valid timed AVC/HEVC probe smoke tests and one stock HEVC reference collected; both collected HEVC takes use FAST, so HIGH_QUALITY evidence is still missing**. An interrupted short clip is excluded. Do not build later milestones around an assumed pass.
+Current gate decision: **inconclusive — AVC/HEVC capture and requested HIGH_QUALITY processing work in short tests; stock/probe framing and scene conditions are not matched, so visual quality remains unqualified**. An interrupted short clip is excluded. Do not build later milestones around an assumed pass.
 
 Physical evidence: [Vivo V2437 capability scan](research/VIVO_V2437_CAPABILITIES.md). No quality or latency gate has passed.
 
@@ -23,7 +23,7 @@ Stock reference: [First stock-camera reference](research/VIVO_V2437_STOCK_REFERE
 
 HEVC capture evidence: [First HEVC probe recording](research/VIVO_V2437_HEVC_CAPTURE.md). Next collect FAST and HIGH_QUALITY clips of the same fixed, well-lit physical detail scene, followed by a matched stock baseline. This qualifies neither visual quality nor latency yet.
 
-Processing comparison: [FAST take verified; HIGH_QUALITY sample pending](research/VIVO_V2437_PROCESSING_COMPARISON.md).
+Processing comparison: [FAST and HIGH_QUALITY settings confirmed at 30 fps](research/VIVO_V2437_PROCESSING_COMPARISON.md). Next establish a fixed physical target before recording the matched stock/probe pair.
 
 ## Current working folder
 
