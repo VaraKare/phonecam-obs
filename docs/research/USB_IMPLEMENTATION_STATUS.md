@@ -28,12 +28,12 @@ Native checks initially used OBS 33.0.0. Opening OBS updated the installed appli
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`, version `0.2.0-usb-research`, versionCode 2, package `dev.phonecam.obs`, 2,791,883 bytes. SHA-256: `65aaff5093bbf26b7b2bbd89cf8d2cf542dafef261a0562e0f014299db01182d`.
 
-The plugin is installed in this user's OBS plugin folder. **The phone disconnected from ADB before the updated APK could be installed.** No authorized phone was present at the attempted update. Previous benchmark evidence was not deleted. ADB forwarding/token preparation for the new build is therefore pending. No phone camera was started remotely, no live physical session was run, and no media was saved by these tests. Synthetic fixtures lived in temporary directories.
+The plugin is installed in this user's OBS plugin folder. The phone initially disconnected during the attempted update, then reappeared authorized. The updated APK was successfully installed with `install -r`, the foreground activity opened without capture, and authenticated USB forwarding/token settings were prepared. The capability scan completed with 26 declared profiles; rear 1080p HEVC at 10 Mb/s and the HIGH_QUALITY checkbox were selected for the next manual Start. Previous benchmark clips were not deleted. No phone camera was started remotely, no live physical session was run, and no media was saved by these tests. Synthetic fixtures lived in temporary directories.
 
 CI includes host tests, Android checks and the sanitizer wire-parser check; it has not run remotely. Native OBS/VideoToolbox verification currently runs locally, not in CI. There is no configured remote, PR, release tag, notarization or public alpha.
 
 ## Next physical step
 
-Reconnect and authorize the Vivo, install the new APK with `install -r`, open the app and prepare forwarding. Restart OBS for the current plugin, add **PhoneCam USB (Research)**, select the previously tested rear 1080p30 HEVC 10 Mb/s HQ settings, then let the user tap Start. Follow [USB live setup](../USB_LIVE.md).
+Installation and forwarding are ready. Restart OBS for the current plugin, add **PhoneCam USB (Research)**, select the previously tested rear 1080p30 HEVC 10 Mb/s HQ settings, then let the user tap Start. Follow [USB live setup](../USB_LIVE.md).
 
 Actual preview, stop/background/source lifecycle, sustained throughput, temperature/memory and optical p95 remain unmeasured. The initial build supports upright landscape only, one receiver, no audio, no reconnect-triggered camera restart and no phone preview. A different profile/phone is unverified. Complete the controlled quality comparison before making a combined quality/latency claim. The two-hour/20-reconnect, audio, manufacturer coverage and clean-Mac installation gates remain future work.
