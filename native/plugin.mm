@@ -65,7 +65,7 @@ void show(void *value) { static_cast<Source *>(value)->start(); }
 void hide(void *value) { static_cast<Source *>(value)->end(); }
 obs_properties_t *properties(void *) {
     auto *p = obs_properties_create();
-    obs_properties_add_text(p, "instructions", "Run tools/live.py prepare, then tap Start USB live on the phone. Landscape SDR only. No audio or recording. Quality and optical latency unverified.", OBS_TEXT_INFO);
+    obs_properties_add_text(p, "instructions", "Run tools/live.py prepare, then tap Start live on the phone. Any orientation; the picture turns upright automatically (portrait changes this source to a tall shape). SDR video only, no audio. Quality and optical latency unverified.", OBS_TEXT_INFO);
     return p;
 }
 }

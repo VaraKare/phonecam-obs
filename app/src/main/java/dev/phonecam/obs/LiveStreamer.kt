@@ -18,10 +18,18 @@ import android.view.Surface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** Explicit foreground-only live session. No muxer, media files, or automatic reconnect. */
+/**
+ * Explicit foreground-only live session. No muxer, media files, or automatic reconnect.
+ * [initialRotation] and later [setRotation] values are clockwise degrees the Mac applies to show
+ * the image upright; the encoder itself never changes shape. [preview] supplies an optional on-phone
+ * view surface when the camera opens; if the camera rejects encoder + preview together, the session fails clearly.
+ */
 class LiveStreamer(private val context: Context, private val profile: Profile,
-                   private val highQuality: Boolean, private val rotation: Int,
+                   private val highQuality: Boolean, initialRotation: Int,
+                   private val preview: () -> Surface?,
                    private val notify: (String, Boolean) -> Unit) {
+    @Volatile private var rotation = initialRotation
+    fun setRotation(degrees: Int) { require(degrees in setOf(0, 90, 180, 270)); rotation = degrees }
     private val thread = HandlerThread("phonecam-live-capture").apply { start() }
     private val handler = Handler(thread.looper)
     private val main = Handler(context.mainLooper)
@@ -43,7 +51,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             if (lastFrameAt > 0 && SystemClock.elapsedRealtime() - lastFrameAt > 5_000) {
                 finish("Hardware encoder stalled for 5 seconds; restart live capture"); return
             }
-            message("USB LIVE · ${profile.width}×${profile.height} · ${profile.mime} · ${if (highQuality) "HQ" else "FAST"}\nEncoded frames: $sequence · queue drops: ${transport.dropped}\nNo media is saved. Stop ends the session. Quality/optical latency unverified.")
+            message("● LIVE to OBS · ${profile.width}×${profile.height} · ${if (profile.mime == "video/avc") "H.264" else "H.265"} · ${profile.bitrate / 1_000_000} Mb/s · ${if (highQuality) "HQ" else "FAST"}\n${"%.1f".format(stats.fps)} fps · frames $sequence · drops ${transport.dropped} · picture turned ${rotation}° for OBS\nNothing is saved on the phone. Rotating keeps the session running.")
             handler.postDelayed(this, 2_000)
         }
     }
@@ -86,7 +94,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                         check(csd.isNotEmpty()) { "No encoder parameter sets" }
                         val bytes = ByteBuffer.allocate(16 + csd.sumOf { it.size }).order(ByteOrder.BIG_ENDIAN)
                         bytes.putInt(if (profile.mime == "video/avc") 1 else 2)
-                        bytes.putInt(profile.width); bytes.putInt(profile.height); bytes.putInt(rotation)
+                        bytes.putInt(profile.width); bytes.putInt(profile.height); bytes.putInt(rotation)  // initial; frames carry updates
                         csd.forEach(bytes::put)
                         transport.configure(bytes.array())
                     } catch (e: Exception) { finish("USB format rejected: ${e.message}") }
@@ -102,7 +110,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                             buffer.position(info.offset); buffer.limit(info.offset + info.size)
                             val bytes = ByteArray(info.size); buffer.get(bytes)
                             val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
-                            val accepted = transport.offer(LiveQueue.Frame(bytes, sequence++, info.presentationTimeUs, key))
+                            val accepted = transport.offer(LiveQueue.Frame(bytes, sequence++, info.presentationTimeUs, key, rotation / 90))
                             stats.add(info.presentationTimeUs)
                             lastFrameAt = SystemClock.elapsedRealtime()
                             handler.removeCallbacks(startDeadline)
@@ -139,7 +147,8 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
     @Suppress("DEPRECATION")
     private fun configureCamera(device: CameraDevice) {
         val surface = input ?: error("No encoder surface")
-        device.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
+        val view = preview()?.takeIf { it.isValid }
+        device.createCaptureSession(listOfNotNull(surface, view), object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(session: CameraCaptureSession) {
                 if (finished) { session.close(); return }
                 capture = session
@@ -148,6 +157,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                     val keys = chars.availableCaptureRequestKeys.toSet()
                     val request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                         addTarget(surface)
+                        view?.let(::addTarget)
                         if (CR.CONTROL_AE_TARGET_FPS_RANGE in keys) set(CR.CONTROL_AE_TARGET_FPS_RANGE, profile.fpsRange)
                         if (CR.CONTROL_AF_MODE in keys && CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in chars[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty())
                             set(CR.CONTROL_AF_MODE, CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
@@ -159,7 +169,10 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                     session.setRepeatingRequest(request, null, handler)
                 } catch (e: Exception) { finish("Camera rejected live settings: ${e.message}") }
             }
-            override fun onConfigureFailed(session: CameraCaptureSession) { session.close(); finish("Camera rejected this live profile") }
+            override fun onConfigureFailed(session: CameraCaptureSession) {
+                session.close()
+                finish(if (view != null) "Camera rejected this profile together with the phone preview. Turn off Show phone preview, or choose a lower profile." else "Camera rejected this live profile")
+            }
         }, handler)
     }
 

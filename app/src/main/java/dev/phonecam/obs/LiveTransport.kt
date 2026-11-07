@@ -16,6 +16,8 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
     companion object {
         const val NAME = "phonecam-live-v1"
         const val MAX_PAYLOAD = 4 * 1024 * 1024
+        /** v2: frame flags bits 1-2 carry the clockwise quarter turns for upright display. */
+        const val VERSION = 2
         fun token(directory: File): String {
             val file = File(directory, "live-token")
             val atomic = android.util.AtomicFile(file)
@@ -72,7 +74,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
                         configuration?.let { packet(output, 1, 0, 0, 0, it); configured = true }
                     }
                     val frame = if (configured) queue.poll() else null
-                    if (frame != null) packet(output, 2, if (frame.key) 1 else 0, frame.sequence, frame.ptsUs, frame.bytes)
+                    if (frame != null) packet(output, 2, (if (frame.key) 1 else 0) or (frame.quarterTurns shl 1), frame.sequence, frame.ptsUs, frame.bytes)
                     else synchronized(signal) { if (!closed) signal.wait(10) }
                 }
             } catch (e: Exception) {
@@ -90,7 +92,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
     private fun packet(output: DataOutputStream, type: Int, flags: Int, seq: Long, pts: Long, data: ByteArray) {
         require(data.isNotEmpty() && data.size <= MAX_PAYLOAD) { "Encoded packet exceeds the USB limit" }
         deadline = SystemClock.elapsedRealtime() + 750
-        output.writeInt(0x5043414d); output.writeShort(1); output.writeShort(type)
+        output.writeInt(0x5043414d); output.writeShort(VERSION); output.writeShort(type)
         output.writeInt(data.size); output.writeInt(flags); output.writeLong(seq); output.writeLong(pts)
         output.write(data); output.flush()
         deadline = Long.MAX_VALUE

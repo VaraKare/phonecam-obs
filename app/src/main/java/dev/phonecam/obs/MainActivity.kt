@@ -5,8 +5,16 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.Typeface
+import android.hardware.camera2.CameraManager
 import android.os.Bundle
+import android.util.Size
+import android.view.Gravity
+import android.view.OrientationEventListener
 import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.view.WindowInsets
@@ -15,7 +23,10 @@ import java.io.File
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
+    private lateinit var banner: TextView
     private lateinit var status: TextView
+    private lateinit var preview: SurfaceView
+    private lateinit var showPreview: CheckBox
     private lateinit var profiles: Spinner
     private lateinit var processing: CheckBox
     private lateinit var limited: CheckBox
@@ -26,23 +37,28 @@ class MainActivity : Activity() {
     private lateinit var scan: Button
     private lateinit var stop: Button
     private lateinit var delete: Button
+    private lateinit var scroll: ScrollView
     private var options = emptyList<Profile>()
     private var recorder: BenchmarkRecorder? = null
     private var live: LiveStreamer? = null
+    private var liveProfile: Profile? = null
     private val busy get() = recorder != null || live != null
     private var foreground = false
     private var destroyed = false
+    @Volatile private var previewReady = false
+    private var device = Orientation.UNKNOWN
+    private lateinit var orientation: OrientationEventListener
     private val executor = Executors.newSingleThreadExecutor()
     private val directory get() = File(filesDir, "benchmarks").apply { mkdirs() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val margin = (20 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            val margin = (20 * resources.displayMetrics.density).toInt()
             setPadding(margin, margin, margin, margin)
         }
-        val scroll = ScrollView(this).apply { addView(root) }
+        scroll = ScrollView(this).apply { addView(root) }
         setContentView(scroll)
         scroll.setOnApplyWindowInsetsListener { view, insets ->
             if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -68,25 +84,39 @@ class MainActivity : Activity() {
                 root.addView(this)
             }
         }
-        text("PhoneCam Probe", 26f)
-        text("Research only · USB live + native OBS experiment. All profiles are unverified. Tap Record to save a benchmark, or Start USB live to stream without saving. No audio or Internet permission.")
-        text("Encoder-only capture has no preview. Use the stock camera to frame a tripod-mounted baseline, then keep the phone in position. Keep this app visible while recording. FAST processing uses OFF when FAST is unavailable; reports show the actual request.")
-        LiveTransport.token(filesDir)
-        status = text("Scan capabilities, choose a profile, then Record or Start USB live. Keep this app visible. USB setup: docs/USB_LIVE.md")
+        text("PhoneCam", 26f)
+        banner = text("", 20f).apply {
+            typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setPadding(16, 20, 16, 20)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        status = text("Scan the camera, choose a profile, then Start live. Any orientation works. Setup: docs/USB_LIVE.md")
         status.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        stop = button("Stop capture") { recorder?.stop(); live?.stop() }.apply { isEnabled = false }
+        preview = SurfaceView(this).apply {
+            visibility = View.GONE; contentDescription = "Camera preview"
+            holder.addCallback(object : SurfaceHolder.Callback {
+                override fun surfaceCreated(holder: SurfaceHolder) { previewReady = true }
+                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+                override fun surfaceDestroyed(holder: SurfaceHolder) { previewReady = false }
+            })
+        }
+        root.addView(FrameLayout(this).apply { addView(preview, FrameLayout.LayoutParams(0, 0, Gravity.CENTER_HORIZONTAL)) },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        liveStart = button("Start live to OBS") { if (live != null) live?.stop() else startLive() }.apply { isEnabled = false }
+        showPreview = CheckBox(this).apply { text = "Show phone preview"; isChecked = true; root.addView(this) }
         scan = button("Scan camera capabilities") { scanCapabilities() }
-        profiles = spinner("Declared camera and encoding profile", listOf("Scan capabilities first"))
-        processing = CheckBox(this).apply { text = "Test HIGH_QUALITY sharpening and noise reduction (may lower FPS)"; root.addView(this) }
+        profiles = spinner("Camera and quality (none verified yet)", listOf("Scan capabilities first"))
+        processing = CheckBox(this).apply { text = "HIGH_QUALITY sharpening and noise reduction (may lower FPS)"; root.addView(this) }
         limited = CheckBox(this).apply { text = "I accept limited profiles (720p or variable frame-rate range)"; root.addView(this) }
+        text("Research tools", 20f).setPadding(0, 48, 0, 12)
+        text("Benchmark recordings save test clips on this phone for quality comparisons. Live mode never saves anything. Benchmark capture has no preview and needs landscape.")
         scene = spinner("Benchmark scene", listOf("well_lit_detail", "indoor_face", "low_light_motion", "backlit_subject"))
         duration = spinner("Recording duration", listOf("15 seconds", "30 seconds", "60 seconds"))
-        liveStart = button("Start USB live (no recording)") { startLive() }.apply { isEnabled = false }
-        start = button("Record benchmark") { record() }.apply { isEnabled = false }
-        delete = button("Delete benchmark files") {
+        start = button("Record benchmark clip") { record() }.apply { isEnabled = false }
+        stop = button("Stop benchmark recording") { recorder?.stop() }.apply { isEnabled = false }
+        delete = button("Delete benchmark clips") {
             if (busy) return@button
-            AlertDialog.Builder(this).setTitle("Delete benchmark evidence?")
-                .setMessage("Delete all reports and clips in ${directory.absolutePath}? Copies already collected on the Mac stay there.")
+            AlertDialog.Builder(this).setTitle("Delete benchmark clips?")
+                .setMessage("Delete all benchmark reports and clips in ${directory.absolutePath}? Copies already collected on the Mac stay there. Live sessions never create files.")
                 .setNegativeButton("Keep", null).setPositiveButton("Delete") { _, _ ->
                     val entries = directory.listFiles().orEmpty()
                     val removed = entries.count { it.isFile && it.delete() }
@@ -101,6 +131,45 @@ class MainActivity : Activity() {
                 processing.isEnabled = options.getOrNull(position)?.highQuality == true && !busy
             }
         }
+        LiveTransport.token(filesDir)
+        orientation = object : OrientationEventListener(this) {
+            override fun onOrientationChanged(degrees: Int) {
+                val next = Orientation.quantize(degrees, device)
+                if (next == device) return
+                device = next
+                val profile = liveProfile ?: return
+                live?.setRotation(Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device))
+            }
+        }
+        showBanner(false)
+    }
+
+    private fun showBanner(on: Boolean) {
+        banner.text = if (on) "● LIVE — camera on, sending to OBS" else "Camera off"
+        banner.setBackgroundColor(if (on) Color.rgb(196, 30, 30) else Color.rgb(90, 90, 90))
+        banner.setTextColor(Color.WHITE)
+        liveStart.text = if (on) "Stop live" else "Start live to OBS"
+    }
+
+    private fun sizePreview(profile: Profile?) {
+        val p = profile ?: return
+        val metrics = resources.displayMetrics
+        val available = metrics.widthPixels - scroll.paddingLeft - scroll.paddingRight - (40 * metrics.density).toInt()
+        val maxHeight = (metrics.heightPixels * 0.55).toInt()
+        val portrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        val (aspectW, aspectH) = if (portrait) p.height to p.width else p.width to p.height
+        var w = available; var h = w * aspectH / aspectW
+        if (h > maxHeight) { h = maxHeight; w = h * aspectW / aspectH }
+        preview.layoutParams = (preview.layoutParams as FrameLayout.LayoutParams).apply { width = w; height = h }
+    }
+
+    /** Largest SurfaceHolder size with the profile's aspect ratio, at most 1080p (guaranteed PRIV preview + record). */
+    private fun previewSize(profile: Profile): Size? {
+        val map = getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)[
+            android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP] ?: return null
+        return map.getOutputSizes(SurfaceHolder::class.java).orEmpty()
+            .filter { it.width * profile.height == it.height * profile.width && it.width <= 1920 && it.height <= 1080 }
+            .maxByOrNull { it.width * it.height }
     }
 
     private fun scanCapabilities() {
@@ -127,6 +196,10 @@ class MainActivity : Activity() {
     }
 
     @Suppress("DEPRECATION")
+    private fun displayDegrees() = when (windowManager.defaultDisplay.rotation) {
+        Surface.ROTATION_90 -> 90; Surface.ROTATION_180 -> 180; Surface.ROTATION_270 -> 270; else -> 0
+    }
+
     private fun record() {
         if (!foreground || busy) return
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -139,16 +212,14 @@ class MainActivity : Activity() {
         if (processing.isChecked && !profile.highQuality) {
             status.text = "Both high-quality modes are not advertised for this camera."; return
         }
-        val rotation = when (windowManager.defaultDisplay.rotation) {
-            Surface.ROTATION_90 -> 90; Surface.ROTATION_180 -> 180; Surface.ROTATION_270 -> 270; else -> 0
-        }
         if (resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) {
-            status.text = "Rotate the phone to landscape before recording. Enable auto-rotate if rotation lock is active."; return
+            status.text = "Rotate the phone to landscape before recording a benchmark. Enable auto-rotate if rotation lock is active."; return
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setRecording(true)
+        stop.isEnabled = true
         recorder = BenchmarkRecorder(this, directory, profile, processing.isChecked,
-            listOf(15, 30, 60)[duration.selectedItemPosition], scene.selectedItem.toString(), rotation) { text, done ->
+            listOf(15, 30, 60)[duration.selectedItemPosition], scene.selectedItem.toString(), displayDegrees()) { text, done ->
             if (!destroyed) status.text = text
             if (done) {
                 recorder = null
@@ -158,7 +229,6 @@ class MainActivity : Activity() {
         }.also { it.start() }
     }
 
-    @Suppress("DEPRECATION")
     private fun startLive() {
         if (!foreground || busy) return
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -166,33 +236,43 @@ class MainActivity : Activity() {
         }
         val profile = options.getOrNull(profiles.selectedItemPosition) ?: return
         if (profile.limited && !limited.isChecked) { status.text = "Accept limited mode first, or choose a fixed 1080p profile."; return }
-        if (resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) {
-            status.text = "Rotate to landscape, with auto-rotate enabled, before Start USB live."; return
-        }
-        val degrees = when (windowManager.defaultDisplay.rotation) {
-            Surface.ROTATION_90 -> 90; Surface.ROTATION_180 -> 180; Surface.ROTATION_270 -> 270; else -> 0
-        }
-        val rotation = if (profile.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT)
-            (profile.sensorOrientation + degrees) % 360 else (profile.sensorOrientation - degrees + 360) % 360
-        if (rotation != 0) {
-            status.text = "For this initial live build, turn the phone to the opposite landscape orientation (sensor upright). Then tap Start again."; return
+        if (device == Orientation.UNKNOWN) device = Orientation.fromDisplay(displayDegrees())
+        val rotation = Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device)
+        val wantPreview = showPreview.isChecked
+        if (wantPreview) {
+            val size = previewSize(profile)
+            if (size == null) { status.text = "No preview size matches this profile. Turn off Show phone preview to stream without it."; return }
+            preview.holder.setFixedSize(size.width, size.height)
+            sizePreview(profile); preview.visibility = View.VISIBLE
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        liveProfile = profile
         setRecording(true)
-        live = LiveStreamer(this, profile, processing.isChecked, rotation) { text, done ->
-            if (!destroyed) status.text = text
+        showBanner(true)
+        banner.text = "Waiting for OBS…"
+        banner.setBackgroundColor(Color.rgb(200, 120, 0))
+        live = LiveStreamer(this, profile, processing.isChecked, rotation,
+            { if (wantPreview && previewReady) preview.holder.surface else null }) { text, done ->
+            if (destroyed) return@LiveStreamer
+            status.text = text
+            if (text.startsWith("●")) showBanner(true)
             if (done) {
-                live = null; window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                if (!destroyed) setRecording(false)
+                live = null; liveProfile = null
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                preview.visibility = View.GONE
+                showBanner(false); setRecording(false)
             }
         }.also { it.start() }
+        liveStart.isEnabled = true  // the same button now stops the session
     }
 
     private fun setRecording(recording: Boolean) {
-        start.isEnabled = !recording && options.isNotEmpty(); liveStart.isEnabled = !recording && options.isNotEmpty(); stop.isEnabled = recording
+        start.isEnabled = !recording && options.isNotEmpty()
+        liveStart.isEnabled = live != null || (!recording && options.isNotEmpty())
+        stop.isEnabled = recorder != null
         scan.isEnabled = !recording; delete.isEnabled = !recording
         profiles.isEnabled = !recording; scene.isEnabled = !recording; duration.isEnabled = !recording
-        limited.isEnabled = !recording
+        limited.isEnabled = !recording; showPreview.isEnabled = !recording
         processing.isEnabled = !recording && options.getOrNull(profiles.selectedItemPosition)?.highQuality == true
     }
 
@@ -201,18 +281,25 @@ class MainActivity : Activity() {
         if (requestCode == 1 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) scanCapabilities()
         else status.text = "Camera permission denied. Grant it in Android Settings → Apps → PhoneCam Probe → Permissions, then scan again."
     }
-    override fun onResume() { super.onResume(); foreground = true }
+    override fun onResume() {
+        super.onResume(); foreground = true
+        if (orientation.canDetectOrientation()) orientation.enable()
+    }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        recorder?.stop("orientation_changed"); live?.stop("Orientation changed; restart live in landscape")
+        recorder?.stop("orientation_changed")
+        // Live sessions keep running; the Mac re-orients from the per-frame rotation tag.
+        if (live != null) sizePreview(liveProfile)
     }
     override fun onPause() {
-        foreground = false; recorder?.stop("app_backgrounded"); live?.stop("App left foreground")
+        foreground = false; orientation.disable()
+        recorder?.stop("app_backgrounded"); live?.stop("App left foreground")
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onPause()
     }
     override fun onDestroy() {
-        destroyed = true; recorder?.stop("activity_destroyed"); live?.stop("Activity destroyed"); executor.shutdown()
+        destroyed = true; orientation.disable()
+        recorder?.stop("activity_destroyed"); live?.stop("Activity destroyed"); executor.shutdown()
         super.onDestroy()
     }
 }

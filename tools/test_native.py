@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RECEIVER = ROOT / "native/build/phonecam-receive"
 
 
-def packet(kind, body, flags=0, sequence=0, pts=0):
-    return struct.pack(">4sHHIIQQ", b"PCAM", 1, kind, len(body), flags, sequence, pts) + body
+def packet(kind, body, flags=0, sequence=0, pts=0, version=2):
+    return struct.pack(">4sHHIIQQ", b"PCAM", version, kind, len(body), flags, sequence, pts) + body
 
 
 @unittest.skipUnless(RECEIVER.exists() and shutil.which("ffmpeg"), "Build the native receiver and install ffmpeg first")
@@ -54,9 +54,9 @@ class NativeIntegration(unittest.TestCase):
             else:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Receive failed", result.stderr)
-            return result
+            return result, (json.loads(result.stdout) if success else None)
 
-    def encoded_packets(self, hevc=False, skip=None, width=320, height=240):
+    def encoded_packets(self, hevc=False, skip=None, width=320, height=240, turns=lambda seq: 0):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / ("clip.hevc" if hevc else "clip.h264")
             command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=size={width}x{height}:rate=30",
@@ -80,14 +80,28 @@ class NativeIntegration(unittest.TestCase):
             if seq == skip: continue
             key = any(16 <= kind(n) <= 21 if hevc else kind(n) == 5 for n in group)
             payload = b"".join(b"\0\0\0\1" + n for n in group)
-            packets.append(packet(2, payload, int(key), seq, seq * 33333))
+            packets.append(packet(2, payload, int(key) | turns(seq) << 1, seq, seq * 33333))
         return packets
 
     def test_avc_hardware_decode(self): self.exchange(self.encoded_packets(width=1920, height=1080), 12)
     def test_hevc_hardware_decode(self): self.exchange(self.encoded_packets(True, width=1920, height=1080), 12)
     def test_sequence_gap_waits_for_keyframe(self): self.exchange(self.encoded_packets(skip=2), 9)
     def test_malformed_header_rejected(self):
-        self.exchange([struct.pack(">4sHHIIQQ", b"PCAM", 1, 2, 0xffffffff, 0, 0, 0)], 1, False)
+        self.exchange([struct.pack(">4sHHIIQQ", b"PCAM", 2, 2, 0xffffffff, 0, 0, 0)], 1, False)
+    def test_version_one_sender_rejected(self):
+        result, _ = self.exchange([packet(1, b"\0" * 20, version=1)], 1, False)
+        self.assertIn("different PCAM versions", result.stderr)
+    def test_portrait_rotation_swaps_dimensions(self):
+        for turns in (1, 3):
+            _, value = self.exchange(self.encoded_packets(True, width=1920, height=1080, turns=lambda seq: turns), 12)
+            self.assertEqual((value["lastWidth"], value["lastHeight"]), (1080, 1920))
+    def test_half_turn_keeps_dimensions(self):
+        _, value = self.exchange(self.encoded_packets(width=1920, height=1080, turns=lambda seq: 2), 12)
+        self.assertEqual((value["lastWidth"], value["lastHeight"], value["sizeChanges"]), (1920, 1080, 0))
+    def test_rotation_changes_mid_stream(self):
+        # Landscape, then portrait, then the opposite landscape, as the phone is turned live.
+        _, value = self.exchange(self.encoded_packets(width=1920, height=1080, turns=lambda seq: 0 if seq < 4 else 1 if seq < 8 else 2), 12)
+        self.assertEqual((value["lastWidth"], value["lastHeight"], value["sizeChanges"]), (1920, 1080, 2))
     def test_keyflag_mismatch_rejected(self):
         packets = self.encoded_packets()
         # A dependent P-frame falsely claims to be a keyframe.

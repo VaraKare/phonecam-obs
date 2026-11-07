@@ -35,8 +35,44 @@ void readExact(int fd, uint8_t *p, size_t size, std::atomic<bool> &stop, int sec
         size -= size_t(count); p += count;
     }
 }
+// Hardware/GPU rotation of decoded NV12 into a pooled upright buffer. Pool is rebuilt only on change.
+class Rotator {
+    VTPixelRotationSessionRef session = nullptr;
+    CVPixelBufferPoolRef pool = nullptr;
+    unsigned poolTurns = 0; size_t poolWidth = 0, poolHeight = 0;
+public:
+    Rotator() { check(VTPixelRotationSessionCreate(kCFAllocatorDefault, &session), "Rotation session"); }
+    ~Rotator() {
+        if (session) { VTPixelRotationSessionInvalidate(session); CFRelease(session); }
+        if (pool) CVPixelBufferPoolRelease(pool);
+    }
+    Rotator(const Rotator &) = delete; Rotator &operator=(const Rotator &) = delete;
+    // Returns a +1 retained buffer.
+    CVPixelBufferRef rotate(CVPixelBufferRef image, unsigned turns) {
+        size_t width = CVPixelBufferGetWidth(image), height = CVPixelBufferGetHeight(image);
+        size_t outWidth = turns % 2 ? height : width, outHeight = turns % 2 ? width : height;
+        if (!pool || turns != poolTurns || outWidth != poolWidth || outHeight != poolHeight) {
+            if (pool) { CVPixelBufferPoolRelease(pool); pool = nullptr; }
+            NSDictionary *attributes = @{(__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+                                        (__bridge NSString *)kCVPixelBufferWidthKey: @(outWidth),
+                                        (__bridge NSString *)kCVPixelBufferHeightKey: @(outHeight),
+                                        (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey: @{}};
+            check(CVPixelBufferPoolCreate(kCFAllocatorDefault, nullptr, (__bridge CFDictionaryRef)attributes, &pool), "Rotation buffer pool");
+            CFStringRef angle = turns == 1 ? kVTRotation_CW90 : turns == 2 ? kVTRotation_180 : kVTRotation_CCW90;
+            check(VTSessionSetProperty(session, kVTPixelRotationPropertyKey_Rotation, angle), "Rotation angle");
+            poolTurns = turns; poolWidth = outWidth; poolHeight = outHeight;
+        }
+        CVPixelBufferRef out = nullptr;
+        check(CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &out), "Rotation buffer");
+        OSStatus status = VTPixelRotationSessionRotateImage(session, image, out);
+        if (status) { CVPixelBufferRelease(out); check(status, "Picture rotation"); }
+        return out;
+    }
+};
 class Decoder {
     VTDecompressionSessionRef session = nullptr;
+    std::unique_ptr<Rotator> rotator;
+    unsigned turns = 0;
     CMVideoFormatDescriptionRef format = nullptr;
     uint32_t codec = 0, width = 0, height = 0;
     Output output;
@@ -56,7 +92,15 @@ class Decoder {
             CVPixelBufferGetPlaneCount(image) != 2) { self->outputStatus = -2; return; }
         self->delivered = true;
         // Callback may run on a VT thread. No exceptions may cross the C callback boundary.
-        try { self->output(image, self->sequence, self->pts); }
+        try {
+            if (!self->turns) self->output(image, self->sequence, self->pts);
+            else {
+                if (!self->rotator) self->rotator = std::make_unique<Rotator>();
+                CVPixelBufferRef upright = self->rotator->rotate(image, self->turns);
+                std::unique_ptr<std::remove_pointer_t<CVPixelBufferRef>, decltype(&CVPixelBufferRelease)> owner(upright, CVPixelBufferRelease);
+                self->output(upright, self->sequence, self->pts);
+            }
+        }
         catch (...) { self->outputStatus = -3; }
     }
 public:
@@ -69,8 +113,10 @@ public:
         if (format || data.size() < 20) throw std::runtime_error("Unexpected codec configuration");
         codec = be32(data.data()); width = be32(data.data() + 4); height = be32(data.data() + 8);
         if ((codec != 1 && codec != 2) || width < 128 || height < 128 || width > 4096 || height > 4096 ||
-            width % 2 || height % 2 || be32(data.data() + 12) != 0)
-            throw std::runtime_error("Unsupported codec/size/rotation; use upright landscape SDR");
+            width % 2 || height % 2)
+            throw std::runtime_error("Unsupported codec/size; use a declared SDR profile");
+        uint32_t rotation = be32(data.data() + 12);
+        if (rotation % 90 || rotation >= 360) throw std::runtime_error("Invalid initial rotation");
         auto units = nals(data.data() + 16, data.size() - 16);
         std::vector<const uint8_t *> pointers;
         std::vector<size_t> sizes;
@@ -123,7 +169,7 @@ public:
         CMSampleTimingInfo timing{kCMTimeInvalid, CMTimeMake(int64_t(h.pts), 1000000), kCMTimeInvalid};
         check(CMSampleBufferCreateReady(kCFAllocatorDefault, block, format, 1, 1, &timing, 1, &size, &sample), "Sample creation");
         std::unique_ptr<std::remove_pointer_t<CMSampleBufferRef>, decltype(&CFRelease)> sampleOwner(sample, CFRelease);
-        sequence = h.sequence; pts = h.pts; outputStatus = noErr; delivered = false;
+        sequence = h.sequence; pts = h.pts; turns = h.flags >> 1; outputStatus = noErr; delivered = false;
         check(VTDecompressionSessionDecodeFrame(session, sample, 0, nullptr, nullptr), "Hardware decoding");
         check(VTDecompressionSessionWaitForAsynchronousFrames(session), "Decoder completion");
         check(outputStatus, "Decoded output");

@@ -20,9 +20,9 @@ python3 tools/phonecam.py install
 2. Run `python3 tools/live.py prepare`. It reads a private debug token and creates an ADB forward to the app's abstract local socket. No camera starts.
 3. Open OBS; if it was open during plugin installation, restart it after saving your work. Add a source using **Sources → + → PhoneCam USB (Research)**. Keep that source visible. It may remain black until the phone starts.
 4. On the phone, tap **Scan camera capabilities**. Select **rear Camera 0, 1920×1080, H.265, 10 Mb/s**, then check **HIGH_QUALITY** to match the recent Vivo HQ capture settings. Selecting a different profile clears that checkbox. A different phone should use its own declared profile; this is not a universal recommendation.
-5. Hold the phone in landscape. For this initial build the sensor must be upright; the app explains when to use the opposite landscape orientation. Tap **Start USB live (no recording)** yourself. The listener waits up to 30 seconds for the receiver. Keep the app visible. The camera opens only after authentication.
+5. Hold the phone any way up. Tap **Start live to OBS** yourself. The banner turns orange while waiting (up to 30 seconds) and red **● LIVE** once frames flow; the optional phone preview appears under it. Keep the app visible. The camera opens only after authentication. Turning the phone keeps the session running: each frame carries the clockwise rotation, measured from gravity (works with rotation lock on), and the Mac turns the picture upright in hardware. Turning to portrait changes the OBS source to a tall shape; set the source's **Transform → Edit Transform → Bounding Box Type** to *Scale to inner bounds* so it always fits. The same button stops the session.
 6. OBS should show the live image. If it exceeds the canvas, right-click the source → **Transform → Fit to Screen**. The app shows encoded-frame/drop counts. OBS's log should contain `[phonecam] USB video connected` and confirmation that VideoToolbox hardware decoding is active.
-7. Tap **Stop capture** on the phone. Verify OBS clears. Hiding/deleting the source, backgrounding/locking the phone, rotating it, or losing the connection stops the session. Restart with another explicit phone Start. There is no automatic camera restart or automatic recording.
+7. Tap **Stop live** on the phone. Verify OBS clears. Hiding/deleting the source, backgrounding/locking the phone, or losing the connection stops the session; rotating does not. Restart with another explicit phone Start. There is no automatic camera restart or automatic recording.
 
 For a decoder-only diagnostic, hide/remove the OBS source first (one receiver per session), run `python3 tools/live.py receive --frames 300`, then tap Start USB live. The command prints bounded aggregate metadata and saves no media. A successful result verifies a short hardware-decoded connection, not glass-to-preview latency.
 
@@ -36,21 +36,21 @@ The two-frame queue has an 8 MiB byte ceiling and 4 MiB maximum individual paylo
 
 The receiver submits one access unit at a time and waits for hardware completion, bounding in-flight decode. It deliberately rejects buffered/no-output decode, malformed packets, reordered timestamps, mismatched parameter dimensions and mislabeled keyframes. OBS uses its standard RAM-copy source API, not a zero-copy path. It disables the async source's optional buffering and uses the Mac monotonic arrival clock for display. Phone timestamps are carried; there is no cross-clock latency subtraction, clock synchronization or audio yet.
 
-## Wire format v1
+## Wire format v2
 
 The receiver first writes 64 lowercase hex token bytes plus LF. Server authentication occurs before camera open. All following integers are unsigned, network byte order. Header size is exactly 32 bytes:
 
 | Offset | Size | Meaning |
 |---|---|---|
 | 0 | 4 | ASCII `PCAM` |
-| 4 | 2 | Version 1 |
+| 4 | 2 | Version 2 (a different version is rejected with a clear app/plugin mismatch error) |
 | 6 | 2 | Type: 1 configuration, 2 frame |
 | 8 | 4 | Payload byte length, 1..4 MiB (configuration 20..65536) |
-| 12 | 4 | Flags: bit 0 keyframe; other bits rejected |
+| 12 | 4 | Flags: bit 0 keyframe; bits 1–2 clockwise quarter turns to display the frame upright; higher bits rejected. Configuration flags must be 0 |
 | 16 | 8 | Monotonic frame identity, starting at 0; gaps expose dropped frames |
 | 24 | 8 | Encoder PTS in phone microseconds; increasing, signed-64-bit representable |
 
-Configuration is sent once before frames, with header flags/sequence/PTS zero. Payload starts with four u32 values: codec (1 AVC, 2 HEVC), width, height, rotation (currently must be 0). Remaining bytes are Annex-B parameter sets. Dimensions must be even and within 128..4096, and agree with encoded parameters. Frames contain one Annex-B access unit; the receiver converts start codes to four-byte lengths for VideoToolbox. Configuration changes require a new explicitly initiated session. New connections reset sequence/decoder state.
+Configuration is sent once before frames, with header flags/sequence/PTS zero. Payload starts with four u32 values: codec (1 AVC, 2 HEVC), width, height, initial rotation (0/90/180/270; frames carry the live value). Remaining bytes are Annex-B parameter sets. Dimensions must be even and within 128..4096, and agree with encoded parameters. Frames contain one Annex-B access unit; the receiver converts start codes to four-byte lengths for VideoToolbox. Configuration changes require a new explicitly initiated session. New connections reset sequence/decoder state.
 
 ## Acceptance still required
 

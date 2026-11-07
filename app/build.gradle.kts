@@ -11,8 +11,8 @@ android {
         applicationId = "dev.phonecam.obs"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0-usb-research"
+        versionCode = 3
+        versionName = "0.3.0-live-rotation"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
