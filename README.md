@@ -38,6 +38,6 @@ Android 10+ is the API minimum, not a universal compatibility guarantee. Profile
 
 Reference Mac during development: Apple M1, macOS 26.6.2, OBS 33.0.1 (initially 33.0.0). The reference Vivo identifies itself as V2437, Android 16. Short rear 1080p30 AVC/HEVC recordings succeeded, including applied HIGH_QUALITY processing; controlled quality, live optical latency, and sustained reliability remain unverified.
 
-See [plan](docs/PLAN.md), [phase tracker](docs/PHASES.md), [branch workflow](CONTRIBUTING.md), and [data handling](docs/DATA.md).
+See [roadmap](docs/ROADMAP.md), [plan](docs/PLAN.md), [phase tracker](docs/PHASES.md), [branch workflow](CONTRIBUTING.md), and [data handling](docs/DATA.md).
 
 Original source: GPL-2.0-or-later; see LICENSE and NOTICE for third-party tooling notices.

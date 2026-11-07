@@ -29,6 +29,18 @@ Processing comparison: [FAST and HIGH_QUALITY settings confirmed at 30 fps](rese
 
 The repository moved on 5 November 2026 to `/Users/owner/Desktop/Projects/Camera Max Camera Mix`. Git history and the `research/camera-quality` branch are preserved. USB work is on `research/usb-obs-latency`, branched from the camera research implementation; no quality-pass merge to main has been made.
 
+## Product direction (7 November 2026)
+
+The user chose: phone as live camera only, USB first then ADB Wireless debugging, phone preview, 4K/60 fps, any orientation, and optional audio. See [plan](PLAN.md#product-direction--7-november-2026). Physical USB proof comes first.
+
+| Milestone | Status | Evidence required |
+|---|---|---|
+| Physical USB live proof | **First real OBS image** (rear 1080p, hardware decode); user reported Stop/background/hide checks and a ~1-minute zero-drop run; sustained run and front camera (deferred) pending — see [first sessions](research/VIVO_V2437_USB_LIVE.md) | Real OBS image, lifecycle checks, ~5-minute run, front camera |
+| Any orientation, LIVE banner, phone preview (wire v2) | Implemented in app 0.3.0; synthetic hardware rotation tests pass; physical check pending | Portrait and both landscapes upright in OBS while rotating live; preview visible |
+| 60 fps, best-quality default, automatic reconnection | Not started | Measured fps within 1%; no manual prepare after USB reset |
+| Optional audio | Not started | Permission only when selected; sync within 33 ms |
+| ADB Wireless debugging | Not started | Wi-Fi fps/drops/stability compared with USB |
+
 ## Next phase steps
 
 1. Start an explicit phone-to-OBS live session using [USB live setup](USB_LIVE.md), initially rear 1080p30 HEVC at 10 Mb/s with HIGH_QUALITY selected to match the recent capture experiment.

@@ -10,6 +10,18 @@ The reference phone must approach stock **normal SDR rear-camera video** and rea
 
 After confirming AVC/HEVC capture and applied HIGH_QUALITY processing, the user explicitly requested proceeding with USB/OBS research. Controlled stock/probe quality remains **inconclusive**. The decision map below remains the product qualification rule; this exception permits exploratory implementation without declaring any gate passed. See [USB live setup and limitations](USB_LIVE.md).
 
+## Product direction — 7 November 2026
+
+The user's goal: use their own phone as an OBS camera on their laptop, choosing rear/front camera and quality on the phone, applying masks/filters and recording in OBS (built-in OBS features; no plugin work). The phone is only the camera during live sessions; no on-phone copy. Requested, in order:
+
+0. **Prove the existing USB path physically** (actual OBS image, stop/background/hide behaviour, short sustained run, front camera). Nothing below starts until this works.
+1. **Phone features, wire format v2:** profile frame rate (30/60 where advertised, 4K included), dependent camera → resolution → fps → codec → bitrate selectors, phone live preview (fail clearly if the camera rejects preview + profile), any orientation locked at Start with Mac-side hardware rotation.
+2. **Optional audio:** off by default; RECORD_AUDIO requested only when selected; 48 kHz PCM with phone-to-Mac clock mapping; 33 ms sync gate.
+3. **Wireless via ADB Wireless debugging:** same pipeline; host pairing/connect helpers; measure against USB.
+4. **Native Wi-Fi:** only if step 3 is insufficient and with separate approval (Internet permission, discovery, pairing, encryption).
+
+Advertised profiles stay unverified until captured; this direction does not pass any gate. Versions, release scope and platform order (Windows required, phased) are in the [roadmap](ROADMAP.md).
+
 ## Phase gates
 
 ```mermaid
