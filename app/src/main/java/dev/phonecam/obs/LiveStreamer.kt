@@ -27,7 +27,7 @@ import java.nio.ByteOrder
 class LiveStreamer(private val context: Context, private val profile: Profile,
                    private val highQuality: Boolean, initialRotation: Int,
                    private val preview: () -> Surface?,
-                   private val notify: (String, Boolean) -> Unit) {
+                   private val notify: (LiveState) -> Unit) {
     @Volatile private var rotation = initialRotation
     fun setRotation(degrees: Int) { require(degrees in setOf(0, 90, 180, 270)); rotation = degrees }
     private val thread = HandlerThread("phonecam-live-capture").apply { start() }
@@ -51,19 +51,19 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             if (lastFrameAt > 0 && SystemClock.elapsedRealtime() - lastFrameAt > 5_000) {
                 finish("Hardware encoder stalled for 5 seconds; restart live capture"); return
             }
-            message("● LIVE to OBS · ${profile.width}×${profile.height} · ${if (profile.mime == "video/avc") "H.264" else "H.265"} · ${profile.bitrate / 1_000_000} Mb/s · ${if (highQuality) "HQ" else "FAST"}\n${"%.1f".format(stats.fps)} fps · frames $sequence · drops ${transport.dropped} · picture turned ${rotation}° for OBS\nNothing is saved on the phone. Rotating keeps the session running.")
-            handler.postDelayed(this, 2_000)
+            post(LiveState(LiveState.Phase.LIVE, "Sending to OBS. Nothing is saved on the phone.", stats.fps, sequence, transport.dropped, rotation))
+            handler.postDelayed(this, 1_000)
         }
     }
     fun start() {
         handler.post {
             if (finished) return@post
-            message("Waiting for the Mac/OBS connection (30-second limit). No camera capture until the authenticated USB receiver connects.")
+            post(LiveState(LiveState.Phase.WAITING, "Waiting for OBS (30 seconds). Keep the PhoneCam source visible in OBS. The camera turns on once OBS connects."))
             transport.start()
         }
     }
     fun stop(reason: String = "Stopped by you") { handler.post { finish(reason) } }
-    private fun message(value: String, done: Boolean = false) { main.post { notify(value, done) } }
+    private fun post(state: LiveState) { main.post { notify(state) } }
 
     @SuppressLint("MissingPermission")
     private fun prepare() {
@@ -185,7 +185,13 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
         runCatching { camera?.close() }; camera = null
         runCatching { codec?.stop() }; runCatching { codec?.release() }; codec = null
         runCatching { input?.release() }; input = null
-        message("$reason\nLive capture stopped. $sequence encoded frames; ${transport.dropped} queue drops. No media saved.", true)
+        post(LiveState(LiveState.Phase.STOPPED, reason, stats.fps, sequence, transport.dropped, rotation))
         thread.quitSafely()
     }
+}
+
+/** What the screen shows. STOPPED is final for a session; [message] then explains why. */
+data class LiveState(val phase: Phase, val message: String, val fps: Double = 0.0, val frames: Long = 0,
+                     val drops: Long = 0, val rotation: Int = 0) {
+    enum class Phase { WAITING, LIVE, STOPPED }
 }

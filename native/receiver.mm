@@ -181,7 +181,7 @@ public:
 std::string defaultConfigPath() {
     return std::string([NSHomeDirectory() UTF8String]) + "/Library/Application Support/phonecam-obs/live.json";
 }
-void receive(std::atomic<bool> &stop, const std::string &configPath, const Output &output) {
+Endpoint loadEndpoint(const std::string &configPath) {
     @autoreleasepool {
         std::ifstream settings(configPath, std::ios::binary);
         char contents[4097]; settings.read(contents, sizeof(contents));
@@ -197,19 +197,36 @@ void receive(std::atomic<bool> &stop, const std::string &configPath, const Outpu
         std::string token = [tokenObject UTF8String];
         if (port < 1024 || port > 65535 || token.size() != 64 || token.find_first_not_of("0123456789abcdef") != std::string::npos)
             throw std::runtime_error("Invalid USB port/token");
+        return {port, token};
+    }
+}
+void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output) {
+    @autoreleasepool {
+        int port = endpoint.port;
+        std::string token = endpoint.token;
+        if (port < 1 || port > 65535 || token.size() != 64 || token.find_first_not_of("0123456789abcdef") != std::string::npos)
+            throw std::runtime_error("Invalid USB port/token");
         Socket socket; socket.fd = ::socket(AF_INET, SOCK_STREAM, 0);
         if (socket.fd < 0) throw std::runtime_error("Cannot allocate USB socket");
         int noSigpipe = 1; setsockopt(socket.fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, sizeof(noSigpipe));
         timeval timeout{1, 0}; setsockopt(socket.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
         sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(uint16_t(port)); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        if (connect(socket.fd, reinterpret_cast<sockaddr *>(&address), sizeof(address))) throw std::runtime_error("No ADB forward; run tools/live.py prepare");
+        if (connect(socket.fd, reinterpret_cast<sockaddr *>(&address), sizeof(address))) throw ConnectionRefused("No USB link to the phone");
         token += '\n';
         if (send(socket.fd, token.data(), token.size(), 0) != ssize_t(token.size())) throw std::runtime_error("USB authentication write failed");
         Decoder decoder(output);
         bool configured = false, waitingForKey = true, seen = false;
         uint64_t lastSequence = 0, lastPts = 0;
         while (!stop) {
-            uint8_t bytes[32]; readExact(socket.fd, bytes, sizeof(bytes), stop, seen ? 3 : 15);
+            uint8_t bytes[32];
+            if (!configured) {
+                // ADB accepts locally, then closes at once when the phone app is not listening.
+                try { readExact(socket.fd, bytes, sizeof(bytes), stop, 15); }
+                catch (const std::runtime_error &error) {
+                    if (std::string(error.what()) == "USB disconnected") throw NotStreaming("Waiting for Start live on the phone");
+                    throw;
+                }
+            } else readExact(socket.fd, bytes, sizeof(bytes), stop, seen ? 3 : 15);
             Header h = header(bytes);
             std::vector<uint8_t> body(h.length); readExact(socket.fd, body.data(), body.size(), stop);
             if (h.type == 1) {

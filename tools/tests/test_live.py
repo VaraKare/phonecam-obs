@@ -22,7 +22,7 @@ class LivePreparation(unittest.TestCase):
         calls = []
         def run(command):
             calls.append(command)
-            if command[-1] == "files/live-token": return token
+            if command[-1] == live.PAIRING_URI: return f"Row: 0 token={token}"
             if command[-1] == "--list": return forwards
             return ""
         with patch.object(live, "CONFIG", self.config), patch.object(live, "select_device", return_value=self.device), patch.object(live, "run", side_effect=run), patch("builtins.print"):
@@ -46,6 +46,11 @@ class LivePreparation(unittest.TestCase):
 
     def test_other_destination_is_preserved(self):
         with self.assertRaises(ResearchError): self.prepare("private-device tcp:27183 tcp:9000")
+
+    def test_pairing_uses_shell_only_content_query(self):
+        calls = self.prepare()
+        self.assertIn(self.device + ["shell", "content", "query", "--uri", live.PAIRING_URI], calls)
+        self.assertFalse(any("run-as" in call for call in calls))
 
     def test_invalid_token_creates_no_settings(self):
         with self.assertRaises(ResearchError): self.prepare(token="unexpected token")

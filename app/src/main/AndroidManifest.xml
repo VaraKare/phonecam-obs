@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
-    <application android:label="PhoneCam Probe" android:theme="@android:style/Theme.Material.Light.NoActionBar"
+    <application android:label="PhoneCam" android:theme="@android:style/Theme.Material.NoActionBar"
         android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@drawable/ic_probe" android:supportsRtl="true" android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize">
@@ -11,5 +11,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".BenchmarkActivity" android:exported="false" android:label="Research tools"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+        <!-- Answers only Android's shell user (an authorized ADB connection); see PairingProvider. -->
+        <provider android:name=".PairingProvider" android:authorities="dev.phonecam.obs.pairing"
+            android:exported="true" android:grantUriPermissions="false" />
     </application>
 </manifest>

@@ -3,12 +3,18 @@ package dev.phonecam.obs
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.Bundle
+import android.os.PowerManager
 import android.util.Size
 import android.view.Gravity
 import android.view.OrientationEventListener
@@ -16,51 +22,127 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
-import android.view.WindowManager
+import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.WindowManager
 import android.widget.*
-import java.io.File
 import java.util.concurrent.Executors
 
+/** Centers one child at a fixed aspect ratio (letterboxed), like a camera viewfinder. */
+class Stage(context: Context) : FrameLayout(context) {
+    var aspect = 16f / 9f
+        set(value) { field = value; requestLayout() }
+    var fitted: View? = null
+    override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+        super.onMeasure(widthSpec, heightSpec)
+        val child = fitted ?: return
+        if (measuredWidth == 0 || measuredHeight == 0) return
+        var w = measuredWidth; var h = (w / aspect).toInt()
+        if (h > measuredHeight) { h = measuredHeight; w = (h * aspect).toInt() }
+        child.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY))
+    }
+}
+
 class MainActivity : Activity() {
-    private lateinit var banner: TextView
-    private lateinit var status: TextView
+    private companion object {
+        const val RED = 0xFFC62828.toInt(); const val AMBER = 0xFFB26A00.toInt(); const val GREY = 0xFF4A4A4A.toInt()
+        const val BLUE = 0xFF1565C0.toInt(); const val PANEL = 0xFF161616.toInt(); const val CHIP = 0xCC000000.toInt()
+        const val MUTED = 0xFFB0B0B0.toInt()
+    }
+    private lateinit var prefs: SharedPreferences
+    private lateinit var root: LinearLayout
+    private lateinit var stage: Stage
     private lateinit var preview: SurfaceView
-    private lateinit var showPreview: CheckBox
-    private lateinit var profiles: Spinner
-    private lateinit var processing: CheckBox
-    private lateinit var limited: CheckBox
-    private lateinit var scene: Spinner
-    private lateinit var duration: Spinner
-    private lateinit var start: Button
-    private lateinit var liveStart: Button
-    private lateinit var scan: Button
-    private lateinit var stop: Button
-    private lateinit var delete: Button
-    private lateinit var scroll: ScrollView
+    private lateinit var placeholder: TextView
+    private lateinit var badge: TextView
+    private lateinit var thermal: TextView
+    private lateinit var stats: TextView
+    private lateinit var panelScroll: ScrollView
+    private lateinit var cameraRow: LinearLayout
+    private lateinit var quality: Spinner
+    private lateinit var detail: TextView
+    private lateinit var startButton: Button
+    private lateinit var settingsButton: Button
+    private lateinit var message: TextView
     private var options = emptyList<Profile>()
-    private var recorder: BenchmarkRecorder? = null
+    private var scanning = false
     private var live: LiveStreamer? = null
     private var liveProfile: Profile? = null
-    private val busy get() = recorder != null || live != null
     private var foreground = false
     private var destroyed = false
     @Volatile private var previewReady = false
     private var device = Orientation.UNKNOWN
     private lateinit var orientation: OrientationEventListener
     private val executor = Executors.newSingleThreadExecutor()
-    private val directory get() = File(filesDir, "benchmarks").apply { mkdirs() }
+
+    private var cameraId: String? get() = prefs.getString("camera", null); set(v) { prefs.edit().putString("camera", v).apply() }
+    private var choice: Quality
+        get() = runCatching { Quality.valueOf(prefs.getString("quality", "BEST")!!) }.getOrDefault(Quality.BEST)
+        set(v) { prefs.edit().putString("quality", v.name).apply() }
+    private var customKey: String? get() = prefs.getString("custom", null); set(v) { prefs.edit().putString("custom", v).apply() }
+    private var highQuality: Boolean get() = prefs.getBoolean("hq", true); set(v) { prefs.edit().putBoolean("hq", v).apply() }
+    private var showPreview: Boolean get() = prefs.getBoolean("preview", true); set(v) { prefs.edit().putBoolean("preview", v).apply() }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    private fun rounded(color: Int, radius: Int = 10) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
+    private fun chip(gravity: Int) = TextView(this).apply {
+        setTextColor(Color.WHITE); textSize = 13f; background = rounded(CHIP, 6); setPadding(dp(8), dp(4), dp(8), dp(4))
+        layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, gravity)
+            .apply { setMargins(dp(12), dp(12), dp(12), dp(12)) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val margin = (20 * resources.displayMetrics.density).toInt()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(margin, margin, margin, margin)
+        prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        LiveTransport.token(filesDir)
+
+        stage = Stage(this).apply { setBackgroundColor(Color.BLACK) }
+        preview = SurfaceView(this).apply {
+            visibility = View.INVISIBLE; contentDescription = "Camera preview"
+            holder.addCallback(object : SurfaceHolder.Callback {
+                override fun surfaceCreated(holder: SurfaceHolder) { previewReady = true }
+                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+                override fun surfaceDestroyed(holder: SurfaceHolder) { previewReady = false }
+            })
         }
-        scroll = ScrollView(this).apply { addView(root) }
-        setContentView(scroll)
-        scroll.setOnApplyWindowInsetsListener { view, insets ->
+        stage.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        stage.fitted = preview
+        placeholder = TextView(this).apply {
+            setTextColor(MUTED); textSize = 16f; gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        stage.addView(placeholder)
+        badge = chip(Gravity.TOP or Gravity.START).apply { typeface = Typeface.DEFAULT_BOLD; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        thermal = chip(Gravity.TOP or Gravity.END)
+        stats = chip(Gravity.BOTTOM or Gravity.START)
+        stage.addView(badge); stage.addView(thermal); stage.addView(stats)
+
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)) }
+        fun label(text: String) = TextView(this).apply { this.text = text; setTextColor(MUTED); textSize = 13f; setPadding(0, dp(8), 0, dp(4)); panel.addView(this) }
+        label("Camera")
+        cameraRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        panel.addView(cameraRow)
+        label("Quality")
+        quality = Spinner(this).apply { contentDescription = "Quality" }
+        panel.addView(quality)
+        detail = TextView(this).apply { setTextColor(MUTED); textSize = 13f }
+        panel.addView(detail)
+        startButton = Button(this).apply {
+            textSize = 18f; setTextColor(Color.WHITE); isAllCaps = false; typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { onStartPressed() }
+        }
+        panel.addView(startButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(16) })
+        message = TextView(this).apply { setTextColor(Color.WHITE); textSize = 14f; setPadding(0, dp(10), 0, dp(4)); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        panel.addView(message)
+        settingsButton = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            text = "Settings"; isAllCaps = false; setTextColor(MUTED); setOnClickListener { openSettings() }
+        }
+        panel.addView(settingsButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END })
+        panelScroll = ScrollView(this).apply { setBackgroundColor(PANEL); addView(panel) }
+
+        root = LinearLayout(this).apply { setBackgroundColor(Color.BLACK); addView(stage); addView(panelScroll) }
+        setContentView(root)
+        root.setOnApplyWindowInsetsListener { view, insets ->
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
@@ -70,68 +152,12 @@ class MainActivity : Activity() {
             }
             insets
         }
-        fun text(value: String, size: Float = 16f): TextView = TextView(this).apply {
-            text = value; textSize = size; setPadding(0, 12, 0, 12); root.addView(this)
-        }
-        fun button(value: String, click: () -> Unit): Button = Button(this).apply {
-            text = value; setOnClickListener { click(); scroll.smoothScrollTo(0, 0) }; root.addView(this)
-        }
-        fun spinner(label: String, values: List<String>): Spinner {
-            val heading = text(label)
-            return Spinner(this).apply {
-                id = View.generateViewId(); heading.labelFor = id; contentDescription = label
-                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, values)
-                root.addView(this)
-            }
-        }
-        text("PhoneCam", 26f)
-        banner = text("", 20f).apply {
-            typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setPadding(16, 20, 16, 20)
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        }
-        status = text("Scan the camera, choose a profile, then Start live. Any orientation works. Setup: docs/USB_LIVE.md")
-        status.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        preview = SurfaceView(this).apply {
-            visibility = View.GONE; contentDescription = "Camera preview"
-            holder.addCallback(object : SurfaceHolder.Callback {
-                override fun surfaceCreated(holder: SurfaceHolder) { previewReady = true }
-                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-                override fun surfaceDestroyed(holder: SurfaceHolder) { previewReady = false }
-            })
-        }
-        root.addView(FrameLayout(this).apply { addView(preview, FrameLayout.LayoutParams(0, 0, Gravity.CENTER_HORIZONTAL)) },
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        liveStart = button("Start live to OBS") { if (live != null) live?.stop() else startLive() }.apply { isEnabled = false }
-        showPreview = CheckBox(this).apply { text = "Show phone preview"; isChecked = true; root.addView(this) }
-        scan = button("Scan camera capabilities") { scanCapabilities() }
-        profiles = spinner("Camera and quality (none verified yet)", listOf("Scan capabilities first"))
-        processing = CheckBox(this).apply { text = "HIGH_QUALITY sharpening and noise reduction (may lower FPS)"; root.addView(this) }
-        limited = CheckBox(this).apply { text = "I accept limited profiles (720p or variable frame-rate range)"; root.addView(this) }
-        text("Research tools", 20f).setPadding(0, 48, 0, 12)
-        text("Benchmark recordings save test clips on this phone for quality comparisons. Live mode never saves anything. Benchmark capture has no preview and needs landscape.")
-        scene = spinner("Benchmark scene", listOf("well_lit_detail", "indoor_face", "low_light_motion", "backlit_subject"))
-        duration = spinner("Recording duration", listOf("15 seconds", "30 seconds", "60 seconds"))
-        start = button("Record benchmark clip") { record() }.apply { isEnabled = false }
-        stop = button("Stop benchmark recording") { recorder?.stop() }.apply { isEnabled = false }
-        delete = button("Delete benchmark clips") {
-            if (busy) return@button
-            AlertDialog.Builder(this).setTitle("Delete benchmark clips?")
-                .setMessage("Delete all benchmark reports and clips in ${directory.absolutePath}? Copies already collected on the Mac stay there. Live sessions never create files.")
-                .setNegativeButton("Keep", null).setPositiveButton("Delete") { _, _ ->
-                    val entries = directory.listFiles().orEmpty()
-                    val removed = entries.count { it.isFile && it.delete() }
-                    status.text = "Deleted $removed of ${entries.size} files. Remaining: ${directory.listFiles()?.size ?: 0}."
-                    options = emptyList(); start.isEnabled = false; liveStart.isEnabled = false
-                }.show()
-        }
-        profiles.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+        quality.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                processing.isChecked = false
-                processing.isEnabled = options.getOrNull(position)?.highQuality == true && !busy
+                qualityChoices().getOrNull(position)?.let { if (it != choice) { choice = it; refresh() } }
             }
         }
-        LiveTransport.token(filesDir)
         orientation = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
                 val next = Orientation.quantize(degrees, device)
@@ -141,57 +167,116 @@ class MainActivity : Activity() {
                 live?.setRotation(Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device))
             }
         }
-        showBanner(false)
+        arrange()
+        showState(null)
+        refresh()
     }
 
-    private fun showBanner(on: Boolean) {
-        banner.text = if (on) "● LIVE — camera on, sending to OBS" else "Camera off"
-        banner.setBackgroundColor(if (on) Color.rgb(196, 30, 30) else Color.rgb(90, 90, 90))
-        banner.setTextColor(Color.WHITE)
-        liveStart.text = if (on) "Stop live" else "Start live to OBS"
+    /** Portrait: viewfinder above the controls. Landscape: viewfinder left, controls right. */
+    private fun arrange() {
+        val portrait = resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
+        root.orientation = if (portrait) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        stage.layoutParams = LinearLayout.LayoutParams(if (portrait) ViewGroup.LayoutParams.MATCH_PARENT else 0,
+            if (portrait) 0 else ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+        panelScroll.layoutParams = if (portrait) LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            else LinearLayout.LayoutParams(dp(280), ViewGroup.LayoutParams.MATCH_PARENT)
+        val p = liveProfile ?: selected()
+        stage.aspect = if (p == null) (if (portrait) 9f / 16f else 16f / 9f)
+            else if (portrait) p.height.toFloat() / p.width else p.width.toFloat() / p.height
     }
 
-    private fun sizePreview(profile: Profile?) {
-        val p = profile ?: return
-        val metrics = resources.displayMetrics
-        val available = metrics.widthPixels - scroll.paddingLeft - scroll.paddingRight - (40 * metrics.density).toInt()
-        val maxHeight = (metrics.heightPixels * 0.55).toInt()
-        val portrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-        val (aspectW, aspectH) = if (portrait) p.height to p.width else p.width to p.height
-        var w = available; var h = w * aspectH / aspectW
-        if (h > maxHeight) { h = maxHeight; w = h * aspectW / aspectH }
-        preview.layoutParams = (preview.layoutParams as FrameLayout.LayoutParams).apply { width = w; height = h }
+    private fun qualityChoices() = listOfNotNull(Quality.BEST, Quality.HIGH, Quality.BALANCED, Quality.CUSTOM.takeIf { customKey != null })
+    private fun selected(): Profile? {
+        val id = cameraId ?: return null
+        return Quality.pick(options, id, choice, customKey)
+    }
+
+    /** Rebuilds the camera chips, quality list and button from the scan and saved settings. */
+    private fun refresh() {
+        val permitted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val cameras = Quality.cameras(options)
+        if (cameras.isNotEmpty() && cameras.none { it.first == cameraId }) cameraId = cameras.first().first
+        cameraRow.removeAllViews()
+        for ((id, name) in cameras) {
+            val on = id == cameraId
+            cameraRow.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                text = name; isAllCaps = false; setTextColor(if (on) Color.WHITE else MUTED)
+                background = rounded(if (on) BLUE else GREY, 8); isEnabled = live == null
+                contentDescription = "$name camera${if (on) ", selected" else ""}"
+                setOnClickListener { cameraId = id; refresh() }
+            }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(8) })
+        }
+        val choices = qualityChoices()
+        quality.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, choices.map { it.label })
+        quality.setSelection(choices.indexOf(choice).coerceAtLeast(0))
+        quality.isEnabled = live == null && options.isNotEmpty()
+        val profile = selected()
+        detail.text = when {
+            options.isEmpty() -> ""
+            profile == null -> "Not available on this camera. Choose another quality."
+            else -> Quality.describe(profile) + if (highQuality && profile.highQuality) " · HQ processing" else ""
+        }
+        settingsButton.isEnabled = live == null
+        when {
+            live != null -> { startButton.text = "Stop live"; startButton.background = rounded(RED, 12); startButton.isEnabled = true }
+            !permitted -> { startButton.text = "Allow camera access"; startButton.background = rounded(BLUE, 12); startButton.isEnabled = true }
+            scanning || options.isEmpty() -> { startButton.text = if (scanning) "Checking camera…" else "Check camera"; startButton.background = rounded(GREY, 12); startButton.isEnabled = !scanning }
+            else -> { startButton.text = "Start live to OBS"; startButton.background = rounded(BLUE, 12); startButton.isEnabled = profile != null }
+        }
+        if (live == null) arrange()
+    }
+
+    private fun showState(state: LiveState?) {
+        val phase = state?.phase ?: LiveState.Phase.STOPPED
+        badge.text = when (phase) { LiveState.Phase.LIVE -> "● LIVE"; LiveState.Phase.WAITING -> "Waiting for OBS"; else -> "Off" }
+        badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> GREY }, 6)
+        val p = liveProfile
+        stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
+        if (state != null && p != null) stats.text = "${Quality.describe(p).substringBefore(" ·")} · ${"%.0f".format(state.fps)} fps · ${state.drops} drops"
+        val heat = runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
+        thermal.text = when { heat >= PowerManager.THERMAL_STATUS_SEVERE -> "Hot — consider stopping"; heat >= PowerManager.THERMAL_STATUS_MODERATE -> "Warm"; else -> "Cool" }
+        thermal.background = rounded(if (heat >= PowerManager.THERMAL_STATUS_SEVERE) RED else if (heat >= PowerManager.THERMAL_STATUS_MODERATE) AMBER else CHIP, 6)
+        val previewing = phase != LiveState.Phase.STOPPED && showPreview
+        placeholder.visibility = if (phase == LiveState.Phase.LIVE && previewing) View.GONE else View.VISIBLE
+        placeholder.text = when (phase) {
+            LiveState.Phase.LIVE -> "Live. Preview is off."
+            LiveState.Phase.WAITING -> "Waiting for OBS…\nOpen OBS with the PhoneCam source visible."
+            else -> "Camera off\nNothing is recorded or saved on this phone."
+        }
     }
 
     /** Largest SurfaceHolder size with the profile's aspect ratio, at most 1080p (guaranteed PRIV preview + record). */
     private fun previewSize(profile: Profile): Size? {
         val map = getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)[
-            android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP] ?: return null
+            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP] ?: return null
         return map.getOutputSizes(SurfaceHolder::class.java).orEmpty()
             .filter { it.width * profile.height == it.height * profile.width && it.width <= 1920 && it.height <= 1080 }
             .maxByOrNull { it.width * it.height }
     }
 
-    private fun scanCapabilities() {
-        if (busy) return
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.CAMERA), 1); return
-        }
-        scan.isEnabled = false; delete.isEnabled = false; start.isEnabled = false; liveStart.isEnabled = false
-        status.text = "Scanning advertised camera and hardware encoder capabilities…"
+    private fun scan() {
+        if (scanning || live != null) return
+        scanning = true; message.text = "Checking what this phone's cameras support…"; refresh()
         executor.execute {
-            val result = runCatching { Capabilities.scan(this).also { writeJson(File(directory, "capabilities.json"), it.report) } }
+            val result = runCatching { Capabilities.scan(this).profiles }
             runOnUiThread {
                 if (destroyed) return@runOnUiThread
-                scan.isEnabled = true; delete.isEnabled = true
+                scanning = false
                 result.onSuccess {
-                    options = it.profiles
-                    profiles.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-                        options.map(Profile::toString).ifEmpty { listOf("No supported declared profile") })
-                    start.isEnabled = options.isNotEmpty(); liveStart.isEnabled = options.isNotEmpty()
-                    status.text = "${options.size} declared profiles. None verified.\nCapabilities saved to ${File(directory, "capabilities.json").absolutePath}.\n${it.report.optJSONArray("errors")}"
-                }.onFailure { status.text = "Scan failed: ${it.message}. Check camera permissions or close other camera apps." }
+                    options = it
+                    message.text = if (it.isEmpty()) "No supported camera profile was found on this phone." else "Ready. Open OBS with the PhoneCam source, then tap Start."
+                }.onFailure { message.text = "Camera check failed: ${it.message}. Close other camera apps and try again." }
+                refresh()
             }
+        }
+    }
+
+    private fun onStartPressed() {
+        when {
+            live != null -> live?.stop()
+            checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED -> requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
+            options.isEmpty() -> scan()
+            else -> startLive()
         }
     }
 
@@ -200,106 +285,102 @@ class MainActivity : Activity() {
         Surface.ROTATION_90 -> 90; Surface.ROTATION_180 -> 180; Surface.ROTATION_270 -> 270; else -> 0
     }
 
-    private fun record() {
-        if (!foreground || busy) return
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            status.text = "Camera permission was removed. Scan and grant permission again."; return
-        }
-        val profile = options.getOrNull(profiles.selectedItemPosition) ?: return
-        if (profile.limited && !limited.isChecked) {
-            status.text = "This profile is limited. Select the explicit limited-mode checkbox or choose a fixed 1080p/4K profile."; return
-        }
-        if (processing.isChecked && !profile.highQuality) {
-            status.text = "Both high-quality modes are not advertised for this camera."; return
-        }
-        if (resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) {
-            status.text = "Rotate the phone to landscape before recording a benchmark. Enable auto-rotate if rotation lock is active."; return
-        }
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        setRecording(true)
-        stop.isEnabled = true
-        recorder = BenchmarkRecorder(this, directory, profile, processing.isChecked,
-            listOf(15, 30, 60)[duration.selectedItemPosition], scene.selectedItem.toString(), displayDegrees()) { text, done ->
-            if (!destroyed) status.text = text
-            if (done) {
-                recorder = null
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                if (!destroyed) setRecording(false)
-            }
-        }.also { it.start() }
-    }
-
     private fun startLive() {
-        if (!foreground || busy) return
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            status.text = "Grant camera permission and scan again."; return
-        }
-        val profile = options.getOrNull(profiles.selectedItemPosition) ?: return
-        if (profile.limited && !limited.isChecked) { status.text = "Accept limited mode first, or choose a fixed 1080p profile."; return }
+        if (!foreground || live != null) return
+        val profile = selected() ?: run { message.text = "This quality isn't available on this camera."; return }
         if (device == Orientation.UNKNOWN) device = Orientation.fromDisplay(displayDegrees())
         val rotation = Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device)
-        val wantPreview = showPreview.isChecked
+        val wantPreview = showPreview
         if (wantPreview) {
             val size = previewSize(profile)
-            if (size == null) { status.text = "No preview size matches this profile. Turn off Show phone preview to stream without it."; return }
+            if (size == null) { message.text = "No preview size matches this quality. Turn off the phone preview in Settings, or pick another quality."; return }
             preview.holder.setFixedSize(size.width, size.height)
-            sizePreview(profile); preview.visibility = View.VISIBLE
+            preview.visibility = View.VISIBLE
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         liveProfile = profile
-        setRecording(true)
-        showBanner(true)
-        banner.text = "Waiting for OBS…"
-        banner.setBackgroundColor(Color.rgb(200, 120, 0))
-        live = LiveStreamer(this, profile, processing.isChecked, rotation,
-            { if (wantPreview && previewReady) preview.holder.surface else null }) { text, done ->
+        val hq = highQuality && profile.highQuality
+        live = LiveStreamer(this, profile, hq, rotation, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
             if (destroyed) return@LiveStreamer
-            status.text = text
-            if (text.startsWith("●")) showBanner(true)
-            if (done) {
+            showState(state)
+            message.text = state.message
+            if (state.phase == LiveState.Phase.STOPPED) {
+                if (state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
+                    message.text = "${state.message}\nIf this keeps happening, choose Quality: High."
                 live = null; liveProfile = null
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                preview.visibility = View.GONE
-                showBanner(false); setRecording(false)
+                preview.visibility = View.INVISIBLE
+                refresh()
             }
         }.also { it.start() }
-        liveStart.isEnabled = true  // the same button now stops the session
+        arrange(); refresh()
     }
 
-    private fun setRecording(recording: Boolean) {
-        start.isEnabled = !recording && options.isNotEmpty()
-        liveStart.isEnabled = live != null || (!recording && options.isNotEmpty())
-        stop.isEnabled = recorder != null
-        scan.isEnabled = !recording; delete.isEnabled = !recording
-        profiles.isEnabled = !recording; scene.isEnabled = !recording; duration.isEnabled = !recording
-        limited.isEnabled = !recording; showPreview.isEnabled = !recording
-        processing.isEnabled = !recording && options.getOrNull(profiles.selectedItemPosition)?.highQuality == true
+    private fun openSettings() {
+        if (live != null) return
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        val previewBox = CheckBox(this).apply { text = "Show phone preview while live"; isChecked = showPreview }
+        val hqBox = CheckBox(this).apply { text = "Extra sharpening and noise reduction (HIGH_QUALITY; may lower frame rate)"; isChecked = highQuality }
+        box.addView(previewBox); box.addView(hqBox)
+        var dialog: AlertDialog? = null
+        fun action(text: String, click: () -> Unit) = box.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            this.text = text; isAllCaps = false; gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setOnClickListener { dialog?.dismiss(); click() }
+        })
+        action("Custom quality…") { chooseCustom() }
+        action("Check cameras again") { options = emptyList(); refresh(); scan() }
+        action("Research tools (benchmark recordings)") { startActivity(Intent(this, BenchmarkActivity::class.java)) }
+        box.addView(TextView(this).apply {
+            textSize = 13f; setPadding(0, dp(12), 0, dp(8))
+            text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}. Live mode sends video to OBS over USB and never saves it on the phone. No microphone or Internet access."
+        })
+        dialog = AlertDialog.Builder(this).setTitle("Settings").setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Done") { _, _ -> showPreview = previewBox.isChecked; highQuality = hqBox.isChecked; refresh() }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun chooseCustom() {
+        val id = cameraId ?: return
+        val list = options.filter { it.cameraId == id }.sortedWith(compareBy<Profile> { it.limited }.thenByDescending { it.width }.thenByDescending { it.bitrate })
+        if (list.isEmpty()) return
+        AlertDialog.Builder(this).setTitle("Custom quality")
+            .setItems(list.map { Quality.describe(it) }.toTypedArray()) { _, index ->
+                val profile = list[index]
+                fun apply() { customKey = Quality.key(profile); choice = Quality.CUSTOM; refresh() }
+                if (!profile.limited) apply()
+                else AlertDialog.Builder(this).setTitle("Limited profile")
+                    .setMessage("This profile is lower resolution or uses a variable frame rate. Use it only if higher qualities fail on this phone.")
+                    .setNegativeButton("Cancel", null).setPositiveButton("Use it") { _, _ -> apply() }.show()
+            }.show()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 1 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) scanCapabilities()
-        else status.text = "Camera permission denied. Grant it in Android Settings → Apps → PhoneCam Probe → Permissions, then scan again."
+        if (requestCode == 1 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) scan()
+        else message.text = "Camera access is needed to stream. Allow it in Android Settings → Apps → PhoneCam → Permissions."
+        refresh()
     }
     override fun onResume() {
         super.onResume(); foreground = true
         if (orientation.canDetectOrientation()) orientation.enable()
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { if (options.isEmpty()) scan() }
+        else message.text = "PhoneCam turns this phone into a camera for OBS. Allow camera access to begin."
+        refresh()
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        recorder?.stop("orientation_changed")
         // Live sessions keep running; the Mac re-orients from the per-frame rotation tag.
-        if (live != null) sizePreview(liveProfile)
+        arrange()
     }
     override fun onPause() {
         foreground = false; orientation.disable()
-        recorder?.stop("app_backgrounded"); live?.stop("App left foreground")
+        live?.stop("App left the screen, so live stopped. Keep PhoneCam open while streaming.")
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onPause()
     }
     override fun onDestroy() {
         destroyed = true; orientation.disable()
-        recorder?.stop("activity_destroyed"); live?.stop("Activity destroyed"); executor.shutdown()
+        live?.stop("Activity destroyed"); executor.shutdown()
         super.onDestroy()
     }
 }

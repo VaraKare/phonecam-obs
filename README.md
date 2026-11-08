@@ -1,43 +1,121 @@
 # PhoneCam OBS
 
-Research toward using an Android phone as a native camera source in OBS on a Mac, over USB. **The research build includes a capability scanner, recording probe, and experimental native OBS USB source.** No device is verified yet.
+Use your Android phone's camera as a high-quality video source in [OBS Studio](https://obsproject.com) on your Mac, over a USB cable. Choose the rear or front camera and the quality on the phone, then add masks, filters and overlays and record or stream in OBS.
 
-The first question is whether an ordinary Android app can approach the stock camera's normal video quality. On 6 November 2026 the user elected to begin USB-to-OBS research before completing the controlled quality comparison. This changes the research sequence, not the acceptance criteria: a public product still requires both targets at the same settings.
+> **Preview release.** It has been tested on one phone (vivo V2437, Android 16) and one Mac (Apple M1, OBS 33.0.1). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. Windows support is planned; see the [roadmap](docs/ROADMAP.md).
 
-## Build
+- **Rear or front camera**, up to 4K where your phone allows it, encoded in hardware on the phone and decoded in hardware on the Mac.
+- **Any orientation:** portrait or landscape, and turning the phone during a session keeps the picture upright in OBS.
+- **Automatic connection:** plug in, open OBS, tap **Start live** on the phone. No commands to type.
+- **Private:** the phone saves nothing during live sessions. No microphone, no Internet access, no accounts, no analytics.
 
-Requires JDK 17+, Android SDK platform 36 and build tools 35.0.0. Android Studio is optional. Gradle is downloaded by the checked-in wrapper and verified by SHA-256.
+## What you need
+
+- An Android phone with Android 10 or newer, and a USB **data** cable (some cables only charge).
+- A Mac with Apple Silicon (M1 or newer) and [OBS Studio](https://obsproject.com) 33.
+- Android platform-tools (`adb`), a small free tool from Google that lets the Mac talk to the phone over USB.
+
+## Install (one time)
+
+### 1. Install adb on the Mac
+
+With [Homebrew](https://brew.sh):
 
 ```sh
-export ANDROID_HOME="$HOME/Library/Android/sdk"
-./gradlew testDebugUnitTest lintDebug assembleDebug
-python3 -m unittest discover -s tools/tests
+brew install android-platform-tools
 ```
 
-The APK is `app/build/outputs/apk/debug/app-debug.apk`. It is a debug-signed research build. CI builds it; public signing and installers are later milestones.
+Or download [SDK Platform-Tools for Mac](https://developer.android.com/tools/releases/platform-tools) and unzip it into `~/Library/Android/sdk/platform-tools`.
 
-## Use the probe
+### 2. Turn on USB debugging on the phone
 
-1. Follow [Android setup](docs/ANDROID_SETUP.md). USB debugging is needed only for installing and collecting research files; recording itself runs locally on the phone.
-2. Run `python3 tools/phonecam.py doctor`, then `python3 tools/phonecam.py install`.
-3. Open **PhoneCam Probe**, grant camera access, and scan capabilities.
-4. Frame the stock-camera baseline on a tripod. The probe uses encoder-only capture without a preview to keep the research stream combination simple; keep the phone in position.
-5. Select a declared profile and processing mode. Press **Record benchmark** to make an explicit, timed, video-only recording. Stop/background/lock the app to stop capture.
-6. Run `python3 tools/phonecam.py collect` to copy reports and clips to `benchmarks/raw/` on this Mac.
-7. Follow [the benchmark procedure](docs/BENCHMARKS.md) for stock/scrcpy comparisons, blind scoring, and the quality gate.
+1. Open **Settings → About phone** and tap **Build number** seven times until it says you're a developer. On some phones it's under **Software information**.
+2. Go back to **Settings → System → Developer options** (location varies by phone maker) and turn on **USB debugging**.
+3. Connect the phone to the Mac. When the phone asks **Allow USB debugging?**, tick **Always allow from this computer** and tap **Allow**.
 
-Recordings live in the app's private `files/benchmarks` directory until **Delete benchmark files** or uninstall. Collection copies files; it does not delete them. The app displays paths and deletion results. There is no background recording, microphone capture, or network permission.
+<!-- IMAGE: docs/images/android-build-number.png — tapping Build number -->
+<!-- IMAGE: docs/images/android-usb-debugging.png — Developer options with USB debugging on -->
+<!-- IMAGE: docs/images/android-allow-debugging.png — the Allow USB debugging prompt -->
 
-## Experimental USB live mode
+Only allow debugging from computers you trust. You can turn it off again in Developer options at any time.
 
-Follow [USB live setup](docs/USB_LIVE.md). Native code currently targets Apple Silicon and OBS 33.0.0 or 33.0.1, using Apple command-line tools. Build/install the plugin with `python3 tools/build_native.py --install`; prepare forwarding with `python3 tools/live.py prepare`. Add **PhoneCam USB (Research)** to an OBS scene, then tap **Start USB live** in the foreground phone app. Live mode saves no media and uses no Internet permission.
+### 3. Install the phone app
 
-## Status and support
+Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on the phone and open it. Android asks you to allow installing apps from your browser or file manager the first time; allow it for this install only.
 
-Android 10+ is the API minimum, not a universal compatibility guarantee. Profiles are **compatible, unverified** until physically tested, **limited** only with explicit opt-in, or **unsupported** with a reason. A verified label requires the complete quality, optical-latency, and stability evidence; this probe does not assign it.
+<!-- IMAGE: docs/images/android-install-apk.png — installing the APK -->
 
-Reference Mac during development: Apple M1, macOS 26.6.2, OBS 33.0.1 (initially 33.0.0). The reference Vivo identifies itself as V2437, Android 16. Short rear 1080p30 AVC/HEVC recordings succeeded, including applied HIGH_QUALITY processing; controlled quality, live optical latency, and sustained reliability remain unverified.
+### 4. Install the OBS plugin
 
-See [roadmap](docs/ROADMAP.md), [plan](docs/PLAN.md), [phase tracker](docs/PHASES.md), [branch workflow](CONTRIBUTING.md), and [data handling](docs/DATA.md).
+1. Quit OBS.
+2. Download `PhoneCam-OBS-plugin-macos-arm64-<version>.zip` from the [latest release](../../releases) and unzip it.
+3. Copy `phonecam-usb.plugin` into `~/Library/Application Support/obs-studio/plugins/` (in Finder: **Go → Go to Folder…**, paste the path; create the `plugins` folder if it's missing).
+4. The preview plugin isn't signed by Apple, so macOS blocks downloaded copies. Open **Terminal** and run:
 
-Original source: GPL-2.0-or-later; see LICENSE and NOTICE for third-party tooling notices.
+   ```sh
+   xattr -dr com.apple.quarantine ~/Library/Application\ Support/obs-studio/plugins/phonecam-usb.plugin
+   ```
+
+<!-- IMAGE: docs/images/mac-plugins-folder.png — the plugin in the OBS plugins folder -->
+
+## Use it
+
+1. Connect the phone with the USB cable and open **PhoneCam** on the phone. Allow camera access the first time.
+2. Open OBS. In **Sources**, click **+** and choose **PhoneCam (USB phone camera)**, then **OK**.
+3. On the phone, pick **Rear** or **Front** and a **Quality** (Best is the default), then tap **Start live to OBS**.
+4. The phone shows **● LIVE** and your camera appears in OBS within a few seconds.
+5. Recommended: right-click the source → **Transform → Edit Transform** and set **Bounding Box Type** to **Scale to inner bounds**, so portrait and landscape both fit your canvas automatically.
+6. Add masks and filters as with any camera: right-click the source → **Filters** (for example **Image Mask/Blend**, **Crop/Pad**, **Color Correction**, **Chroma Key**). Then use OBS's **Start Recording** or **Start Streaming**.
+7. Tap **Stop live** on the phone when you're done.
+
+<!-- IMAGE: docs/images/obs-add-source.png — Sources, +, PhoneCam -->
+<!-- IMAGE: docs/images/phone-live.png — the phone showing LIVE -->
+<!-- IMAGE: docs/images/obs-bounding-box.png — Edit Transform, Bounding Box Type -->
+<!-- IMAGE: docs/images/obs-filters-mask.png — adding an Image Mask/Blend filter -->
+
+To use the phone in Zoom, Meet or Teams, add it to an OBS scene and click **Start Virtual Camera** in OBS.
+
+### Quality choices
+
+| Choice | What it picks | When to use it |
+|---|---|---|
+| **Best** | The largest size your phone offers (often 4K), H.265, highest bitrate | Recording, when your phone stays cool |
+| **High** | 1080p, highest bitrate | Live streaming; if Best fails or gets hot |
+| **Balanced** | 1080p at about 10 Mb/s | Older phones, long sessions |
+| **Custom** | Any profile from **Settings → Custom quality** | Fine-tuning |
+
+**Settings** on the phone also has the phone preview switch and extra sharpening/noise reduction (on by default; turn it off if the frame rate drops).
+
+## Troubleshooting
+
+Open the OBS source's **Properties**. The **Status** line says what the plugin is waiting for.
+
+| Status or symptom | What to do |
+|---|---|
+| "adb not found" | Install platform-tools (step 1). If it's somewhere unusual, put its full path in the source's **adb path** field. |
+| "Connect the phone with a USB data cable" | Try another cable or USB port. Check that USB debugging is on. |
+| "Unlock the phone and tap Allow" | Unlock the phone and accept the USB debugging prompt. |
+| "Install the PhoneCam app" | Install the phone app (step 3). |
+| "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |
+| Live stops when you switch apps | Keep PhoneCam open on screen while streaming. Locking the phone or leaving the app stops the camera on purpose. |
+| Phone says "Warm" or "Hot" | Choose **High** or **Balanced**, take the case off, or keep the phone out of the sun. |
+| Picture is too big or small in OBS | Right-click the source → **Transform → Fit to Screen**, or set the bounding box as in step 5. |
+
+Still stuck? Open an issue with your phone model, Android version, OBS version and the Status text.
+
+## Privacy
+
+The phone app has only the Camera permission. It has no microphone, Internet, location or storage access. Live video goes over the USB cable to OBS on your Mac and is never saved on the phone. The connection is protected by a key that only an authorized USB debugging connection can read. The optional **Research tools** in Settings can save test clips on the phone, but only when you tap Record there.
+
+## Uninstall
+
+- Phone: long-press PhoneCam → **Uninstall**. Turn off USB debugging if you no longer need it.
+- Mac: quit OBS and delete `~/Library/Application Support/obs-studio/plugins/phonecam-usb.plugin`.
+
+## Project
+
+- [Roadmap](docs/ROADMAP.md): upcoming camera controls, Windows, audio, Wi-Fi.
+- [Building from source and research tools](docs/DEVELOPMENT.md).
+- [How the USB connection works](docs/USB_LIVE.md), [phase tracker](docs/PHASES.md), [plan](docs/PLAN.md), [branch workflow](CONTRIBUTING.md), [data handling](docs/DATA.md).
+
+License: GPL-2.0-or-later. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

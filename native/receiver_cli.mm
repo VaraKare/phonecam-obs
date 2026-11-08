@@ -1,13 +1,19 @@
-#include "receiver.hpp"
+#include "adb.hpp"
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
+#include <cstring>
 
 static std::atomic<bool> stopped{false};
 static void stop(int) { stopped = true; }
 int main(int argc, char **argv) {
-    if (argc != 3) { fprintf(stderr, "Usage: phonecam-receive CONFIG_JSON FRAME_COUNT\nNo media is saved. Requires an explicitly started phone stream.\n"); return 2; }
+    // phonecam-receive CONFIG_JSON FRAMES      (tools/live.py prepare settings)
+    // phonecam-receive --auto FRAMES [ADB]     (find, pair and forward automatically, like the OBS source)
+    bool automatic = argc >= 3 && !strcmp(argv[1], "--auto");
+    if (!(automatic ? (argc == 3 || argc == 4) : argc == 3)) {
+        fprintf(stderr, "Usage: phonecam-receive CONFIG_JSON FRAME_COUNT | --auto FRAME_COUNT [ADB_PATH]\nNo media is saved. Requires an explicitly started phone stream.\n"); return 2;
+    }
     char *end = nullptr;
     long requested = strtol(argv[2], &end, 10);
     if (!end || *end || requested < 1 || requested > 216000) return 2;
@@ -16,7 +22,7 @@ int main(int argc, char **argv) {
     size_t lastWidth = 0, lastHeight = 0;
     auto began = std::chrono::steady_clock::now();
     try {
-        phonecam::receive(stopped, argv[1], [&](CVPixelBufferRef image, uint64_t seq, uint64_t pts) {
+        auto onFrame = [&](CVPixelBufferRef image, uint64_t seq, uint64_t pts) {
             if (!frames) {
                 firstPts = pts; firstSeq = seq;
                 began = std::chrono::steady_clock::now();
@@ -27,11 +33,15 @@ int main(int argc, char **argv) {
             lastWidth = width; lastHeight = height;
             ++frames; lastPts = pts; lastSeq = seq;
             if (frames >= uint64_t(requested)) stopped = true;
-        });
+        };
+        if (automatic) {
+            std::string adb = argc == 4 ? argv[3] : "";
+            phonecam::autoReceive(stopped, [&] { return adb; }, [](const std::string &value) { fprintf(stderr, "%s\n", value.c_str()); }, onFrame);
+        } else phonecam::receive(stopped, phonecam::loadEndpoint(argv[1]), onFrame);
         double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
-        printf("{\"decodedFrames\":%llu,\"firstSequence\":%llu,\"lastSequence\":%llu,\"firstPhonePtsUs\":%llu,\"lastPhonePtsUs\":%llu,\"receiveSpanSeconds\":%.6f,\"lastWidth\":%zu,\"lastHeight\":%zu,\"sizeChanges\":%llu,\"hardwareDecode\":true,\"opticalLatency\":\"not_measured\"}\n",
+        printf("{\"decodedFrames\":%llu,\"firstSequence\":%llu,\"lastSequence\":%llu,\"firstPhonePtsUs\":%llu,\"lastPhonePtsUs\":%llu,\"receiveSpanSeconds\":%.6f,\"lastWidth\":%zu,\"lastHeight\":%zu,\"sizeChanges\":%llu,\"hardwareDecode\":%s,\"opticalLatency\":\"not_measured\"}\n",
             (unsigned long long)frames, (unsigned long long)firstSeq, (unsigned long long)lastSeq,
-            (unsigned long long)firstPts, (unsigned long long)lastPts, seconds, lastWidth, lastHeight, (unsigned long long)sizeChanges);
+            (unsigned long long)firstPts, (unsigned long long)lastPts, seconds, lastWidth, lastHeight, (unsigned long long)sizeChanges, frames ? "true" : "false");
         return frames == uint64_t(requested) ? 0 : 1;
     } catch (const std::exception &error) { fprintf(stderr, "Receive failed after %llu frames: %s\n", (unsigned long long)frames, error.what()); return 1; }
 }

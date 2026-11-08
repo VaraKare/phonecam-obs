@@ -17,8 +17,8 @@ python3 tools/phonecam.py install
 ```
 
 1. Open **PhoneCam Probe** on the connected/unlocked phone. Accept camera permission if needed. Opening the app does not start capture.
-2. Run `python3 tools/live.py prepare`. It reads a private debug token and creates an ADB forward to the app's abstract local socket. No camera starts.
-3. Open OBS; if it was open during plugin installation, restart it after saving your work. Add a source using **Sources → + → PhoneCam USB (Research)**. Keep that source visible. It may remain black until the phone starts.
+2. Open OBS; if it was open during plugin installation, restart it after saving your work. Add a source using **Sources → + → PhoneCam (USB phone camera)** (the source id is unchanged, so older scenes keep it). Keep that source visible. Its **Properties → Status** line shows what it is waiting for.
+3. Pairing and forwarding are automatic (since 0.1.0-alpha.1): while visible, the source finds `adb`, lists authorized phones, reads the connection key with `adb shell content query --uri content://dev.phonecam.obs.pairing/token` (the app answers only Android's shell user, uid 2000), creates `adb forward tcp:0 localabstract:phonecam-live-v1`, and retries every second. A refused connection means the forward is gone (unplug/USB reset), so it re-detects; a connection closed before any header means no phone session yet. The key is re-read every 15 seconds while idle, so a reinstalled app re-pairs. The forward is removed when the source is hidden or removed. `tools/live.py prepare` remains only for the command-line receiver.
 4. On the phone, tap **Scan camera capabilities**. Select **rear Camera 0, 1920×1080, H.265, 10 Mb/s**, then check **HIGH_QUALITY** to match the recent Vivo HQ capture settings. Selecting a different profile clears that checkbox. A different phone should use its own declared profile; this is not a universal recommendation.
 5. Hold the phone any way up. Tap **Start live to OBS** yourself. The banner turns orange while waiting (up to 30 seconds) and red **● LIVE** once frames flow; the optional phone preview appears under it. Keep the app visible. The camera opens only after authentication. Turning the phone keeps the session running: each frame carries the clockwise rotation, measured from gravity (works with rotation lock on), and the Mac turns the picture upright in hardware. Turning to portrait changes the OBS source to a tall shape; set the source's **Transform → Edit Transform → Bounding Box Type** to *Scale to inner bounds* so it always fits. The same button stops the session.
 6. OBS should show the live image. If it exceeds the canvas, right-click the source → **Transform → Fit to Screen**. The app shows encoded-frame/drop counts. OBS's log should contain `[phonecam] USB video connected` and confirmation that VideoToolbox hardware decoding is active.
@@ -38,7 +38,7 @@ The receiver submits one access unit at a time and waits for hardware completion
 
 ## Wire format v2
 
-The receiver first writes 64 lowercase hex token bytes plus LF. Server authentication occurs before camera open. All following integers are unsigned, network byte order. Header size is exactly 32 bytes:
+The receiver first writes 64 lowercase hex token bytes plus LF. The phone allows up to five wrong keys per Start (stale keys after reinstall, stray local connections) before ending the session. Server authentication occurs before camera open. All following integers are unsigned, network byte order. Header size is exactly 32 bytes:
 
 | Offset | Size | Meaning |
 |---|---|---|
@@ -65,8 +65,8 @@ The tests in `tools/test_native.py` synthesize AVC/HEVC packets and exercise rea
 ## Troubleshooting
 
 - **Source missing:** verify OBS 33.0.0 or 33.0.1, rerun the native build, open OBS outside safe mode and restart it. The local plugin is ad-hoc signed, not a notarized release.
-- **Black preview:** keep the source visible; check the phone status; rerun prepare after USB reconnection; scan/select settings before Start. Another receiver or OBS source may already own the one session.
-- **Timeout/connection lost:** tap Stop if necessary, unlock/re-authorize the phone, run prepare, and tap Start again. No source can bypass the explicit phone action.
+- **Black preview:** keep the source visible; read the source's Status line; choose settings before Start. Another receiver or OBS source may already own the one session.
+- **Timeout/connection lost:** tap Stop if necessary, unlock/re-authorize the phone, and tap Start again; the source reconnects by itself. No source can bypass the explicit phone action.
 - **Hardware decoder or unsupported-format error:** use a declared SDR 1080p profile. AVC and HEVC must each be qualified separately. No silent software fallback is used.
-- **ADB port conflict:** the preparation tool refuses to replace another device/destination's forward. Inspect `adb forward --list`; explicitly remove the unwanted forward, then prepare again.
+- **ADB port conflict (command-line receiver only):** the preparation tool refuses to replace another device/destination's forward. Inspect `adb forward --list`; explicitly remove the unwanted forward, then prepare again. The OBS source asks ADB for a free port, so it does not conflict.
 - **Need to uninstall:** remove only `~/Library/Application Support/obs-studio/plugins/phonecam-usb.plugin`; remove `~/Library/Application Support/phonecam-obs/live.json` and the selected device's `tcp:27183` ADB forward. Phone benchmark evidence is untouched.

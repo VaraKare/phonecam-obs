@@ -9,6 +9,7 @@ import struct
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +83,60 @@ class NativeIntegration(unittest.TestCase):
             payload = b"".join(b"\0\0\0\1" + n for n in group)
             packets.append(packet(2, payload, int(key) | turns(seq) << 1, seq, seq * 33333))
         return packets
+
+    def test_automatic_pairing_forward_and_retry(self):
+        """Fake adb: lists one phone, returns its key, forwards to a local server. The first
+        connection is closed at once (phone not started), the second streams video."""
+        token = "b" * 64
+        packets = self.encoded_packets(True, width=1920, height=1080)
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as server:
+            server.bind(("127.0.0.1", 0)); server.listen(2); server.settimeout(15)
+            log = Path(directory) / "adb.log"
+            fake = Path(directory) / "adb"
+            fake.write_text(f"""#!/bin/sh
+echo "$@" >> '{log}'
+case "$*" in
+  devices) printf 'List of devices attached\\nFAKE1\\tdevice\\n' ;;
+  *"content query"*) printf 'Row: 0 token={token}\\n' ;;
+  *"forward tcp:0"*) printf '{server.getsockname()[1]}\\n' ;;
+esac
+""")
+            fake.chmod(0o755)
+            received = []
+
+            def phone():
+                with server.accept()[0] as first: first.recv(65)  # not started yet: close immediately
+                with server.accept()[0] as client:
+                    auth = b""
+                    while len(auth) < 65:
+                        value = client.recv(65 - len(auth))
+                        if not value: break
+                        auth += value
+                    received.append(auth)
+                    for data in packets: client.sendall(data)
+                    try: client.recv(1)
+                    except OSError: pass
+
+            worker = threading.Thread(target=phone, daemon=True); worker.start()
+            result = subprocess.run([str(RECEIVER), "--auto", "12", str(fake)], capture_output=True, text=True, timeout=30)
+            worker.join(10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(received, [(token + "\n").encode()])
+            self.assertEqual(json.loads(result.stdout)["decodedFrames"], 12)
+            self.assertIn("Ready. Tap Start live on the phone.", result.stderr)
+            calls = log.read_text()
+            self.assertIn("-s FAKE1 shell content query --uri content://dev.phonecam.obs.pairing/token", calls)
+            self.assertIn("-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1", calls)
+            self.assertIn(f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}", calls)
+
+    def test_missing_adb_reports_guidance(self):
+        process = subprocess.Popen([str(RECEIVER), "--auto", "1", "/nonexistent/adb"], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
+        try:
+            time.sleep(1)
+        finally:
+            process.terminate()
+            _, errors = process.communicate(timeout=10)
+        self.assertIn("not an executable", errors)
 
     def test_avc_hardware_decode(self): self.exchange(self.encoded_packets(width=1920, height=1080), 12)
     def test_hevc_hardware_decode(self): self.exchange(self.encoded_packets(True, width=1920, height=1080), 12)

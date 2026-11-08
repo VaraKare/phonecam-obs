@@ -18,6 +18,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
         const val MAX_PAYLOAD = 4 * 1024 * 1024
         /** v2: frame flags bits 1-2 carry the clockwise quarter turns for upright display. */
         const val VERSION = 2
+        const val MAX_AUTH_FAILURES = 5
         fun token(directory: File): String {
             val file = File(directory, "live-token")
             val atomic = android.util.AtomicFile(file)
@@ -43,7 +44,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
     fun start() {
         watchdog.scheduleAtFixedRate({
             if (!closed && SystemClock.elapsedRealtime() > deadline) {
-                close(); failed("USB connection timed out. Check the cable/ADB forward, then tap Start USB live again.")
+                close(); failed("OBS did not connect within 30 seconds. Check the USB cable, open OBS with the PhoneCam source visible, then tap Start again.")
             }
         }, 250, 250, TimeUnit.MILLISECONDS)
         Thread({
@@ -52,19 +53,18 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
                 server = listener
                 if (closed) { listener.close(); return@Thread }
                 deadline = SystemClock.elapsedRealtime() + 30_000
-                val client = listener.accept()
-                socket = client
-                if (closed) { client.close(); return@Thread }
-                client.soTimeout = 2_000
-                deadline = SystemClock.elapsedRealtime() + 2_000
-                val auth = ByteArray(65)
-                val input = client.inputStream
-                var offset = 0
-                while (offset < auth.size) {
-                    val count = input.read(auth, offset, auth.size - offset)
-                    check(count > 0) { "USB authentication interrupted" }; offset += count
+                // The OBS plugin retries automatically, so a stale key (e.g. after reinstalling) or a
+                // stray local connection must not end the session. Bounded: 5 failures per Start.
+                var failures = 0
+                var client: LocalSocket
+                while (true) {
+                    client = listener.accept()
+                    socket = client
+                    if (closed) { client.close(); return@Thread }
+                    if (authenticate(client)) break
+                    runCatching { client.close() }; socket = null
+                    check(++failures < MAX_AUTH_FAILURES) { "Rejected $failures connections with the wrong key. Reconnect the USB cable so OBS re-pairs, then tap Start again." }
                 }
-                check(MessageDigest.isEqual(auth, "$token\n".toByteArray(Charsets.US_ASCII))) { "USB authentication failed; run tools/live.py prepare again" }
                 deadline = Long.MAX_VALUE
                 connected()
                 val output = DataOutputStream(client.outputStream)
@@ -82,6 +82,20 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
             } finally { close() }
         }, "phonecam-usb-writer").start()
     }
+    /** Reads the receiver's key line with a 2-second limit; constant-time comparison. */
+    private fun authenticate(client: LocalSocket): Boolean = runCatching {
+        client.soTimeout = 2_000
+        val auth = ByteArray(65)
+        val input = client.inputStream
+        var offset = 0
+        while (offset < auth.size) {
+            val count = input.read(auth, offset, auth.size - offset)
+            if (count <= 0) return false
+            offset += count
+        }
+        MessageDigest.isEqual(auth, "$token\n".toByteArray(Charsets.US_ASCII))
+    }.getOrDefault(false)
+
     fun configure(value: ByteArray) {
         require(value.size <= 65536) { "Encoder configuration too large" }
         check(configuration == null) { "Encoder changed format; restart the stream" }

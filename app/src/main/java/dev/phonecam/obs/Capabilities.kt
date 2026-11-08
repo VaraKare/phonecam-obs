@@ -17,13 +17,15 @@ import java.security.MessageDigest
 
 data class Profile(
     val cameraId: String, val width: Int, val height: Int, val mime: String,
-    val encoder: String, val bitrate: Int, val fpsRange: Range<Int>,
+    val encoder: String, val bitrate: Int, val fpsLower: Int, val fpsUpper: Int,
     val sensorOrientation: Int, val facing: Int, val highQuality: Boolean,
     val edgeModes: Set<Int>, val noiseModes: Set<Int>, val limited: Boolean,
 ) {
+    /** Camera2 request value. Plain ints keep Profile usable in JVM unit tests. */
+    val fpsRange: Range<Int> get() = Range(fpsLower, fpsUpper)
     fun json(hq: Boolean): JSONObject = JSONObject().apply {
         put("cameraId", cameraId); put("width", width); put("height", height)
-        put("fps", 30); put("fpsRange", JSONArray(listOf(fpsRange.lower, fpsRange.upper)))
+        put("fps", 30); put("fpsRange", JSONArray(listOf(fpsLower, fpsUpper)))
         put("mime", mime); put("encoder", encoder); put("bitrate", bitrate)
         put("processing", if (hq) "high_quality" else "fast")
         put("edgeMode", processingMode(hq, edgeModes)); put("noiseMode", processingMode(hq, noiseModes))
@@ -112,7 +114,7 @@ object Capabilities {
                         for (rate in if (s.width == 3840) listOf(20, 40, 60) else if (s.width == 1920) listOf(5, 10, 20) else listOf(3, 5)) {
                             val bitrate = rate * 1_000_000
                             if (!bitrateRange.contains(bitrate)) continue
-                            profiles.add(Profile(id, s.width, s.height, mime, encoder.name, bitrate, fpsRange,
+                            profiles.add(Profile(id, s.width, s.height, mime, encoder.name, bitrate, fpsRange.lower, fpsRange.upper,
                                 c[CC.SENSOR_ORIENTATION] ?: 0, facing,
                                 CR.EDGE_MODE_HIGH_QUALITY in edge && CR.NOISE_REDUCTION_MODE_HIGH_QUALITY in noise,
                                 edge, noise, s.width < 1920 || fpsRange.lower != 30 || fpsRange.upper != 30))

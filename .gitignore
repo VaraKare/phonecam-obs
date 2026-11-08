@@ -14,3 +14,5 @@ benchmarks/reviews/
 benchmarks/results/
 *.keystore
 *.jks
+dist/
+keystore.properties
