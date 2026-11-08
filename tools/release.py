@@ -27,7 +27,7 @@ INSTALL_TEXT = """PhoneCam OBS plugin {version} (macOS, Apple Silicon, OBS 33)
 3. This preview is not signed by Apple, so macOS blocks downloaded copies. In Terminal run:
      xattr -dr com.apple.quarantine ~/Library/Application\\ Support/obs-studio/plugins/phonecam-usb.plugin
 4. Install Android platform-tools (adb), e.g. `brew install android-platform-tools`.
-5. Open OBS, Sources > + > PhoneCam (USB phone camera).
+5. Open OBS, Sources > + > PhoneCam (phone camera).
 
 Full guide, troubleshooting and source code: see the README in the GitHub repository.
 License: GPL-2.0-or-later (COPYING-GPL-2.0.txt). Third-party notices: NOTICE.txt.

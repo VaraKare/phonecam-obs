@@ -1,6 +1,6 @@
 # PhoneCam OBS
 
-Use your Android phone's camera as a high-quality video source in [OBS Studio](https://obsproject.com) on your Mac, over a USB cable. Choose the rear or front camera and the quality on the phone, then add masks, filters and overlays and record or stream in OBS.
+Use your Android phone's camera as a high-quality video source in [OBS Studio](https://obsproject.com) on your Mac, over a USB cable or Wi-Fi. Choose the rear or front camera and the quality on the phone, then add masks, filters and overlays and record or stream in OBS.
 
 > **Preview release.** It has been tested on one phone (vivo V2437, Android 16) and one Mac (Apple M1, OBS 33.0.1). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. Windows support is planned; see [which phones and computers work](docs/COMPATIBILITY.md) and the [roadmap](docs/ROADMAP.md).
 
@@ -61,7 +61,7 @@ Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on t
 ## Use it
 
 1. Connect the phone with the USB cable and open **PhoneCam** on the phone. Allow camera access the first time.
-2. Open OBS. In **Sources**, click **+** and choose **PhoneCam (USB phone camera)**, then **OK**.
+2. Open OBS. In **Sources**, click **+** and choose **PhoneCam (phone camera)**, then **OK**.
 3. On the phone, pick **Rear** or **Front** and a **Quality** (Best is the default), then tap **Start live to OBS**.
 4. The phone shows **● LIVE** and your camera appears in OBS within a few seconds.
 5. The picture fits your canvas automatically, in portrait and landscape. If you had already moved or resized the source, open its **Properties** and click **Fit to canvas now**. For full-screen vertical video, set the canvas to 1080×1920 in **Settings → Video**.
@@ -74,6 +74,25 @@ Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on t
 <!-- IMAGE: docs/images/obs-filters-mask.png — adding an Image Mask/Blend filter -->
 
 To use the phone in Zoom, Meet or Teams, add it to an OBS scene and click **Start Virtual Camera** in OBS.
+
+### Without a cable: Wi-Fi (Wireless debugging)
+
+Uses Android's **Wireless debugging** (Android 11 or newer). The phone and Mac only need to be on the **same Wi-Fi network**; no Internet access is needed. A home router with the Internet down works. Video goes straight from the phone to the Mac over your local network, with the same pairing key as USB.
+
+**Pair once:**
+1. On the phone, open **Developer options → Wireless debugging**, turn it on (allow the network if asked), then tap **Pair device with pairing code**.
+2. In OBS, open the PhoneCam source's **Properties**. Type the **IP address & Port** and the **6-digit code** the phone shows, then click **Pair over Wi-Fi**.
+
+**Every time after that:** turn **Wireless debugging** on (tip: in Developer options → **Quick settings developer tiles**, add the Wireless debugging tile), keep the phone on the same Wi-Fi, and tap **Start live**. The plugin finds the phone by itself and the Status line says **Live over Wi-Fi**. If the cable is also plugged in, USB is used.
+
+Good to know:
+- Wi-Fi carries less than a cable. Start with **High** (1080p). Use 4K **Best** only on a strong 5 GHz or Wi-Fi 6 network, close to the router.
+- The phone isn't charging, so long 4K sessions drain its battery. Without a cable, the phone also no longer charges from the laptop.
+- Android turns Wireless debugging off when the phone changes Wi-Fi network, and usually after a restart. Turn it on again; you don't need to pair again.
+- A hotspot from the phone itself usually doesn't work: Wireless debugging needs the phone to be joined to a Wi-Fi network.
+
+<!-- IMAGE: docs/images/android-wireless-debugging.png — Wireless debugging and Pair device with pairing code -->
+<!-- IMAGE: docs/images/obs-wifi-pairing.png — the Pair over Wi-Fi fields in the source properties -->
 
 ### Quality choices
 
@@ -100,7 +119,9 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | Status or symptom | What to do |
 |---|---|
 | "adb not found" | Install platform-tools (step 1). If it's somewhere unusual, put its full path in the source's **adb path** field. |
-| "Connect the phone with a USB data cable" | Try another cable or USB port. Check that USB debugging is on. |
+| "Connect the phone with a USB data cable … or turn on Wireless debugging" | Try another cable or USB port and check that USB debugging is on. For Wi-Fi, turn Wireless debugging on and check that the phone and Mac are on the same network (pair first). |
+| "Wi-Fi pairing failed" | The address and code change every time you open **Pair device with pairing code**. Open it again and type the new ones. |
+| Drops or stutter over Wi-Fi | Choose **High** or **Balanced**, move closer to the router, or use the cable. |
 | "Unlock the phone and tap Allow" | Unlock the phone and accept the USB debugging prompt. |
 | "Install the PhoneCam app" | Install the phone app (step 3). |
 | "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |

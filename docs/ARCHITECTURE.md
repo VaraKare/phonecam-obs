@@ -55,7 +55,7 @@ Objective-C++ for macOS, built without Xcode by `tools/build_native.py`.
 
 | File | What it does |
 |---|---|
-| `plugin.mm` | Registers the **PhoneCam (USB phone camera)** source with OBS, shows the Status line in its properties and pushes decoded frames into OBS. |
+| `plugin.mm` | Registers the **PhoneCam (phone camera)** source with OBS, shows the Status line in its properties and pushes decoded frames into OBS. |
 | `adb.mm`, `adb.hpp` | Finds `adb`, finds the phone, reads the key, creates the `adb forward` and reconnects after unplugging. Produces the friendly status messages ("Unlock the phone and tap Allow", …). |
 | `receiver.mm`, `receiver.hpp` | Connects to the forwarded port, sends the key, reads messages, decodes with VideoToolbox, rotates and mirrors. |
 | `protocol.hpp` | Parses and checks the wire-format headers. Rejects anything malformed or the wrong version. |

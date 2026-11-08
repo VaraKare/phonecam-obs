@@ -37,6 +37,8 @@ Order changed on 8 November 2026: wireless comes before Windows because it can b
 
 ### v0.3 — Wireless (Mac)
 
+Status: step 1 implemented on `feat/v0.3-wifi` (8 November 2026): OBS pairing button, automatic reconnection to a paired phone, USB preferred when both are present, "Live over Wi-Fi/USB" status. Physical check pending.
+
 - Step 1: ADB Wireless debugging. The plugin finds a phone paired over Wireless debugging just like a USB phone; guided pairing steps. Same pipeline and security, no cable.
 - Step 2: native Wi-Fi with QR-code pairing and an encrypted connection. This is the step that lets ordinary users skip Developer options entirely, so it matters most for reaching many people. Needs the Android Internet permission; **approved separately before any code**.
 - Measured on a real phone: frame rate, drops and delay compared with USB, on 5 GHz / Wi-Fi 6.

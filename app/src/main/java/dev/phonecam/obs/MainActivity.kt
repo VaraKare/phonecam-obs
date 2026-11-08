@@ -481,7 +481,7 @@ class MainActivity : Activity() {
         action("Research tools (benchmark recordings)") { startActivity(Intent(this, BenchmarkActivity::class.java)) }
         box.addView(TextView(this).apply {
             textSize = 13f; setPadding(0, dp(12), 0, dp(8))
-            text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}. Live mode sends video to OBS over USB and never saves it on the phone. No microphone or Internet access."
+            text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}. Live mode sends video to OBS over USB or Wireless debugging and never saves it on the phone. No microphone or Internet access."
         })
         dialog = AlertDialog.Builder(this).setTitle("Settings").setView(ScrollView(this).apply { addView(box) })
             .setPositiveButton("Done") { _, _ -> showPreview = previewBox.isChecked; highQuality = hqBox.isChecked; refresh() }

@@ -58,5 +58,5 @@ class StopReasonTest {
         assertTrue(LiveTransport.stopReason(java.net.SocketException("Connection reset")).startsWith("OBS stopped receiving"))
     }
     @Test fun otherErrorsKeepTheirMessage() =
-        assertEquals("USB live stopped: Encoded packet exceeds the USB limit", LiveTransport.stopReason(IllegalArgumentException("Encoded packet exceeds the USB limit")))
+        assertEquals("Live stopped: Encoded packet exceeds the 4 MiB limit", LiveTransport.stopReason(IllegalArgumentException("Encoded packet exceeds the 4 MiB limit")))
 }

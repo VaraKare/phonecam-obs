@@ -18,8 +18,8 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
         fun stopReason(e: Exception): String {
             val message = e.message.orEmpty()
             val closedByMac = e is java.io.IOException && listOf("EPIPE", "Broken pipe", "ECONNRESET", "Connection reset").any { it in message }
-            return if (closedByMac) "OBS stopped receiving: the PhoneCam source was hidden, OBS was closed, or the cable was unplugged. Tap Start live to go live again."
-            else "USB live stopped: $message"
+            return if (closedByMac) "OBS stopped receiving: the PhoneCam source was hidden, OBS was closed, or the cable or Wi-Fi was disconnected. Tap Start live to go live again."
+            else "Live stopped: $message"
         }
         const val NAME = "phonecam-live-v1"
         const val MAX_PAYLOAD = 4 * 1024 * 1024
@@ -55,7 +55,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
     fun start() {
         watchdog.scheduleAtFixedRate({
             if (!closed && SystemClock.elapsedRealtime() > deadline) {
-                close(); failed("OBS did not connect within 30 seconds. Check the USB cable, open OBS with the PhoneCam source visible, then tap Start again.")
+                close(); failed("OBS did not connect within 30 seconds. Check the USB cable or Wireless debugging, open OBS with the PhoneCam source visible, then tap Start again.")
             }
         }, 250, 250, TimeUnit.MILLISECONDS)
         Thread({
@@ -74,7 +74,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
                     if (closed) { client.close(); return@Thread }
                     if (authenticate(client)) break
                     runCatching { client.close() }; socket = null
-                    check(++failures < MAX_AUTH_FAILURES) { "Rejected $failures connections with the wrong key. Reconnect the USB cable so OBS re-pairs, then tap Start again." }
+                    check(++failures < MAX_AUTH_FAILURES) { "Rejected $failures connections with the wrong key. Reconnect the USB cable or Wi-Fi so OBS re-pairs, then tap Start again." }
                 }
                 deadline = Long.MAX_VALUE
                 connected()
@@ -115,7 +115,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
     fun offer(frame: LiveQueue.Frame): Boolean = queue.offer(frame)
 
     private fun packet(output: DataOutputStream, type: Int, flags: Int, seq: Long, pts: Long, data: ByteArray) {
-        require(data.isNotEmpty() && data.size <= MAX_PAYLOAD) { "Encoded packet exceeds the USB limit" }
+        require(data.isNotEmpty() && data.size <= MAX_PAYLOAD) { "Encoded packet exceeds the 4 MiB limit" }
         deadline = SystemClock.elapsedRealtime() + 750
         output.writeInt(0x5043414d); output.writeShort(VERSION); output.writeShort(type)
         output.writeInt(data.size); output.writeInt(flags); output.writeLong(seq); output.writeLong(pts)

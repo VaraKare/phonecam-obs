@@ -6,7 +6,7 @@
 #include <chrono>
 
 OBS_DECLARE_MODULE()
-MODULE_EXPORT const char *obs_module_description(void) { return "Android phone camera over USB with hardware decoding"; }
+MODULE_EXPORT const char *obs_module_description(void) { return "Android phone camera over USB or Wi-Fi with hardware decoding"; }
 
 namespace {
 struct Fit { obs_source_t *source; float width, height; bool force; };
@@ -56,6 +56,28 @@ void fitToCanvas(void *param) {
     if (enabled) fit(source, false);
     obs_source_release(source);
 }
+/** Wireless debugging pairing takes a few seconds, so it runs off the UI thread; the source may be gone by then. */
+void startWifiPairing(obs_source_t *source) {
+    obs_data_t *settings = obs_source_get_settings(source);
+    std::string adbPath = obs_data_get_string(settings, "adb_path"), address = obs_data_get_string(settings, "wifi_address"),
+                code = obs_data_get_string(settings, "wifi_code");
+    obs_data_release(settings);
+    obs_weak_source_t *weak = obs_source_get_weak_source(source);
+    std::thread([weak, adbPath, address, code] {
+        std::string result = phonecam::pairWifi(phonecam::findAdb(adbPath), address, code);
+        blog(LOG_INFO, "[phonecam] %s", result.c_str());
+        obs_source_t *strong = obs_weak_source_get_source(weak);
+        obs_weak_source_release(weak);
+        if (!strong) return;
+        obs_data_t *values = obs_data_create();
+        obs_data_set_string(values, "wifi_code", "");  // single use; never kept in the scene file
+        obs_data_set_string(values, "wifi_result", result.c_str());
+        obs_source_update(strong, values);
+        obs_data_release(values);
+        obs_source_update_properties(strong);
+        obs_source_release(strong);
+    }).detach();
+}
 void logLine(const char *line) { blog(LOG_INFO, "[phonecam] %s", line); }
 struct Source {
     obs_source_t *source;
@@ -103,7 +125,7 @@ struct Source {
     void end() { stop = true; if (worker.joinable()) worker.join(); obs_source_output_video(source, nullptr); }
     ~Source() { end(); }
 };
-const char *name(void *) { return "PhoneCam (USB phone camera)"; }
+const char *name(void *) { return "PhoneCam (phone camera)"; }
 void update(void *value, obs_data_t *settings) {
     auto *self = static_cast<Source *>(value);
     std::lock_guard<std::mutex> guard(self->lock);
@@ -124,7 +146,7 @@ obs_properties_t *properties(void *value) {
     std::string status = value ? static_cast<Source *>(value)->currentStatus() : "Not running";
     obs_properties_add_text(p, "status", ("Status: " + status).c_str(), OBS_TEXT_INFO);
     obs_properties_add_text(p, "help",
-        "Connect the phone by USB (USB debugging on), keep this source visible, then tap Start live in the PhoneCam app. "
+        "Connect the phone by USB (USB debugging on) or Wi-Fi (below), keep this source visible, then tap Start live in the PhoneCam app. "
         "Pairing and reconnection are automatic. Rotate freely: the picture stays upright and, with the option below, "
         "fits the canvas in portrait and landscape. Video only, no audio yet.", OBS_TEXT_INFO);
     obs_properties_add_button2(p, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
@@ -133,6 +155,23 @@ obs_properties_t *properties(void *value) {
     }, value);
     obs_properties_add_bool(p, "fit_canvas", "Fit the picture to the canvas automatically (until you resize or move it yourself)");
     obs_properties_add_text(p, "adb_path", "adb path (optional; found automatically)", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(p, "wifi_help",
+        "Wi-Fi (no cable): on the phone open Developer options → Wireless debugging → turn it on → Pair device with pairing code. "
+        "Type the IP address & port and the 6-digit code below, then click Pair over Wi-Fi. Pair once; after that, turn Wireless "
+        "debugging on (phone and Mac on the same Wi-Fi) and the phone connects automatically. No Internet access is needed. "
+        "With the cable plugged in, USB is used.", OBS_TEXT_INFO);
+    obs_properties_add_text(p, "wifi_address", "Pairing IP address & port", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(p, "wifi_code", "Pairing code", OBS_TEXT_DEFAULT);
+    obs_properties_add_button2(p, "wifi_pair", "Pair over Wi-Fi", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (data) startWifiPairing(static_cast<Source *>(data)->source);
+        return false;
+    }, value);
+    if (value) {
+        obs_data_t *settings = obs_source_get_settings(static_cast<Source *>(value)->source);
+        std::string result = obs_data_get_string(settings, "wifi_result");
+        obs_data_release(settings);
+        if (!result.empty()) obs_properties_add_text(p, "wifi_status", result.c_str(), OBS_TEXT_INFO);
+    }
     return p;
 }
 }

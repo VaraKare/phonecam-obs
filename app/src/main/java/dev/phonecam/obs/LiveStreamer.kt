@@ -129,7 +129,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                         bytes.putInt(profile.width); bytes.putInt(profile.height); bytes.putInt(rotation)  // initial; frames carry updates
                         csd.forEach(bytes::put)
                         transport.configure(bytes.array())
-                    } catch (e: Exception) { finish("USB format rejected: ${e.message}") }
+                    } catch (e: Exception) { finish("Video format rejected: ${e.message}") }
                 }
                 override fun onOutputBufferAvailable(c: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
                     if (finished) return
@@ -154,7 +154,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                                 c.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0) })
                             }
                         }
-                    } catch (e: Exception) { error = "USB encoding stopped: ${e.message}" }
+                    } catch (e: Exception) { error = "Encoding stopped: ${e.message}" }
                     finally { runCatching { c.releaseOutputBuffer(index, false) } }
                     error?.let { finish(it) }
                 }
@@ -175,7 +175,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                 override fun onDisconnected(device: CameraDevice) { device.close(); handler.post { finish("Camera disconnected") } }
                 override fun onError(device: CameraDevice, error: Int) { device.close(); handler.post { finish("Camera error $error") } }
             }, main)
-        } catch (e: Exception) { finish("Could not start USB live: ${e.message}. No settings silently substituted.") }
+        } catch (e: Exception) { finish("Could not start live: ${e.message}. No settings silently substituted.") }
     }
 
     @Suppress("DEPRECATION")

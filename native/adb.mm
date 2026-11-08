@@ -91,11 +91,22 @@ AdbResult runAdb(const std::string &adb, const std::vector<std::string> &args, i
     return result;
 }
 
+std::string pairWifi(const std::string &adb, const std::string &address, const std::string &code) {
+    if (adb.empty()) return "Wi-Fi pairing needs Android platform-tools (adb). Install it first (see the README).";
+    if (!validWifiAddress(address)) return "Wi-Fi pairing: type the IP address and port shown under \"Pair device with pairing code\", for example 192.168.1.20:37099.";
+    if (!validPairingCode(code)) return "Wi-Fi pairing: type the 6-digit code shown on the phone.";
+    auto result = runAdb(adb, {"pair", address, code}, 20000);
+    if (result.status == 0 && result.output.find("Successfully paired") != std::string::npos)
+        return "Paired over Wi-Fi. Keep Wireless debugging on; the phone connects automatically on the same Wi-Fi.";
+    return "Wi-Fi pairing failed. Open \"Pair device with pairing code\" again and use the new address and code (they change each time).";
+}
+
 void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &adbSetting,
                  const Status &status, const Output &output) {
     std::string adb, serial, token, last;
     int port = 0;
     auto tokenFetched = std::chrono::steady_clock::time_point{};
+    auto lastWifiSearch = std::chrono::steady_clock::time_point{};
     auto say = [&](const std::string &value) { if (value != last) { last = value; status(value); } };
     auto dropForward = [&] {
         if (port && !adb.empty() && !serial.empty()) runAdb(adb, {"-s", serial, "forward", "--remove", "tcp:" + std::to_string(port)}, 3000);
@@ -113,9 +124,19 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                 auto listed = runAdb(adb, {"devices"});
                 auto devices = parseDevices(listed.output);
                 if (devices.ready.empty()) {
+                    // A phone paired for Wireless debugging announces itself on the network; connect to it.
+                    // `adb connect` only succeeds for a phone this Mac has already paired with.
+                    if (std::chrono::steady_clock::now() - lastWifiSearch > std::chrono::seconds(6)) {
+                        lastWifiSearch = std::chrono::steady_clock::now();
+                        bool tried = false;
+                        for (const auto &address : parseWirelessServices(runAdb(adb, {"mdns", "services"}).output)) {
+                            runAdb(adb, {"connect", address}, 5000); tried = true;
+                        }
+                        if (tried) continue;
+                    }
                     say(devices.unauthorized ? "Unlock the phone and tap Allow on the USB debugging prompt."
-                        : devices.offline ? "The phone is offline. Unplug and reconnect the USB cable."
-                        : "Connect the phone with a USB data cable. USB debugging must be on.");
+                        : devices.offline ? "The phone is offline. Reconnect the USB cable, or turn Wireless debugging off and on."
+                        : "Connect the phone with a USB data cable (USB debugging on), or turn on Wireless debugging on the same Wi-Fi.");
                     pause(stop, 2000); continue;
                 }
                 for (const auto &candidate : devices.ready) {
@@ -125,14 +146,14 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                 if (serial.empty()) { say("Install the PhoneCam app on the phone (USB debugging connected, app not found)."); pause(stop, 3000); continue; }
                 tokenFetched = std::chrono::steady_clock::now();
                 port = parsePort(runAdb(adb, {"-s", serial, "forward", "tcp:0", socketName}).output);
-                if (!port) { serial.clear(); token.clear(); say("Could not create the USB link to the phone. Reconnect the cable."); pause(stop, 2000); continue; }
+                if (!port) { serial.clear(); token.clear(); say("Could not create the link to the phone. Reconnect the cable or Wi-Fi."); pause(stop, 2000); continue; }
             }
             say("Ready. Tap Start live on the phone.");
             bool announced = false;
             receive(stop, {port, token}, [&](CVPixelBufferRef image, uint64_t sequence, uint64_t pts) {
                 if (!announced) {
                     announced = true;
-                    say("Live: " + std::to_string(CVPixelBufferGetWidth(image)) + "×" + std::to_string(CVPixelBufferGetHeight(image)) + ", hardware decoding.");
+                    say(std::string(isWireless(serial) ? "Live over Wi-Fi: " : "Live over USB: ") + std::to_string(CVPixelBufferGetWidth(image)) + "×" + std::to_string(CVPixelBufferGetHeight(image)) + ", hardware decoding.");
                 }
                 output(image, sequence, pts);
             });
