@@ -23,13 +23,13 @@ Adjust the command-line-tools version directory for your installation. Review SD
 4. Run `python3 tools/phonecam.py doctor`. Unauthorized means the phone needs approval; offline may need reconnecting; no device usually means cable/USB connection/debugging is unavailable.
 5. If several devices are connected, use `python3 tools/phonecam.py --serial SERIAL doctor`. The serial selects the connection but is not put into benchmark reports.
 6. Run `python3 tools/phonecam.py install`. If Android blocks APK installation, approve this specific research APK using the device's documented installation prompt. Never disable general security protections as a blanket fix.
-7. Open PhoneCam Probe and grant camera permission. No microphone permission is requested. Scan, choose a profile, turn on auto-rotate, and hold the device in landscape.
+7. Open PhoneCam and grant camera permission. No microphone permission is requested. Benchmark recording is under **Settings → Research tools** (scan, choose a profile, hold the device in landscape).
 
 No phone was connected during software implementation. No camera-quality, thermal, or latency result is implied by the APK building successfully.
 
 ## Record and collect
 
-The app has no live preview in this milestone. Frame the baseline in the stock app, fix the phone on a tripod, then switch apps without changing position. Keep PhoneCam Probe visible. A 15-second capture starts only after the Record tap and encoder startup; 30/60 seconds are also available. Stop, backgrounding, rotation/recreation, or locking ends the current capture. Interrupted clips cannot pass the timed quality gate. This is intentionally not screen-off/background streaming.
+Research tools record without a preview. Frame the baseline in the stock app, fix the phone on a tripod, then switch apps without changing position. Keep PhoneCam visible. A 15-second capture starts only after the Record tap and encoder startup; 30/60 seconds are also available. Stop, backgrounding, rotation/recreation, or locking ends the current capture. Interrupted clips cannot pass the timed quality gate. This is intentionally not screen-off/background streaming.
 
 ```sh
 python3 tools/phonecam.py collect

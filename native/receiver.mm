@@ -226,7 +226,13 @@ void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &ou
                     if (std::string(error.what()) == "USB disconnected") throw NotStreaming("Waiting for Start live on the phone");
                     throw;
                 }
-            } else readExact(socket.fd, bytes, sizeof(bytes), stop, seen ? 3 : 15);
+            } else {
+                try { readExact(socket.fd, bytes, sizeof(bytes), stop, seen ? 3 : 15); }
+                catch (const std::runtime_error &error) {
+                    if (std::string(error.what()) == "USB disconnected") throw std::runtime_error("the phone stopped sending (Stop tapped, app left, or cable unplugged)");
+                    throw;
+                }
+            }
             Header h = header(bytes);
             std::vector<uint8_t> body(h.length); readExact(socket.fd, body.data(), body.size(), stop);
             if (h.type == 1) {

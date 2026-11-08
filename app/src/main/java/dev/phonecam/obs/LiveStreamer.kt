@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
+import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -41,6 +42,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
     private var sequence = 0L
     private var lastKeyRequest = 0L
     private var lastFrameAt = 0L
+    private var loggedDrops = 0L
     private val stats = FrameStats()
     private val transport = LiveTransport(LiveTransport.token(context.filesDir),
         { handler.post { prepare() } }, { reason -> handler.post { finish(reason) } })
@@ -51,7 +53,11 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             if (lastFrameAt > 0 && SystemClock.elapsedRealtime() - lastFrameAt > 5_000) {
                 finish("Hardware encoder stalled for 5 seconds; restart live capture"); return
             }
-            post(LiveState(LiveState.Phase.LIVE, "Sending to OBS. Nothing is saved on the phone.", stats.fps, sequence, transport.dropped, rotation))
+            val dropped = transport.dropped
+            // Bounded diagnostics (at most one line per second, counts only) to locate drop bursts.
+            if (dropped != loggedDrops) Log.w("PhoneCam", "drops +${dropped - loggedDrops} (total $dropped) by frame $sequence, ${"%.1f".format(stats.fps)} fps")
+            loggedDrops = dropped
+            post(LiveState(LiveState.Phase.LIVE, "Sending to OBS. Nothing is saved on the phone.", stats.fps, sequence, dropped, rotation))
             handler.postDelayed(this, 1_000)
         }
     }

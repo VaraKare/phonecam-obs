@@ -36,8 +36,8 @@ The user chose: phone as live camera only, USB first then ADB Wireless debugging
 | Milestone | Status | Evidence required |
 |---|---|---|
 | Physical USB live proof | **First real OBS image** (rear 1080p, hardware decode); user reported Stop/background/hide checks and a ~1-minute zero-drop run; sustained run and front camera (deferred) pending — see [first sessions](research/VIVO_V2437_USB_LIVE.md) | Real OBS image, lifecycle checks, ~5-minute run, front camera |
-| Any orientation, LIVE banner, phone preview (wire v2) | Implemented in app 0.3.0; synthetic hardware rotation tests pass; physical check pending | Portrait and both landscapes upright in OBS while rotating live; preview visible |
-| 60 fps, best-quality default, automatic reconnection | Not started | Measured fps within 1%; no manual prepare after USB reset |
+| Any orientation, LIVE banner, phone preview (wire v2) | **Physically checked 8 Nov 2026**: 4K portrait live with preview; user confirmed upright in OBS through both landscapes and back ([v0.1 session](research/VIVO_V2437_USB_LIVE.md#v01-preview-session-8-november-2026)) | Portrait and both landscapes upright in OBS while rotating live; preview visible |
+| 60 fps, best-quality default, automatic reconnection | Best-quality default and automatic pairing/forward physically working (8 Nov); 60 fps not started (encoder fixed at 30) | Measured fps within 1%; no manual prepare after USB reset |
 | Optional audio | Not started | Permission only when selected; sync within 33 ms |
 | ADB Wireless debugging | Not started | Wi-Fi fps/drops/stability compared with USB |
 

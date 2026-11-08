@@ -143,7 +143,8 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
             // Re-pair now and then so a reinstalled app's new key is picked up automatically.
             if (std::chrono::steady_clock::now() - tokenFetched > std::chrono::seconds(15)) dropForward();
         } catch (const std::exception &error) {
-            say(std::string("Connection ended: ") + error.what() + ". Tap Start live on the phone to reconnect.");
+            if (stop) break;  // Source hidden or removed: nothing to report.
+            say(std::string("Live ended: ") + error.what() + ". Tap Start live on the phone to go live again.");
         }
         pause(stop, 1000);
     }

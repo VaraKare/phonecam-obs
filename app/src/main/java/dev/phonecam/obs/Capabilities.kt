@@ -87,6 +87,9 @@ object Capabilities {
                     put("focalLengths", JSONArray(c[CC.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]?.toList().orEmpty()))
                     put("physicalIds", JSONArray(c.physicalCameraIds.toList()))
                     put("fpsRanges", JSONArray(ranges.map { listOf(it.lower, it.upper) }))
+                    // Constrained high-speed modes (e.g. 120 fps) need a special session; reported only.
+                    put("highSpeedVideo", JSONArray(runCatching { map.highSpeedVideoSizes.flatMap { s ->
+                        map.getHighSpeedVideoFpsRangesFor(s).map { r -> listOf(s.width, s.height, r.lower, r.upper) } } }.getOrDefault(emptyList())))
                     put("edgeModes", JSONArray(edge.toList())); put("noiseModes", JSONArray(noise.toList()))
                     put("videoStabilizationModes", JSONArray(c[CC.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES]?.toList().orEmpty()))
                     put("opticalStabilizationModes", JSONArray(c[CC.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION]?.toList().orEmpty()))
