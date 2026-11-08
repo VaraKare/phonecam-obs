@@ -1,0 +1,60 @@
+name: Device report
+description: Tell us whether PhoneCam worked on your phone and computer. Reports build the tested-devices list.
+title: "Device report: <phone model> + <computer>"
+labels: ["device report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Please don't attach recordings or screenshots that show people or private places.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Did it work?
+      options: ["Yes, everything I tried worked", "Partly (see notes)", "No"]
+    validations: { required: true }
+  - type: input
+    id: phone
+    attributes: { label: "Phone maker and model", placeholder: "vivo V2437" }
+    validations: { required: true }
+  - type: input
+    id: android
+    attributes: { label: "Android version", placeholder: "16" }
+    validations: { required: true }
+  - type: input
+    id: computer
+    attributes: { label: "Computer and system", placeholder: "MacBook Air M1, macOS 26.1 / Windows 11 laptop" }
+    validations: { required: true }
+  - type: input
+    id: obs
+    attributes: { label: "OBS version", placeholder: "33.0.1" }
+    validations: { required: true }
+  - type: input
+    id: phonecam
+    attributes: { label: "PhoneCam app and plugin version", placeholder: "0.2.0-alpha.1" }
+    validations: { required: true }
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      options: ["USB cable", "Wireless debugging", "Wi-Fi"]
+    validations: { required: true }
+  - type: checkboxes
+    id: tried
+    attributes:
+      label: What you tried
+      options:
+        - label: Rear camera
+        - label: Front camera
+        - label: Best quality (4K where offered)
+        - label: Smooth 60 fps
+        - label: Portrait and landscape (picture stayed upright)
+        - label: Zoom, focus, brightness, white balance, torch
+        - label: Mirror in OBS
+        - label: Unplugged and replugged during a session
+  - type: input
+    id: stats
+    attributes: { label: "Frame rate and drops shown on the phone's LIVE badge", placeholder: "30 fps, 0 drops after 5 minutes" }
+  - type: textarea
+    id: notes
+    attributes: { label: "Notes", description: "Anything that failed, the OBS Status text, how warm the phone got, how long you ran it." }

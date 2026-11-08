@@ -13,6 +13,7 @@
 
 namespace phonecam {
 namespace {
+std::atomic<void (*)(const char *)> logSink{nullptr};
 void check(OSStatus status, const char *operation) {
     if (status) throw std::runtime_error(std::string(operation) + " failed (" + std::to_string(status) + ")");
 }
@@ -203,6 +204,7 @@ Endpoint loadEndpoint(const std::string &configPath) {
         return {port, token};
     }
 }
+void setLog(void (*sink)(const char *)) { logSink = sink; }
 void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output) {
     @autoreleasepool {
         int port = endpoint.port;
@@ -220,6 +222,11 @@ void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &ou
         Decoder decoder(output);
         bool configured = false, waitingForKey = true, seen = false;
         uint64_t lastSequence = 0, lastPts = 0;
+        // Decode + rotate + hand-off time per frame. Over 33 ms means the Mac, not the USB link, is the
+        // bottleneck at 30 fps; logged once a second only when it happens (bounded telemetry).
+        auto windowStart = std::chrono::steady_clock::now();
+        unsigned windowFrames = 0, slowFrames = 0; double worstMs = 0;
+        bool warmedUp = false;  // the first frame includes decoder start-up; not counted
         while (!stop) {
             uint8_t bytes[32];
             if (!configured) {
@@ -247,7 +254,21 @@ void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &ou
                 seen = true; lastSequence = h.sequence; lastPts = h.pts;
                 if (waitingForKey && !(h.flags & 1)) continue;
                 waitingForKey = false;
+                auto began = std::chrono::steady_clock::now();
                 decoder.frame(body, h);
+                auto now = std::chrono::steady_clock::now();
+                double ms = std::chrono::duration<double, std::milli>(now - began).count();
+                if (!warmedUp) { warmedUp = true; windowStart = now; continue; }
+                ++windowFrames; if (ms > 33.3) ++slowFrames; if (ms > worstMs) worstMs = ms;
+                if (now - windowStart >= std::chrono::seconds(1)) {
+                    auto sink = logSink.load();
+                    if (sink && slowFrames) {
+                        char line[160];
+                        snprintf(line, sizeof(line), "Mac decoding fell behind: %u of %u frames over 33 ms in the last second (slowest %.0f ms)", slowFrames, windowFrames, worstMs);
+                        sink(line);
+                    }
+                    windowStart = now; windowFrames = slowFrames = 0; worstMs = 0;
+                }
             }
         }
     }

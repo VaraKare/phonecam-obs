@@ -17,4 +17,6 @@ Endpoint loadEndpoint(const std::string &configPath);
 // Each run owns its socket and synchronous hardware decoder. Destruction follows run exit.
 void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output);
 std::string defaultConfigPath();
+// Optional diagnostics sink (the OBS log). At most one line a second, only when decoding falls behind.
+void setLog(void (*sink)(const char *));
 }

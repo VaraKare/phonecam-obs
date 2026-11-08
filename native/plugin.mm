@@ -9,12 +9,61 @@ OBS_DECLARE_MODULE()
 MODULE_EXPORT const char *obs_module_description(void) { return "Android phone camera over USB with hardware decoding"; }
 
 namespace {
+struct Fit { obs_source_t *source; float width, height; bool force; };
+bool fitItem(obs_scene_t *, obs_sceneitem_t *item, void *data) {
+    auto *fit = static_cast<Fit *>(data);
+    if (obs_sceneitem_get_source(item) != fit->source) return true;
+    struct vec2 scale, pos;
+    obs_sceneitem_get_scale(item, &scale); obs_sceneitem_get_pos(item, &pos);
+    // Automatically only untouched items: the user's own size, position, rotation or bounding box win.
+    // The "Fit to canvas now" button (force) resets them on request.
+    if (!fit->force && (obs_sceneitem_get_bounds_type(item) != OBS_BOUNDS_NONE || scale.x != 1.f || scale.y != 1.f ||
+        pos.x != 0.f || pos.y != 0.f || obs_sceneitem_get_rot(item) != 0.f)) return true;
+    struct vec2 origin, one; vec2_set(&origin, 0.f, 0.f); vec2_set(&one, 1.f, 1.f);
+    obs_sceneitem_set_pos(item, &origin); obs_sceneitem_set_scale(item, &one); obs_sceneitem_set_rot(item, 0.f);
+    if (fit->force) { struct obs_sceneitem_crop crop{}; obs_sceneitem_set_crop(item, &crop); }
+    struct vec2 bounds; vec2_set(&bounds, fit->width, fit->height);
+    obs_sceneitem_set_alignment(item, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);
+    obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_SCALE_INNER);
+    obs_sceneitem_set_bounds_alignment(item, OBS_ALIGN_CENTER);
+    obs_sceneitem_set_bounds(item, &bounds);
+    blog(LOG_INFO, "[phonecam] Fitted the picture to the %.0f×%.0f canvas (Transform → Scale to inner bounds)", fit->width, fit->height);
+    return true;
+}
+bool fitScene(void *data, obs_source_t *sceneSource) {
+    if (obs_scene_t *scene = obs_scene_from_source(sceneSource)) obs_scene_enum_items(scene, fitItem, data);
+    return true;
+}
+/**
+ * Runs on the OBS UI thread. A 4K or portrait picture is larger than a 1080p canvas, so OBS would show
+ * only part of it. Untouched scene items get "Scale to inner bounds" at canvas size, which then also
+ * keeps portrait and landscape fitted when the phone turns.
+ */
+void fit(obs_source_t *source, bool force) {
+    struct obs_video_info video{};
+    if (!obs_get_video_info(&video)) return;
+    Fit fit{source, float(video.base_width), float(video.base_height), force};
+    obs_enum_scenes(fitScene, &fit);
+}
+void fitToCanvas(void *param) {
+    auto *weak = static_cast<obs_weak_source_t *>(param);
+    obs_source_t *source = obs_weak_source_get_source(weak);
+    obs_weak_source_release(weak);
+    if (!source) return;
+    obs_data_t *settings = obs_source_get_settings(source);
+    bool enabled = obs_data_get_bool(settings, "fit_canvas");
+    obs_data_release(settings);
+    if (enabled) fit(source, false);
+    obs_source_release(source);
+}
+void logLine(const char *line) { blog(LOG_INFO, "[phonecam] %s", line); }
 struct Source {
     obs_source_t *source;
     std::atomic<bool> stop{false};
     std::thread worker;
     std::mutex lock;
     std::string adbPath, status = "Starting…";
+    uint32_t shownWidth = 0, shownHeight = 0;  // touched only by the receiving thread
     explicit Source(obs_source_t *value) : source(value) {}
     std::string adbSetting() { std::lock_guard<std::mutex> guard(lock); return adbPath; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
@@ -25,7 +74,7 @@ struct Source {
     }
     void start() {
         if (worker.joinable()) return;
-        stop = false;
+        stop = false; shownWidth = shownHeight = 0;
         worker = std::thread([this] {
             phonecam::autoReceive(stop, [this] { return adbSetting(); }, [this](const std::string &value) { setStatus(value); },
                 [this](CVPixelBufferRef image, uint64_t, uint64_t) {
@@ -34,6 +83,10 @@ struct Source {
                     struct obs_source_frame frame{};
                     frame.format = VIDEO_FORMAT_NV12;
                     frame.width = uint32_t(CVPixelBufferGetWidth(image)); frame.height = uint32_t(CVPixelBufferGetHeight(image));
+                    if (frame.width != shownWidth || frame.height != shownHeight) {
+                        shownWidth = frame.width; shownHeight = frame.height;
+                        obs_queue_task(OBS_TASK_UI, fitToCanvas, obs_source_get_weak_source(source), false);
+                    }
                     for (size_t i = 0; i < 2; ++i) {
                         frame.data[i] = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(image, i));
                         frame.linesize[i] = uint32_t(CVPixelBufferGetBytesPerRowOfPlane(image, i));
@@ -62,6 +115,7 @@ void *create(obs_data_t *settings, obs_source_t *source) {
     update(self, settings);
     return self;
 }
+void defaults(obs_data_t *settings) { obs_data_set_default_bool(settings, "fit_canvas", true); }
 void destroy(void *value) { delete static_cast<Source *>(value); }
 void show(void *value) { static_cast<Source *>(value)->start(); }
 void hide(void *value) { static_cast<Source *>(value)->end(); }
@@ -71,8 +125,13 @@ obs_properties_t *properties(void *value) {
     obs_properties_add_text(p, "status", ("Status: " + status).c_str(), OBS_TEXT_INFO);
     obs_properties_add_text(p, "help",
         "Connect the phone by USB (USB debugging on), keep this source visible, then tap Start live in the PhoneCam app. "
-        "Pairing and reconnection are automatic. Rotate freely: the picture stays upright. Set Transform → Bounding Box Type "
-        "to \"Scale to inner bounds\" so portrait and landscape both fit. Video only, no audio yet.", OBS_TEXT_INFO);
+        "Pairing and reconnection are automatic. Rotate freely: the picture stays upright and, with the option below, "
+        "fits the canvas in portrait and landscape. Video only, no audio yet.", OBS_TEXT_INFO);
+    obs_properties_add_button2(p, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (data) fit(static_cast<Source *>(data)->source, true);  // properties callbacks run on the UI thread
+        return false;
+    }, value);
+    obs_properties_add_bool(p, "fit_canvas", "Fit the picture to the canvas automatically (until you resize or move it yourself)");
     obs_properties_add_text(p, "adb_path", "adb path (optional; found automatically)", OBS_TEXT_DEFAULT);
     return p;
 }
@@ -83,8 +142,9 @@ MODULE_EXPORT bool obs_module_load(void) {
     info.id = "phonecam_usb_v1"; info.type = OBS_SOURCE_TYPE_INPUT;
     info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
     info.get_name = name; info.create = create; info.destroy = destroy; info.update = update;
-    info.show = show; info.hide = hide; info.get_properties = properties;
+    info.get_defaults = defaults; info.show = show; info.hide = hide; info.get_properties = properties;
     info.icon_type = OBS_ICON_TYPE_CAMERA;
     obs_register_source(&info);
+    phonecam::setLog(logLine);
     return true;
 }

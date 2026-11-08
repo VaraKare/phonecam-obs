@@ -14,6 +14,13 @@ import java.util.concurrent.TimeUnit
 class LiveTransport(private val token: String, private val connected: () -> Unit,
                     private val failed: (String) -> Unit) {
     companion object {
+        /** OBS closing the connection is normal (source hidden, OBS quit, cable out); say so instead of "Broken pipe". */
+        fun stopReason(e: Exception): String {
+            val message = e.message.orEmpty()
+            val closedByMac = e is java.io.IOException && listOf("EPIPE", "Broken pipe", "ECONNRESET", "Connection reset").any { it in message }
+            return if (closedByMac) "OBS stopped receiving: the PhoneCam source was hidden, OBS was closed, or the cable was unplugged. Tap Start live to go live again."
+            else "USB live stopped: $message"
+        }
         const val NAME = "phonecam-live-v1"
         const val MAX_PAYLOAD = 4 * 1024 * 1024
         /** v3 frame flags: bit 0 keyframe, bits 1-2 clockwise quarter turns for upright display, bit 3 mirror in OBS. */
@@ -32,7 +39,10 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
             return value
         }
     }
-    private val queue = LiveQueue()
+    // About 200 ms at 30 fps. Encoder bursts (camera movement, keyframes) can briefly exceed a USB 2.0
+    // ADB link (measured ~17 MB/s on the vivo V2437); a 2-frame queue turned each burst into up to a
+    // second of dropped frames. The queue only fills, and adds delay, while the link is behind.
+    private val queue = LiveQueue(maxFrames = 6)
     private val signal = Object()
     @Volatile private var closed = false
     @Volatile private var server: LocalServerSocket? = null
@@ -79,7 +89,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
                     else synchronized(signal) { if (!closed) signal.wait(10) }
                 }
             } catch (e: Exception) {
-                if (!closed) { close(); failed("USB live stopped: ${e.message}") }
+                if (!closed) { close(); failed(stopReason(e)) }
             } finally { close() }
         }, "phonecam-usb-writer").start()
     }

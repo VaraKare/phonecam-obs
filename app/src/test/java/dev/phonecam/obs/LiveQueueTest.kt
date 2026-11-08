@@ -51,3 +51,12 @@ class FrameFlagsTest {
         org.junit.Assert.assertEquals(15, f(true, 3, true))
     }
 }
+
+class StopReasonTest {
+    @Test fun macClosingIsExplained() {
+        assertTrue(LiveTransport.stopReason(java.io.IOException("write failed: EPIPE (Broken pipe)")).startsWith("OBS stopped receiving"))
+        assertTrue(LiveTransport.stopReason(java.net.SocketException("Connection reset")).startsWith("OBS stopped receiving"))
+    }
+    @Test fun otherErrorsKeepTheirMessage() =
+        assertEquals("USB live stopped: Encoded packet exceeds the USB limit", LiveTransport.stopReason(IllegalArgumentException("Encoded packet exceeds the USB limit")))
+}

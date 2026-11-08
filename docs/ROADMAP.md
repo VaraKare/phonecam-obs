@@ -17,14 +17,14 @@ The goal: anyone with an Android phone and a laptop can use the phone's rear or 
 - Redesigned phone app (portrait and landscape): full-screen preview, LIVE badge with fps/drops/temperature, Rear/Front/Wide chooser, **Quality: Best** by default, one big Start/Stop button. Research tools move into Settings.
 - Automatic camera scan on first open; the last working profile is remembered.
 - **No terminal in daily use:** the OBS plugin finds the phone, creates the USB link, and reconnects after unplugging or a USB reset.
-- **One-time pairing code** shown on the phone and typed into the OBS source settings. This replaces the developer-only key read, which does not work with a public app build.
+- **Automatic pairing**, nothing to type: the plugin reads the connection key through the authorized USB debugging shell (`PairingProvider`). This replaced the developer-only key read, which does not work with a public app build. (The one-time code planned earlier was not needed.)
 - Picture follows the phone's rotation live (already implemented in app 0.3.0).
 - Release-signed Android app (signing key kept outside Git) and a plugin zip with install steps.
 - Requirements stated clearly: Android 10+, Apple Silicon Mac, OBS 33, Android platform-tools (ADB), USB debugging switched on once.
 
 ### v0.2 — Camera controls
 
-Status: implemented on `feat/v0.2-camera-controls` (8 November 2026); physical check pending.
+Status: physically checked on 8 November 2026 with release-signed files: zero drops, rear and front, controls and Mirror user-reported working, automatic fit confirmed ([session](research/VIVO_V2437_USB_LIVE.md#v01-release-files-and-v02-session-8-november-2026-afternoon)). Smooth 60 fps still unchecked.
 
 - Zoom (slider and pinch) and lens switching. Extra lenses appear automatically as "Rear 2" etc. when the phone lets other apps use them; the vivo V2437 hides its ultra-wide from other apps, so it offers Rear/Front and zoom.
 - Tap-to-focus (focus and exposure on a point; tap "Focus" to return to auto) and brightness.
@@ -33,28 +33,27 @@ Status: implemented on `feat/v0.2-camera-controls` (8 November 2026); physical c
 - 60 fps: phones that only offer 60 fps through a high-speed mode (like the vivo, 120 fps at 1080p) get an opt-in "Smooth 60 fps (experimental)" choice; it is kept only if it works on a real phone.
 - Battery and overheating warnings (temperature label exists since v0.1).
 
-### v0.3 — Windows (phase 1: USB)
+Order changed on 8 November 2026: wireless comes before Windows because it can be proven on the owner's phone and Mac now, while no Windows PC is available yet. Audio moved to later, because people already connect their own microphones and earbuds to OBS.
+
+### v0.3 — Wireless (Mac)
+
+- Step 1: ADB Wireless debugging. The plugin finds a phone paired over Wireless debugging just like a USB phone; guided pairing steps. Same pipeline and security, no cable.
+- Step 2: native Wi-Fi with QR-code pairing and an encrypted connection. This is the step that lets ordinary users skip Developer options entirely, so it matters most for reaching many people. Needs the Android Internet permission; **approved separately before any code**.
+- Measured on a real phone: frame rate, drops and delay compared with USB, on 5 GHz / Wi-Fi 6.
+
+### v0.4 — Windows (phase 1: USB, then Wi-Fi)
 
 Most laptop users run Windows, so Windows support is required, delivered in phases.
 - Windows OBS plugin with hardware video decoding (Windows' Media Foundation / Direct3D 11 decoder, the Windows equivalent of the Mac's VideoToolbox).
 - Bundled or guided ADB setup, including the phone maker's USB driver where Windows needs one.
-- Same phone app; same pairing and automatic connection as on the Mac.
-
-### v0.4 — Optional audio
-
-- Phone microphone, **off unless the user turns it on**. Permission requested only then.
-- Synced with video in OBS (target within 33 ms over an hour). Mac and Windows.
-
-### v0.5 — Wireless
-
-- Step 1: guided ADB Wireless debugging (same pipeline, no cable).
-- Step 2: native Wi-Fi with QR-code pairing and an encrypted connection, if step 1 is not reliable enough. Needs the Android Internet permission; approved separately.
+- Same phone app; same pairing and automatic connection as on the Mac, then the v0.3 wireless connection.
+- **Proof:** the code can be written now and built and tested automatically on GitHub's Windows machines (CI) with synthetic video. It is released only after a real Windows PC with OBS and a real phone pass the checks, either the owner's or a volunteer tester's device report.
 
 ### v0.6 — Polish
 
 - Several phones as separate OBS sources; choosing or switching the phone camera from OBS.
 - Windows phase 2: installer.
-- Mac installer package (unsigned; see below).
+- Mac installer package (unsigned; see below) and a universal plugin that also runs on Intel Macs.
 
 ### v1.0 — Stable
 
@@ -62,9 +61,28 @@ Most laptop users run Windows, so Windows support is required, delivered in phas
 - Measured glass-to-OBS delay and a controlled quality comparison with the stock camera app.
 - A list of tested phones (Vivo plus at least two other makers, including an older/lower-end phone).
 
-### Later
+### Later: optional audio
 
-Linux plugin, iPhone app, and using the phone directly as a Zoom/Meet webcam without OBS (with OBS, the built-in Virtual Camera already does this).
+- Phone microphone, **off unless the user turns it on**. Permission requested only then.
+- Synced with video in OBS (target within 33 ms over an hour). Mac and Windows.
+
+### Later: more platforms
+
+See [which phones and computers work](COMPATIBILITY.md) for the reasons and the size of each step.
+
+1. **Linux plugin** (Android phones): same phone app, Linux hardware decoding.
+2. **iPhone app for Windows** (and Linux): a new iPhone app and a different USB transport (`usbmuxd`); needs the Apple Developer Program. On a Mac, Apple's Continuity Camera already covers iPhones, so a PhoneCam iPhone app for the Mac comes last, if ever.
+3. Using the phone directly as a Zoom/Meet webcam without OBS (with OBS, the built-in Virtual Camera already does this).
+
+## Earning from the project (decide when usage grows)
+
+The owner intends to earn from PhoneCam once many people use it. Reach comes first: Windows, wireless without Developer options, and a tested-phones list. Options, to be chosen later:
+
+- **Donations and sponsorship** (GitHub Sponsors, Buy Me a Coffee) from the first public release. No change to the app.
+- **Paid Play Store edition or one-time "Pro" unlock** for extras (for example several phones at once or native Wi-Fi), with the core USB camera staying free. Google Play billing requires a Play Store listing and the billing library; the app's privacy promises (no accounts, no analytics, no ads) stay.
+- **Signed installers** for Mac and Windows as part of a paid or sponsored tier.
+
+Groundwork to do before accepting outside code contributions: a contributor agreement that lets the owner offer paid editions alongside the GPL license. The owner currently holds all the copyright, so this is still open. Ads and data collection are ruled out; they contradict the privacy pitch.
 
 ## Future suggestion: Apple signing
 

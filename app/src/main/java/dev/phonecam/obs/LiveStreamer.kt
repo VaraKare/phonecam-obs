@@ -94,9 +94,17 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             handler.postDelayed(startDeadline, 15_000)
             val encoder = MediaCodec.createByCodecName(profile.encoder)
             codec = encoder
+            val constantBitrate = runCatching {
+                encoder.codecInfo.getCapabilitiesForType(profile.mime).encoderCapabilities
+                    .isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+            }.getOrDefault(false)
+            Log.i("PhoneCam", "Encoder ${profile.encoder}: ${profile.bitrate / 1_000_000} Mb/s, ${if (constantBitrate) "constant" else "variable (constant not offered)"} bitrate")
             val format = MediaFormat.createVideoFormat(profile.mime, profile.width, profile.height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, profile.bitrate)
+                // Constant bitrate keeps camera movement from bursting past the USB link. The mode actually
+                // used is logged (requested and observed settings are kept apart).
+                if (constantBitrate) setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
                 setInteger(MediaFormat.KEY_FRAME_RATE, profile.fps)
                 // High-speed capture runs faster than the stream; the encoder input drops the extra frames.
                 if (profile.fpsUpper > profile.fps) setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, profile.fps.toFloat())
@@ -139,7 +147,9 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                             lastFrameAt = SystemClock.elapsedRealtime()
                             handler.removeCallbacks(startDeadline)
                             if (sequence == 1L) handler.post(status)
-                            if (!accepted && SystemClock.elapsedRealtime() - lastKeyRequest > 250) {
+                            // At most one early keyframe a second: keyframes are the largest frames, so asking
+                            // for them faster on a busy link causes the next overflow.
+                            if (!accepted && SystemClock.elapsedRealtime() - lastKeyRequest > 1000) {
                                 lastKeyRequest = SystemClock.elapsedRealtime()
                                 c.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0) })
                             }

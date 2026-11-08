@@ -52,6 +52,35 @@ The capability scan (normal Camera2 sessions) offers at most `[30, 30]` fps on b
 
 `dumpsys media.camera` shows the rear camera has `CONSTRAINED_HIGH_SPEED_VIDEO` with 1920×1080 at `[30,120]` and `[120,120]` (batch 4), plus 1280×720 at 120 fps. A possible 1080p60 path is a constrained high-speed session at 120 fps with the encoder told to drop to 60 (`KEY_MAX_FPS_TO_ENCODER`). It is unverified and has trade-offs: 1080p only, exposure limited to 1/120 s (darker indoors), restricted processing controls, and vendor HALs often misbehave. The scanner now records `highSpeedVideo` per camera so other phones can be compared.
 
+## v0.1 release files and v0.2 session (8 November 2026, afternoon)
+
+Release-signed files from `tools/release.py`. The user tapped every Start and Stop; nothing was started remotely. Times are the Mac's local time.
+
+**v0.1.0-alpha.1 release files** (APK and plugin zip from commit a168158):
+
+| Time | Observation | Source |
+|---|---|---|
+| 16:57:16 | Rear, Best: 2160×3840 H.265 60 Mb/s, hardware decoding. | OBS log |
+| 16:57:16–16:57:27 | 188 frames dropped, about 24 a second from 4 to 11 s, while the user handled the phone; then **no drops** for the remaining 75 s. | Phone `PhoneCam` drop log |
+| 16:58:42 | Stop: plugin said "Live ended: the phone stopped sending …" and returned to Ready 1 s later. | OBS log |
+
+Cause of the drops, measured afterwards: the phone links at **USB 2.0** (`Device Speed = 2`, High Speed), and `adb exec-out` carried 150 MiB in 8.4–9.8 s, about **17 MB/s (≈140 Mb/s)**. 4K Best averages 60 Mb/s but the variable-bitrate encoder bursts when the camera moves. The 2-frame phone queue (66 ms) overflowed, which discards frames until the next keyframe, and the immediate keyframe request (the largest frame type) overloaded the link again. Fixed in v0.2: constant bitrate where the encoder offers it, a 6-frame queue (~200 ms, filled only while the link is behind) and at most one early keyframe request a second.
+
+**v0.2.0-alpha.1 release files** (built from `feat/v0.2-camera-controls` plus the fixes above), installed with `adb install -r` **over** the v0.1 release app: same signing key, no uninstall, data kept. This proves the update path for users.
+
+| Time | Observation | Source |
+|---|---|---|
+| 17:13–17:14 | Three Starts failed with "different PCAM versions": OBS was still running the old v0.1 plugin because it had not been restarted (operator error: the check for a running OBS was wrong). The v0.2 app worked as designed. | OBS log |
+| 17:17:22 | Encoder `c2.mtk.hevc.encoder`, 60 Mb/s, **constant** bitrate (observed). Rear Best 2160×3840, hardware decoding. | Phone log, OBS log |
+| 17:18:40 | 1080×1920 H.265 20 Mb/s constant bitrate, hardware decoding (the user tested the front camera in this session). | Phone log, OBS log |
+| 17:17–17:21 | User report: **no dropped frames**; rear and front cameras, controls and Mirror worked ("everything works fine … all things"). | User report |
+| 17:21:59 | After **Reset Transform** on the scene item, the plugin's automatic fit set "Scale to inner bounds" at the 1920×1080 canvas; the user confirmed the whole picture was visible. | OBS log, user report |
+| after 17:22 | Hiding the source with the eye button stopped live as intended, but the phone said "Broken pipe". Reworded in v0.2: "OBS stopped receiving: the PhoneCam source was hidden …". | User report |
+
+Framing finding: the scene item had been moved and scaled by hand earlier (position −1230, −1050; scale 1.028; no bounding box), so OBS showed only the middle of the 4K portrait picture. Automatic fitting deliberately skips items the user has adjusted; v0.2 adds a **Fit to canvas now** button in the source properties for this case.
+
+Not established in this session: Smooth 60 fps (no 60 fps session appears in the logs), each control individually observed by the operator (user-reported as a whole), Mac-side measured fps, long runs, optical latency. Laptop battery drained quickly during USB sessions; the phone also charges from the laptop over USB.
+
 ## Still pending
 
 ~5-minute and two-hour runs with recorded frame/drop counts; front camera (Camera 1), deferred by the user.

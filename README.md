@@ -2,7 +2,7 @@
 
 Use your Android phone's camera as a high-quality video source in [OBS Studio](https://obsproject.com) on your Mac, over a USB cable. Choose the rear or front camera and the quality on the phone, then add masks, filters and overlays and record or stream in OBS.
 
-> **Preview release.** It has been tested on one phone (vivo V2437, Android 16) and one Mac (Apple M1, OBS 33.0.1). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. Windows support is planned; see the [roadmap](docs/ROADMAP.md).
+> **Preview release.** It has been tested on one phone (vivo V2437, Android 16) and one Mac (Apple M1, OBS 33.0.1). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. Windows support is planned; see [which phones and computers work](docs/COMPATIBILITY.md) and the [roadmap](docs/ROADMAP.md).
 
 - **Rear or front camera**, up to 4K where your phone allows it, encoded in hardware on the phone and decoded in hardware on the Mac.
 - **Any orientation:** portrait or landscape, and turning the phone during a session keeps the picture upright in OBS.
@@ -64,7 +64,7 @@ Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on t
 2. Open OBS. In **Sources**, click **+** and choose **PhoneCam (USB phone camera)**, then **OK**.
 3. On the phone, pick **Rear** or **Front** and a **Quality** (Best is the default), then tap **Start live to OBS**.
 4. The phone shows **● LIVE** and your camera appears in OBS within a few seconds.
-5. Recommended: right-click the source → **Transform → Edit Transform** and set **Bounding Box Type** to **Scale to inner bounds**, so portrait and landscape both fit your canvas automatically.
+5. The picture fits your canvas automatically, in portrait and landscape. If you had already moved or resized the source, open its **Properties** and click **Fit to canvas now**. For full-screen vertical video, set the canvas to 1080×1920 in **Settings → Video**.
 6. Add masks and filters as with any camera: right-click the source → **Filters** (for example **Image Mask/Blend**, **Crop/Pad**, **Color Correction**, **Chroma Key**). Then use OBS's **Start Recording** or **Start Streaming**.
 7. Tap **Stop live** on the phone when you're done.
 
@@ -106,9 +106,10 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |
 | Live stops when you switch apps | Keep PhoneCam open on screen while streaming. Locking the phone or leaving the app stops the camera on purpose. |
 | Phone says "Warm" or "Hot" | Choose **High** or **Balanced**, take the case off, or keep the phone out of the sun. |
-| Picture is too big or small in OBS | Right-click the source → **Transform → Fit to Screen**, or set the bounding box as in step 5. |
+| Only the middle of the picture shows in OBS | The source was moved or resized by hand. Open its **Properties** → **Fit to canvas now** (or right-click → **Transform → Reset Transform**, then Start live again). |
+| Phone says "OBS stopped receiving" | Normal when you hide the source, quit OBS or unplug. Show the source and tap Start live again. |
 
-Still stuck? Open an issue with your phone model, Android version, OBS version and the Status text.
+Still stuck? Open an issue with your phone model, Android version, OBS version and the Status text. If it works, a **Device report** issue helps others with the same phone.
 
 ## Privacy
 
@@ -121,7 +122,9 @@ The phone app has only the Camera permission. It has no microphone, Internet, lo
 
 ## Project
 
-- [Roadmap](docs/ROADMAP.md): upcoming camera controls, Windows, audio, Wi-Fi.
+- **New here?** [How PhoneCam works and what each file does](docs/ARCHITECTURE.md).
+- [Which phones and computers work](docs/COMPATIBILITY.md), including iPhone and Windows plans.
+- [Roadmap](docs/ROADMAP.md): camera controls, Wi-Fi, Windows, then audio.
 - [Building from source and research tools](docs/DEVELOPMENT.md).
 - [How the USB connection works](docs/USB_LIVE.md), [phase tracker](docs/PHASES.md), [plan](docs/PLAN.md), [branch workflow](CONTRIBUTING.md), [data handling](docs/DATA.md).
 
