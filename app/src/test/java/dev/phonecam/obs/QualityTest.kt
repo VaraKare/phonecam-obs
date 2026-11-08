@@ -33,6 +33,18 @@ class QualityTest {
         assertNotNull(Quality.pick(only, "2", Quality.CUSTOM, "2/1280x720/video/hevc/5000000"))
         assertNull(Quality.pick(vivo, "0", Quality.CUSTOM, "missing"))
     }
+    @Test fun smoothPicksSixtyFpsOnlyWhenOffered() {
+        fun fast(mime: String, mbps: Int) = Profile("0", 1920, 1080, mime, "enc", mbps * 1_000_000, 120, 120, 90,
+            CC.LENS_FACING_BACK, false, emptySet(), emptySet(), false, fps = 60, highSpeed = true)
+        assertNull(Quality.pick(vivo, "0", Quality.SMOOTH))
+        val withFast = vivo + fast("video/avc", 30) + fast("video/hevc", 20) + fast("video/hevc", 30)
+        val smooth = Quality.pick(withFast, "0", Quality.SMOOTH)!!
+        assertEquals("0/1920x1080/video/hevc/30000000/60fps", Quality.key(smooth))
+        assertEquals("1080p · H.265 · 30 Mb/s · 60 fps · experimental", Quality.describe(smooth))
+        // Automatic choices never switch to the experimental high-speed mode.
+        for (q in listOf(Quality.BEST, Quality.HIGH, Quality.BALANCED)) assertFalse(Quality.pick(withFast, "0", q)!!.highSpeed)
+        assertEquals(smooth, Quality.pick(withFast, "0", Quality.CUSTOM, Quality.key(smooth)))
+    }
     @Test fun camerasAreLabelledRearFirst() {
         val extra = vivo + p("3", 1920, "video/hevc", 10)
         assertEquals(listOf("0" to "Rear", "3" to "Rear 2", "1" to "Front"), Quality.cameras(extra))

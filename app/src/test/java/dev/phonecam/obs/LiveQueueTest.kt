@@ -41,3 +41,13 @@ class LiveQueueTest {
         assertNull(q.poll())
     }
 }
+
+class FrameFlagsTest {
+    @org.junit.Test fun flagsPackKeyTurnsAndMirror() {
+        fun f(key: Boolean, turns: Int, mirror: Boolean) = LiveTransport.flags(LiveQueue.Frame(ByteArray(1), 0, 0, key, turns, mirror))
+        org.junit.Assert.assertEquals(0, f(false, 0, false))
+        org.junit.Assert.assertEquals(1 or (3 shl 1), f(true, 3, false))
+        org.junit.Assert.assertEquals(8 or (1 shl 1), f(false, 1, true))
+        org.junit.Assert.assertEquals(15, f(true, 3, true))
+    }
+}

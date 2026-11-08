@@ -13,10 +13,14 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
 import android.os.PowerManager
 import android.util.Size
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.OrientationEventListener
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -64,6 +68,15 @@ class MainActivity : Activity() {
     private lateinit var startButton: Button
     private lateinit var settingsButton: Button
     private lateinit var message: TextView
+    private lateinit var stageControls: LinearLayout
+    private lateinit var sliderRow: LinearLayout
+    private lateinit var sliderLabel: TextView
+    private lateinit var slider: SeekBar
+    private lateinit var chipRow: LinearLayout
+    private lateinit var focusMark: View
+    private var sliding: String? = null
+    private var abilities: Abilities? = null
+    private var controls = Controls()
     private var options = emptyList<Profile>()
     private var scanning = false
     private var live: LiveStreamer? = null
@@ -114,8 +127,15 @@ class MainActivity : Activity() {
         stage.addView(placeholder)
         badge = chip(Gravity.TOP or Gravity.START).apply { typeface = Typeface.DEFAULT_BOLD; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         thermal = chip(Gravity.TOP or Gravity.END)
-        stats = chip(Gravity.BOTTOM or Gravity.START)
+        stats = chip(Gravity.TOP or Gravity.START).apply { (layoutParams as FrameLayout.LayoutParams).topMargin = dp(48) }
         stage.addView(badge); stage.addView(thermal); stage.addView(stats)
+        focusMark = View(this).apply {
+            background = GradientDrawable().apply { setStroke(dp(2), Color.WHITE); cornerRadius = dp(4).toFloat() }
+            layoutParams = FrameLayout.LayoutParams(dp(64), dp(64), Gravity.TOP or Gravity.START); visibility = View.GONE
+        }
+        stage.addView(focusMark)
+        buildStageControls()
+        attachGestures()
 
         val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)) }
         fun label(text: String) = TextView(this).apply { this.text = text; setTextColor(MUTED); textSize = 13f; setPadding(0, dp(8), 0, dp(4)); panel.addView(this) }
@@ -185,7 +205,9 @@ class MainActivity : Activity() {
             else if (portrait) p.height.toFloat() / p.width else p.width.toFloat() / p.height
     }
 
-    private fun qualityChoices() = listOfNotNull(Quality.BEST, Quality.HIGH, Quality.BALANCED, Quality.CUSTOM.takeIf { customKey != null })
+    private fun qualityChoices() = listOfNotNull(Quality.BEST, Quality.HIGH, Quality.BALANCED,
+        Quality.SMOOTH.takeIf { cameraId?.let { id -> Quality.pick(options, id, Quality.SMOOTH) } != null || choice == Quality.SMOOTH },
+        Quality.CUSTOM.takeIf { customKey != null })
     private fun selected(): Profile? {
         val id = cameraId ?: return null
         return Quality.pick(options, id, choice, customKey)
@@ -236,6 +258,7 @@ class MainActivity : Activity() {
         val heat = runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
         thermal.text = when { heat >= PowerManager.THERMAL_STATUS_SEVERE -> "Hot — consider stopping"; heat >= PowerManager.THERMAL_STATUS_MODERATE -> "Warm"; else -> "Cool" }
         thermal.background = rounded(if (heat >= PowerManager.THERMAL_STATUS_SEVERE) RED else if (heat >= PowerManager.THERMAL_STATUS_MODERATE) AMBER else CHIP, 6)
+        stageControls.visibility = if (phase == LiveState.Phase.LIVE) View.VISIBLE else View.GONE
         val previewing = phase != LiveState.Phase.STOPPED && showPreview
         placeholder.visibility = if (phase == LiveState.Phase.LIVE && previewing) View.GONE else View.VISIBLE
         placeholder.text = when (phase) {
@@ -300,20 +323,146 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         liveProfile = profile
         val hq = highQuality && profile.highQuality
-        live = LiveStreamer(this, profile, hq, rotation, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
+        val able = Abilities.from(getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId))
+        abilities = able
+        controls = loadControls(profile.cameraId); sliding = null
+        renderControls()
+        live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
             if (destroyed) return@LiveStreamer
             showState(state)
             message.text = state.message
             if (state.phase == LiveState.Phase.STOPPED) {
                 if (state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
                     message.text = "${state.message}\nIf this keeps happening, choose Quality: High."
-                live = null; liveProfile = null
+                live = null; liveProfile = null; sliding = null; focusMark.visibility = View.GONE
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 preview.visibility = View.INVISIBLE
                 refresh()
             }
         }.also { it.start() }
         arrange(); refresh()
+    }
+
+    // ---- Live camera controls (v0.2) ----
+
+    /** Zoom, exposure and white balance and the OBS mirror are remembered per camera; torch and focus reset each session. */
+    private fun loadControls(id: String) = Controls(
+        zoom = prefs.getFloat("ctl.$id.zoom", 1f), exposure = prefs.getInt("ctl.$id.ev", 0),
+        whiteBalance = prefs.getInt("ctl.$id.wb", CaptureRequest.CONTROL_AWB_MODE_AUTO), mirror = prefs.getBoolean("ctl.$id.mirror", false))
+
+    private fun updateControls(next: Controls, refocus: Boolean = false) {
+        controls = next
+        liveProfile?.cameraId?.let { id ->
+            prefs.edit().putFloat("ctl.$id.zoom", next.zoom).putInt("ctl.$id.ev", next.exposure)
+                .putInt("ctl.$id.wb", next.whiteBalance).putBoolean("ctl.$id.mirror", next.mirror).apply()
+        }
+        live?.setControls(next, refocus)
+        renderControls()
+    }
+
+    private fun buildStageControls() {
+        sliderLabel = TextView(this).apply { setTextColor(Color.WHITE); textSize = 13f; minWidth = dp(64) }
+        slider = SeekBar(this).apply {
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) { if (fromUser) sliderMoved(progress) }
+                override fun onStartTrackingTouch(bar: SeekBar) = Unit
+                override fun onStopTrackingTouch(bar: SeekBar) = Unit
+            })
+        }
+        sliderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; background = rounded(CHIP, 8)
+            setPadding(dp(12), dp(4), dp(8), dp(4)); visibility = View.GONE
+            addView(sliderLabel); addView(slider, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        chipRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        stageControls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM)
+                .apply { setMargins(dp(8), 0, dp(8), dp(8)) }
+            addView(sliderRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) })
+            addView(HorizontalScrollView(this@MainActivity).apply { isHorizontalScrollBarEnabled = false; addView(chipRow) })
+        }
+        stage.addView(stageControls)
+    }
+
+    private fun zoomProgress(zoom: Float, max: Float) = if (max <= 1f) 0 else (100 * kotlin.math.ln(zoom) / kotlin.math.ln(max)).toInt().coerceIn(0, 100)
+    private fun exposureText(a: Abilities, ev: Int) = "%+.1f EV".format(ev * a.exposureStep)
+
+    private fun sliderMoved(progress: Int) {
+        val a = abilities ?: return
+        when (sliding) {
+            "zoom" -> updateControls(controls.copy(zoom = Math.pow(a.maxZoom.toDouble(), progress / 100.0).toFloat().coerceIn(1f, a.maxZoom)))
+            "exposure" -> updateControls(controls.copy(exposure = a.exposureMin + progress))
+        }
+    }
+
+    /** Rebuilds the chips under the preview from the camera's abilities and current values. */
+    private fun renderControls() {
+        val a = abilities ?: return
+        chipRow.removeAllViews()
+        fun add(text: String, description: String, on: Boolean = false, click: () -> Unit) = chipRow.addView(TextView(this).apply {
+            this.text = text; contentDescription = description; setTextColor(Color.WHITE); textSize = 13f; gravity = Gravity.CENTER
+            background = rounded(if (on) BLUE else CHIP, 16); setPadding(dp(12), dp(8), dp(12), dp(8)); minHeight = dp(40)
+            isClickable = true; isFocusable = true; setOnClickListener { click() }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) })
+        fun toggleSlider(name: String) { sliding = if (sliding == name) null else name; renderControls() }
+        if (a.maxZoom > 1f) add("%.1f×".format(controls.zoom), "Zoom ${"%.1f".format(controls.zoom)} times", sliding == "zoom") { toggleSlider("zoom") }
+        if (a.exposureStep > 0f && a.exposureMax > a.exposureMin)
+            add("☀ " + exposureText(a, controls.exposure), "Brightness ${exposureText(a, controls.exposure)}", sliding == "exposure") { toggleSlider("exposure") }
+        if (a.whiteBalances.size > 1) add("WB " + Abilities.whiteBalanceName(controls.whiteBalance), "White balance ${Abilities.whiteBalanceName(controls.whiteBalance)}, tap to change") {
+            val list = a.whiteBalances
+            updateControls(controls.copy(whiteBalance = list[(list.indexOf(controls.whiteBalance) + 1) % list.size]))
+        }
+        if (a.torch) add(if (controls.torch) "Torch on" else "Torch off", "Torch ${if (controls.torch) "on" else "off"}", controls.torch) {
+            updateControls(controls.copy(torch = !controls.torch))
+        }
+        if (a.tapFocus || a.tapExposure) {
+            val locked = controls.focusX != null
+            add(if (locked) "Focus: tapped ✕" else "Focus: auto", if (locked) "Focus on tapped point, tap to return to auto" else "Auto focus. Tap the preview to focus on a point", locked) {
+                if (locked) { focusMark.visibility = View.GONE; updateControls(controls.copy(focusX = null, focusY = null)) }
+                else message.text = "Tap the preview to focus and expose for that point. Pinch to zoom."
+            }
+        }
+        add(if (controls.mirror) "Mirror in OBS: on" else "Mirror in OBS: off", "Mirror the picture in OBS, ${if (controls.mirror) "on" else "off"}", controls.mirror) {
+            updateControls(controls.copy(mirror = !controls.mirror))
+        }
+        sliderRow.visibility = if (sliding != null) View.VISIBLE else View.GONE
+        when (sliding) {
+            "zoom" -> { slider.max = 100; slider.progress = zoomProgress(controls.zoom, a.maxZoom); sliderLabel.text = "Zoom"; slider.contentDescription = "Zoom" }
+            "exposure" -> { slider.max = a.exposureMax - a.exposureMin; slider.progress = controls.exposure - a.exposureMin; sliderLabel.text = "Brightness"; slider.contentDescription = "Brightness" }
+        }
+    }
+
+    /** Pinch to zoom; tap to focus and meter on a point. */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun attachGestures() {
+        val pinch = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val a = abilities ?: return false
+                if (live == null || a.maxZoom <= 1f) return false
+                updateControls(controls.copy(zoom = (controls.zoom * detector.scaleFactor).coerceIn(1f, a.maxZoom)))
+                return true
+            }
+        })
+        val taps = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapUp(e: MotionEvent): Boolean { focusAt(e.x, e.y); return true }
+        })
+        preview.setOnTouchListener { view, event ->
+            pinch.onTouchEvent(event)
+            if (!pinch.isInProgress) taps.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+            true
+        }
+    }
+
+    private fun focusAt(x: Float, y: Float) {
+        val a = abilities ?: return; val p = liveProfile ?: return
+        if (live == null || (!a.tapFocus && !a.tapExposure) || preview.width == 0 || preview.height == 0) return
+        val (sx, sy) = CameraGeometry.viewToSensor(x / preview.width, y / preview.height, p.sensorOrientation,
+            p.facing == CameraCharacteristics.LENS_FACING_FRONT, displayDegrees())
+        focusMark.translationX = preview.left + x - dp(32); focusMark.translationY = preview.top + y - dp(32)
+        focusMark.visibility = View.VISIBLE
+        updateControls(controls.copy(focusX = sx, focusY = sy), refocus = true)
     }
 
     private fun openSettings() {

@@ -24,11 +24,14 @@ The goal: anyone with an Android phone and a laptop can use the phone's rear or 
 
 ### v0.2 — Camera controls
 
-- Zoom and lens switching (wide / ultra-wide / telephoto, where the phone lets other apps use them).
-- Tap-to-focus, focus lock, exposure lock and brightness.
-- White balance presets and flashlight.
-- Front-camera mirror toggle.
-- 60 fps profiles where advertised and proven; battery and overheating warnings.
+Status: implemented on `feat/v0.2-camera-controls` (8 November 2026); physical check pending.
+
+- Zoom (slider and pinch) and lens switching. Extra lenses appear automatically as "Rear 2" etc. when the phone lets other apps use them; the vivo V2437 hides its ultra-wide from other apps, so it offers Rear/Front and zoom.
+- Tap-to-focus (focus and exposure on a point; tap "Focus" to return to auto) and brightness.
+- White balance presets and torch.
+- "Mirror in OBS" switch (remembered per camera). The phone preview of the front camera is mirrored by Android, like a mirror.
+- 60 fps: phones that only offer 60 fps through a high-speed mode (like the vivo, 120 fps at 1080p) get an opt-in "Smooth 60 fps (experimental)" choice; it is kept only if it works on a real phone.
+- Battery and overheating warnings (temperature label exists since v0.1).
 
 ### v0.3 — Windows (phase 1: USB)
 

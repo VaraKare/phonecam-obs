@@ -16,8 +16,9 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
     companion object {
         const val NAME = "phonecam-live-v1"
         const val MAX_PAYLOAD = 4 * 1024 * 1024
-        /** v2: frame flags bits 1-2 carry the clockwise quarter turns for upright display. */
-        const val VERSION = 2
+        /** v3 frame flags: bit 0 keyframe, bits 1-2 clockwise quarter turns for upright display, bit 3 mirror in OBS. */
+        const val VERSION = 3
+        fun flags(frame: LiveQueue.Frame) = (if (frame.key) 1 else 0) or ((frame.quarterTurns and 3) shl 1) or (if (frame.mirror) 8 else 0)
         const val MAX_AUTH_FAILURES = 5
         fun token(directory: File): String {
             val file = File(directory, "live-token")
@@ -74,7 +75,7 @@ class LiveTransport(private val token: String, private val connected: () -> Unit
                         configuration?.let { packet(output, 1, 0, 0, 0, it); configured = true }
                     }
                     val frame = if (configured) queue.poll() else null
-                    if (frame != null) packet(output, 2, (if (frame.key) 1 else 0) or (frame.quarterTurns shl 1), frame.sequence, frame.ptsUs, frame.bytes)
+                    if (frame != null) packet(output, 2, flags(frame), frame.sequence, frame.ptsUs, frame.bytes)
                     else synchronized(signal) { if (!closed) signal.wait(10) }
                 }
             } catch (e: Exception) {

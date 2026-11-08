@@ -20,14 +20,16 @@ data class Profile(
     val encoder: String, val bitrate: Int, val fpsLower: Int, val fpsUpper: Int,
     val sensorOrientation: Int, val facing: Int, val highQuality: Boolean,
     val edgeModes: Set<Int>, val noiseModes: Set<Int>, val limited: Boolean,
+    /** Output frame rate. [highSpeed] profiles capture faster (e.g. 120 fps) in a constrained high-speed session and the encoder drops to [fps]. */
+    val fps: Int = 30, val highSpeed: Boolean = false,
 ) {
     /** Camera2 request value. Plain ints keep Profile usable in JVM unit tests. */
     val fpsRange: Range<Int> get() = Range(fpsLower, fpsUpper)
     fun json(hq: Boolean): JSONObject = JSONObject().apply {
         put("cameraId", cameraId); put("width", width); put("height", height)
-        put("fps", 30); put("fpsRange", JSONArray(listOf(fpsLower, fpsUpper)))
+        put("fps", fps); put("fpsRange", JSONArray(listOf(fpsLower, fpsUpper))); put("highSpeed", highSpeed)
         put("mime", mime); put("encoder", encoder); put("bitrate", bitrate)
-        put("processing", if (hq) "high_quality" else "fast")
+        put("processing", if (highSpeed) "camera_default" else if (hq) "high_quality" else "fast")
         put("edgeMode", processingMode(hq, edgeModes)); put("noiseMode", processingMode(hq, noiseModes))
         put("stabilization", "off"); put("maxBFrames", 0); put("keyframeSeconds", 1)
         put("color", "SDR_BT709"); put("sensorOrientation", sensorOrientation)
@@ -36,7 +38,7 @@ data class Profile(
     }
     fun id(hq: Boolean): String = MessageDigest.getInstance("SHA-256")
         .digest(json(hq).toString().toByteArray()).joinToString("") { "%02x".format(it) }
-    override fun toString() = "Camera $cameraId · ${width}×$height · ${if (mime == "video/avc") "H.264" else "H.265"} · ${bitrate / 1_000_000} Mb/s${if (limited) " · LIMITED" else " · unverified"}"
+    override fun toString() = "Camera $cameraId · ${width}×$height · ${if (mime == "video/avc") "H.264" else "H.265"} · ${bitrate / 1_000_000} Mb/s · $fps fps${if (highSpeed) " · high-speed" else ""}${if (limited) " · LIMITED" else " · unverified"}"
 }
 
 fun processingMode(hq: Boolean, available: Set<Int>): Int? = when {
@@ -103,16 +105,7 @@ object Capabilities {
                     val minDuration = map.getOutputMinFrameDuration(MediaCodec::class.java, s)
                     if (minDuration > 33_666_667L) continue
                     for (mime in listOf("video/avc", "video/hevc")) {
-                        // One deterministic hardware encoder per profile; full list remains in report.
-                        val encoder = encoders.sortedBy { it.name }.firstOrNull { e ->
-                            runCatching {
-                                if (!e.supportedTypes.contains(mime)) false else {
-                                    val cap = e.getCapabilitiesForType(mime)
-                                    cap.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) &&
-                                        cap.videoCapabilities?.areSizeAndRateSupported(s.width, s.height, 30.0) == true
-                                }
-                            }.getOrDefault(false)
-                        } ?: continue
+                        val encoder = encoderFor(encoders, mime, s.width, s.height, 30) ?: continue
                         val bitrateRange = encoder.getCapabilitiesForType(mime).videoCapabilities?.bitrateRange ?: continue
                         for (rate in if (s.width == 3840) listOf(20, 40, 60) else if (s.width == 1920) listOf(5, 10, 20) else listOf(3, 5)) {
                             val bitrate = rate * 1_000_000
@@ -124,10 +117,26 @@ object Capabilities {
                         }
                     }
                 }
+                // Experimental 1080p60: a fixed high-speed range that is a multiple of 60 (e.g. [120,120]),
+                // with the encoder dropping to 60. Offered only as an explicit, unverified choice.
+                val fast = runCatching { map.highSpeedVideoSizes.filter { it.width == 1920 && it.height == 1080 } }.getOrDefault(emptyList())
+                for (s in fast) {
+                    val range = runCatching { map.getHighSpeedVideoFpsRangesFor(s).toList() }.getOrDefault(emptyList())
+                        .filter { it.lower == it.upper && it.upper >= 60 && it.upper % 60 == 0 }.minByOrNull { it.upper } ?: continue
+                    for (mime in listOf("video/avc", "video/hevc")) {
+                        val encoder = encoderFor(encoders, mime, s.width, s.height, 60) ?: continue
+                        val bitrateRange = encoder.getCapabilitiesForType(mime).videoCapabilities?.bitrateRange ?: continue
+                        for (rate in listOf(10, 20, 30)) {
+                            if (!bitrateRange.contains(rate * 1_000_000)) continue
+                            profiles.add(Profile(id, s.width, s.height, mime, encoder.name, rate * 1_000_000, range.lower, range.upper,
+                                c[CC.SENSOR_ORIENTATION] ?: 0, facing, false, edge, noise, false, fps = 60, highSpeed = true))
+                        }
+                    }
+                }
             } catch (e: Exception) { errors.put("Camera $id: ${e.message}") }
         }
         val ordered = profiles.sortedWith(compareBy<Profile> { it.facing != CC.LENS_FACING_BACK }
-            .thenBy { it.width != 1920 }.thenBy { it.cameraId }.thenBy { it.mime != "video/avc" }
+            .thenBy { it.highSpeed }.thenBy { it.width != 1920 }.thenBy { it.cameraId }.thenBy { it.mime != "video/avc" }
             .thenBy { it.bitrate })
         return Scan(JSONObject().apply {
             put("schemaVersion", 1); put("createdAtMs", System.currentTimeMillis())
@@ -140,6 +149,18 @@ object Capabilities {
         }, ordered)
     }
 }
+
+/** One deterministic hardware surface-input encoder per profile; the full list remains in the report. */
+private fun encoderFor(encoders: List<MediaCodecInfo>, mime: String, width: Int, height: Int, fps: Int): MediaCodecInfo? =
+    encoders.sortedBy { it.name }.firstOrNull { e ->
+        runCatching {
+            if (!e.supportedTypes.contains(mime)) false else {
+                val cap = e.getCapabilitiesForType(mime)
+                cap.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) &&
+                    cap.videoCapabilities?.areSizeAndRateSupported(width, height, fps.toDouble()) == true
+            }
+        }.getOrDefault(false)
+    }
 
 fun writeJson(file: File, value: JSONObject) {
     val atomic = AtomicFile(file)

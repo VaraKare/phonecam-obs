@@ -39,7 +39,7 @@ void readExact(int fd, uint8_t *p, size_t size, std::atomic<bool> &stop, int sec
 class Rotator {
     VTPixelRotationSessionRef session = nullptr;
     CVPixelBufferPoolRef pool = nullptr;
-    unsigned poolTurns = 0; size_t poolWidth = 0, poolHeight = 0;
+    unsigned poolTurns = 0; bool poolMirror = false; size_t poolWidth = 0, poolHeight = 0;
 public:
     Rotator() { check(VTPixelRotationSessionCreate(kCFAllocatorDefault, &session), "Rotation session"); }
     ~Rotator() {
@@ -48,19 +48,21 @@ public:
     }
     Rotator(const Rotator &) = delete; Rotator &operator=(const Rotator &) = delete;
     // Returns a +1 retained buffer.
-    CVPixelBufferRef rotate(CVPixelBufferRef image, unsigned turns) {
+    // VideoToolbox applies the horizontal flip after the rotation, i.e. it mirrors the upright picture.
+    CVPixelBufferRef rotate(CVPixelBufferRef image, unsigned turns, bool mirror) {
         size_t width = CVPixelBufferGetWidth(image), height = CVPixelBufferGetHeight(image);
         size_t outWidth = turns % 2 ? height : width, outHeight = turns % 2 ? width : height;
-        if (!pool || turns != poolTurns || outWidth != poolWidth || outHeight != poolHeight) {
+        if (!pool || turns != poolTurns || mirror != poolMirror || outWidth != poolWidth || outHeight != poolHeight) {
             if (pool) { CVPixelBufferPoolRelease(pool); pool = nullptr; }
             NSDictionary *attributes = @{(__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
                                         (__bridge NSString *)kCVPixelBufferWidthKey: @(outWidth),
                                         (__bridge NSString *)kCVPixelBufferHeightKey: @(outHeight),
                                         (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey: @{}};
             check(CVPixelBufferPoolCreate(kCFAllocatorDefault, nullptr, (__bridge CFDictionaryRef)attributes, &pool), "Rotation buffer pool");
-            CFStringRef angle = turns == 1 ? kVTRotation_CW90 : turns == 2 ? kVTRotation_180 : kVTRotation_CCW90;
+            CFStringRef angle = turns == 0 ? kVTRotation_0 : turns == 1 ? kVTRotation_CW90 : turns == 2 ? kVTRotation_180 : kVTRotation_CCW90;
             check(VTSessionSetProperty(session, kVTPixelRotationPropertyKey_Rotation, angle), "Rotation angle");
-            poolTurns = turns; poolWidth = outWidth; poolHeight = outHeight;
+            check(VTSessionSetProperty(session, kVTPixelRotationPropertyKey_FlipHorizontalOrientation, mirror ? kCFBooleanTrue : kCFBooleanFalse), "Mirror");
+            poolTurns = turns; poolMirror = mirror; poolWidth = outWidth; poolHeight = outHeight;
         }
         CVPixelBufferRef out = nullptr;
         check(CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &out), "Rotation buffer");
@@ -73,6 +75,7 @@ class Decoder {
     VTDecompressionSessionRef session = nullptr;
     std::unique_ptr<Rotator> rotator;
     unsigned turns = 0;
+    bool mirror = false;
     CMVideoFormatDescriptionRef format = nullptr;
     uint32_t codec = 0, width = 0, height = 0;
     Output output;
@@ -93,10 +96,10 @@ class Decoder {
         self->delivered = true;
         // Callback may run on a VT thread. No exceptions may cross the C callback boundary.
         try {
-            if (!self->turns) self->output(image, self->sequence, self->pts);
+            if (!self->turns && !self->mirror) self->output(image, self->sequence, self->pts);
             else {
                 if (!self->rotator) self->rotator = std::make_unique<Rotator>();
-                CVPixelBufferRef upright = self->rotator->rotate(image, self->turns);
+                CVPixelBufferRef upright = self->rotator->rotate(image, self->turns, self->mirror);
                 std::unique_ptr<std::remove_pointer_t<CVPixelBufferRef>, decltype(&CVPixelBufferRelease)> owner(upright, CVPixelBufferRelease);
                 self->output(upright, self->sequence, self->pts);
             }
@@ -169,7 +172,7 @@ public:
         CMSampleTimingInfo timing{kCMTimeInvalid, CMTimeMake(int64_t(h.pts), 1000000), kCMTimeInvalid};
         check(CMSampleBufferCreateReady(kCFAllocatorDefault, block, format, 1, 1, &timing, 1, &size, &sample), "Sample creation");
         std::unique_ptr<std::remove_pointer_t<CMSampleBufferRef>, decltype(&CFRelease)> sampleOwner(sample, CFRelease);
-        sequence = h.sequence; pts = h.pts; turns = h.flags >> 1; outputStatus = noErr; delivered = false;
+        sequence = h.sequence; pts = h.pts; turns = (h.flags >> 1) & 3; mirror = (h.flags >> 3) & 1; outputStatus = noErr; delivered = false;
         check(VTDecompressionSessionDecodeFrame(session, sample, 0, nullptr, nullptr), "Hardware decoding");
         check(VTDecompressionSessionWaitForAsynchronousFrames(session), "Decoder completion");
         check(outputStatus, "Decoded output");

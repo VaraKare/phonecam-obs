@@ -2,14 +2,19 @@ package dev.phonecam.obs
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Rect
 import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
 import android.hardware.camera2.CameraCharacteristics as CC
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest as CR
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.params.MeteringRectangle
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
@@ -24,13 +29,22 @@ import java.nio.ByteOrder
  * [initialRotation] and later [setRotation] values are clockwise degrees the Mac applies to show
  * the image upright; the encoder itself never changes shape. [preview] supplies an optional on-phone
  * view surface when the camera opens; if the camera rejects encoder + preview together, the session fails clearly.
+ * [setControls] changes zoom, exposure, white balance, torch, focus and the OBS mirror while live.
+ * High-speed profiles use a constrained high-speed session; the encoder drops frames to the profile's fps.
  */
 class LiveStreamer(private val context: Context, private val profile: Profile,
                    private val highQuality: Boolean, initialRotation: Int,
+                   private val abilities: Abilities, initialControls: Controls,
                    private val preview: () -> Surface?,
                    private val notify: (LiveState) -> Unit) {
     @Volatile private var rotation = initialRotation
+    @Volatile private var controls = initialControls
     fun setRotation(degrees: Int) { require(degrees in setOf(0, 90, 180, 270)); rotation = degrees }
+    /** [refocus] starts a one-time autofocus scan at the tapped point. */
+    fun setControls(value: Controls, refocus: Boolean = false) {
+        controls = value
+        handler.post { if (!finished) applyControls(refocus) }
+    }
     private val thread = HandlerThread("phonecam-live-capture").apply { start() }
     private val handler = Handler(thread.looper)
     private val main = Handler(context.mainLooper)
@@ -38,6 +52,8 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
     private var capture: CameraCaptureSession? = null
     private var codec: MediaCodec? = null
     private var input: Surface? = null
+    private var viewSurface: Surface? = null
+    @Volatile private var note: String? = null
     private var finished = false
     private var sequence = 0L
     private var lastKeyRequest = 0L
@@ -57,7 +73,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             // Bounded diagnostics (at most one line per second, counts only) to locate drop bursts.
             if (dropped != loggedDrops) Log.w("PhoneCam", "drops +${dropped - loggedDrops} (total $dropped) by frame $sequence, ${"%.1f".format(stats.fps)} fps")
             loggedDrops = dropped
-            post(LiveState(LiveState.Phase.LIVE, "Sending to OBS. Nothing is saved on the phone.", stats.fps, sequence, dropped, rotation))
+            post(LiveState(LiveState.Phase.LIVE, note ?: "Sending to OBS. Nothing is saved on the phone.", stats.fps, sequence, dropped, rotation))
             handler.postDelayed(this, 1_000)
         }
     }
@@ -81,7 +97,9 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             val format = MediaFormat.createVideoFormat(profile.mime, profile.width, profile.height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, profile.bitrate)
-                setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+                setInteger(MediaFormat.KEY_FRAME_RATE, profile.fps)
+                // High-speed capture runs faster than the stream; the encoder input drops the extra frames.
+                if (profile.fpsUpper > profile.fps) setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, profile.fps.toFloat())
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
                 setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
@@ -116,7 +134,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                             buffer.position(info.offset); buffer.limit(info.offset + info.size)
                             val bytes = ByteArray(info.size); buffer.get(bytes)
                             val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
-                            val accepted = transport.offer(LiveQueue.Frame(bytes, sequence++, info.presentationTimeUs, key, rotation / 90))
+                            val accepted = transport.offer(LiveQueue.Frame(bytes, sequence++, info.presentationTimeUs, key, rotation / 90, controls.mirror))
                             stats.add(info.presentationTimeUs)
                             lastFrameAt = SystemClock.elapsedRealtime()
                             handler.removeCallbacks(startDeadline)
@@ -154,32 +172,92 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
     private fun configureCamera(device: CameraDevice) {
         val surface = input ?: error("No encoder surface")
         val view = preview()?.takeIf { it.isValid }
-        device.createCaptureSession(listOfNotNull(surface, view), object : CameraCaptureSession.StateCallback() {
+        viewSurface = view
+        val callback = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(session: CameraCaptureSession) {
                 if (finished) { session.close(); return }
                 capture = session
-                try {
-                    val chars = context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)
-                    val keys = chars.availableCaptureRequestKeys.toSet()
-                    val request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
-                        addTarget(surface)
-                        view?.let(::addTarget)
-                        if (CR.CONTROL_AE_TARGET_FPS_RANGE in keys) set(CR.CONTROL_AE_TARGET_FPS_RANGE, profile.fpsRange)
-                        if (CR.CONTROL_AF_MODE in keys && CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in chars[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty())
-                            set(CR.CONTROL_AF_MODE, CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                        processingMode(highQuality, profile.edgeModes)?.let { if (CR.EDGE_MODE in keys) set(CR.EDGE_MODE, it) }
-                        processingMode(highQuality, profile.noiseModes)?.let { if (CR.NOISE_REDUCTION_MODE in keys) set(CR.NOISE_REDUCTION_MODE, it) }
-                        if (CR.CONTROL_VIDEO_STABILIZATION_MODE in keys) set(CR.CONTROL_VIDEO_STABILIZATION_MODE, CR.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
-                        if (CR.LENS_OPTICAL_STABILIZATION_MODE in keys) set(CR.LENS_OPTICAL_STABILIZATION_MODE, CR.LENS_OPTICAL_STABILIZATION_MODE_OFF)
-                    }.build()
-                    session.setRepeatingRequest(request, null, handler)
-                } catch (e: Exception) { finish("Camera rejected live settings: ${e.message}") }
+                try { submit(session, request(), repeating = true) }
+                catch (e: Exception) { finish("Camera rejected live settings: ${e.message}") }
             }
             override fun onConfigureFailed(session: CameraCaptureSession) {
                 session.close()
-                finish(if (view != null) "Camera rejected this profile together with the phone preview. Turn off Show phone preview, or choose a lower profile." else "Camera rejected this live profile")
+                finish(when {
+                    profile.highSpeed -> "This phone rejected the experimental 60 fps mode. Choose Best or High."
+                    view != null -> "Camera rejected this profile together with the phone preview. Turn off Show phone preview, or choose a lower profile."
+                    else -> "Camera rejected this live profile"
+                })
             }
-        }, handler)
+        }
+        val surfaces = listOfNotNull(surface, view)
+        if (profile.highSpeed) device.createConstrainedHighSpeedCaptureSession(surfaces, callback, handler)
+        else device.createCaptureSession(surfaces, callback, handler)
+    }
+
+    private val requestKeys by lazy {
+        context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId).availableCaptureRequestKeys.toSet()
+    }
+    private val continuousFocus by lazy {
+        CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in context.getSystemService(CameraManager::class.java)
+            .getCameraCharacteristics(profile.cameraId)[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
+    }
+
+    /** One capture request from the profile plus the current [controls]. */
+    private fun request(trigger: Int = CR.CONTROL_AF_TRIGGER_IDLE): CaptureRequest {
+        val device = camera ?: error("Camera closed")
+        val keys = requestKeys
+        val c = controls
+        return device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+            addTarget(input ?: error("No encoder surface"))
+            viewSurface?.let(::addTarget)
+            if (CR.CONTROL_AE_TARGET_FPS_RANGE in keys) set(CR.CONTROL_AE_TARGET_FPS_RANGE, profile.fpsRange)
+            if (!profile.highSpeed) {
+                processingMode(highQuality, profile.edgeModes)?.let { if (CR.EDGE_MODE in keys) set(CR.EDGE_MODE, it) }
+                processingMode(highQuality, profile.noiseModes)?.let { if (CR.NOISE_REDUCTION_MODE in keys) set(CR.NOISE_REDUCTION_MODE, it) }
+                if (CR.CONTROL_VIDEO_STABILIZATION_MODE in keys) set(CR.CONTROL_VIDEO_STABILIZATION_MODE, CR.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+                if (CR.LENS_OPTICAL_STABILIZATION_MODE in keys) set(CR.LENS_OPTICAL_STABILIZATION_MODE, CR.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+            }
+            val zoom = c.zoom.coerceIn(1f, abilities.maxZoom)
+            if (abilities.zoomRatio && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) set(CR.CONTROL_ZOOM_RATIO, zoom)
+            else if (zoom > 1f) CameraGeometry.zoomCrop(abilities.activeWidth, abilities.activeHeight, zoom)
+                .let { set(CR.SCALER_CROP_REGION, Rect(it[0], it[1], it[2], it[3])) }
+            if (abilities.exposureStep > 0f && CR.CONTROL_AE_EXPOSURE_COMPENSATION in keys)
+                set(CR.CONTROL_AE_EXPOSURE_COMPENSATION, c.exposure.coerceIn(abilities.exposureMin, abilities.exposureMax))
+            if (c.whiteBalance in abilities.whiteBalances && CR.CONTROL_AWB_MODE in keys) set(CR.CONTROL_AWB_MODE, c.whiteBalance)
+            if (abilities.torch && CR.FLASH_MODE in keys) {
+                set(CR.CONTROL_AE_MODE, CR.CONTROL_AE_MODE_ON)
+                set(CR.FLASH_MODE, if (c.torch) CR.FLASH_MODE_TORCH else CR.FLASH_MODE_OFF)
+            }
+            val x = c.focusX; val y = c.focusY
+            if (x != null && y != null) {
+                val m = CameraGeometry.meteringRect(x, y, abilities, profile.width, profile.height, zoom)
+                val region = arrayOf(MeteringRectangle(Rect(m[0], m[1], m[2], m[3]), MeteringRectangle.METERING_WEIGHT_MAX - 1))
+                if (abilities.tapFocus) { set(CR.CONTROL_AF_MODE, CR.CONTROL_AF_MODE_AUTO); set(CR.CONTROL_AF_REGIONS, region); set(CR.CONTROL_AF_TRIGGER, trigger) }
+                if (abilities.tapExposure) set(CR.CONTROL_AE_REGIONS, region)
+            } else if (continuousFocus && CR.CONTROL_AF_MODE in keys) set(CR.CONTROL_AF_MODE, CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+        }.build()
+    }
+
+    private fun submit(session: CameraCaptureSession, request: CaptureRequest, repeating: Boolean) {
+        if (session is CameraConstrainedHighSpeedCaptureSession) {
+            val burst = session.createHighSpeedRequestList(request)
+            if (repeating) session.setRepeatingBurst(burst, null, handler) else session.captureBurst(burst, null, handler)
+        } else if (repeating) session.setRepeatingRequest(request, null, handler) else session.capture(request, null, handler)
+    }
+
+    /** A rejected adjustment leaves the stream running with the previous request, and says so. */
+    private fun applyControls(refocus: Boolean) {
+        val session = capture ?: return
+        try {
+            if (refocus && abilities.tapFocus && controls.focusX != null) {
+                submit(session, request(CR.CONTROL_AF_TRIGGER_CANCEL), repeating = false)
+                submit(session, request(CR.CONTROL_AF_TRIGGER_START), repeating = false)
+            }
+            submit(session, request(), repeating = true)
+            note = null
+        } catch (e: Exception) {
+            note = "The camera rejected that adjustment (${e.message}). Live continues with the previous settings."
+        }
     }
 
     private fun finish(reason: String) {
@@ -190,7 +268,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
         runCatching { capture?.stopRepeating() }; runCatching { capture?.close() }; capture = null
         runCatching { camera?.close() }; camera = null
         runCatching { codec?.stop() }; runCatching { codec?.release() }; codec = null
-        runCatching { input?.release() }; input = null
+        runCatching { input?.release() }; input = null; viewSurface = null  // the SurfaceView owns its surface
         post(LiveState(LiveState.Phase.STOPPED, reason, stats.fps, sequence, transport.dropped, rotation))
         thread.quitSafely()
     }

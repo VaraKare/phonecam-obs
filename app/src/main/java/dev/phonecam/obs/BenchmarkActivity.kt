@@ -99,7 +99,7 @@ class BenchmarkActivity : Activity() {
                 if (destroyed) return@runOnUiThread
                 scan.isEnabled = true
                 result.onSuccess {
-                    options = it.profiles
+                    options = it.profiles.filter { p -> !p.highSpeed }  // benchmark recorder uses normal 30 fps sessions
                     profiles.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
                         options.map(Profile::toString).ifEmpty { listOf("No supported declared profile") })
                     start.isEnabled = options.isNotEmpty()

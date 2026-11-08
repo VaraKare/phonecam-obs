@@ -8,15 +8,16 @@ constexpr uint32_t maxPayload = 4 * 1024 * 1024;
 inline uint32_t be32(const uint8_t *p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
 inline uint64_t be64(const uint8_t *p) { return uint64_t(be32(p)) << 32 | be32(p + 4); }
 struct Header { uint16_t type; uint32_t length, flags; uint64_t sequence, pts; };
-constexpr uint16_t version = 2;
-// v2 frame flags: bit 0 keyframe; bits 1-2 clockwise quarter turns for upright display.
+constexpr uint16_t version = 3;
+// v3 frame flags: bit 0 keyframe; bits 1-2 clockwise quarter turns for upright display;
+// bit 3 mirror the upright picture horizontally (phone's "Mirror in OBS" switch).
 inline Header header(const uint8_t *p) {
     if (be32(p) != 0x5043414d) throw std::runtime_error("Invalid PCAM magic");
     if (p[4] != 0 || p[5] != version)
         throw std::runtime_error("Phone app and OBS plugin use different PCAM versions; install the matching app and plugin");
     if (p[6] != 0 || (p[7] != 1 && p[7] != 2)) throw std::runtime_error("Invalid PCAM type");
     Header h{p[7], be32(p + 8), be32(p + 12), be64(p + 16), be64(p + 24)};
-    if (!h.length || h.length > maxPayload || h.flags > 7 || h.pts > INT64_MAX ||
+    if (!h.length || h.length > maxPayload || h.flags > 15 || h.pts > INT64_MAX ||
         (h.type == 1 && (h.length < 20 || h.length > 65536 || h.flags || h.sequence || h.pts)))
         throw std::runtime_error("Invalid PCAM length/flags/timestamp");
     return h;

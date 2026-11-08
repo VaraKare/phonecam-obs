@@ -82,7 +82,14 @@ To use the phone in Zoom, Meet or Teams, add it to an OBS scene and click **Star
 | **Best** | The largest size your phone offers (often 4K), H.265, highest bitrate | Recording, when your phone stays cool |
 | **High** | 1080p, highest bitrate | Live streaming; if Best fails or gets hot |
 | **Balanced** | 1080p at about 10 Mb/s | Older phones, long sessions |
+| **Smooth 60 fps** | 1080p at 60 fps (experimental, only where offered) | Fast motion, good light |
 | **Custom** | Any profile from **Settings → Custom quality** | Fine-tuning |
+
+While live, the controls under the preview adjust the camera without interrupting OBS: **zoom** (or pinch), **brightness**, **white balance**, **torch**, **tap the preview to focus** on a point, and **Mirror in OBS**. Zoom, brightness, white balance and mirror are remembered for each camera.
+
+<!-- IMAGE: docs/images/phone-controls.png — the control strip while live -->
+
+**Smooth 60 fps (experimental)** appears only on phones that can capture 1080p at 120 fps; PhoneCam then sends 60 fps. It may look darker indoors.
 
 **Settings** on the phone also has the phone preview switch and extra sharpening/noise reduction (on by default; turn it off if the frame rate drops).
 

@@ -4,18 +4,21 @@ import android.hardware.camera2.CameraCharacteristics as CC
 
 /** Simple choices on the main screen. Every choice maps to one scanned, declared profile. */
 enum class Quality(val label: String) {
-    BEST("Best"), HIGH("High"), BALANCED("Balanced"), CUSTOM("Custom");
+    BEST("Best"), HIGH("High"), BALANCED("Balanced"), SMOOTH("Smooth 60 fps (experimental)"), CUSTOM("Custom");
 
     companion object {
         /**
          * BEST: largest size, H.265 preferred, highest bitrate. HIGH: 1080p, highest bitrate.
          * BALANCED: 1080p at 10 Mb/s or the nearest lower. Limited profiles are never chosen
-         * automatically. Returns null when the camera has no suitable profile.
+         * automatically. SMOOTH: a 60 fps profile (high-speed capture), only when offered. Returns
+         * null when the camera has no suitable profile.
          */
         fun pick(profiles: List<Profile>, cameraId: String, quality: Quality, customKey: String? = null): Profile? {
             val camera = profiles.filter { it.cameraId == cameraId }
             if (quality == CUSTOM) return camera.firstOrNull { key(it) == customKey }
-            val usable = camera.filter { !it.limited }
+            if (quality == SMOOTH) return camera.filter { it.fps == 60 && !it.limited }
+                .maxWithOrNull(compareBy<Profile> { it.mime == "video/hevc" }.thenBy { it.bitrate })
+            val usable = camera.filter { !it.limited && !it.highSpeed && it.fps == 30 }
             val hevcFirst = compareBy<Profile> { it.mime == "video/hevc" }
             return when (quality) {
                 BEST -> usable.maxWithOrNull(compareBy<Profile> { it.width * it.height }.then(hevcFirst).thenBy { it.bitrate })
@@ -25,11 +28,11 @@ enum class Quality(val label: String) {
                         .thenByDescending { if (it.bitrate <= 10_000_000) it.bitrate else -it.bitrate }
                         .thenByDescending { it.mime == "video/hevc" })
                     .firstOrNull()
-                CUSTOM -> null
+                SMOOTH, CUSTOM -> null
             }
         }
 
-        fun key(p: Profile) = "${p.cameraId}/${p.width}x${p.height}/${p.mime}/${p.bitrate}"
+        fun key(p: Profile) = "${p.cameraId}/${p.width}x${p.height}/${p.mime}/${p.bitrate}" + if (p.fps != 30 || p.highSpeed) "/${p.fps}fps" else ""
 
         /** Rear cameras first, then front, then others; repeated facings are numbered. */
         fun cameras(profiles: List<Profile>): List<Pair<String, String>> {
@@ -46,7 +49,8 @@ enum class Quality(val label: String) {
 
         fun describe(p: Profile): String {
             val size = when (p.width) { 3840 -> "4K"; 1920 -> "1080p"; 1280 -> "720p"; else -> "${p.width}×${p.height}" }
-            return "$size · ${if (p.mime == "video/avc") "H.264" else "H.265"} · ${p.bitrate / 1_000_000} Mb/s${if (p.limited) " · limited" else ""}"
+            return "$size · ${if (p.mime == "video/avc") "H.264" else "H.265"} · ${p.bitrate / 1_000_000} Mb/s" +
+                (if (p.fps != 30) " · ${p.fps} fps" else "") + (if (p.highSpeed) " · experimental" else "") + (if (p.limited) " · limited" else "")
         }
     }
 }

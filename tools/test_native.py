@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RECEIVER = ROOT / "native/build/phonecam-receive"
 
 
-def packet(kind, body, flags=0, sequence=0, pts=0, version=2):
+def packet(kind, body, flags=0, sequence=0, pts=0, version=3):
     return struct.pack(">4sHHIIQQ", b"PCAM", version, kind, len(body), flags, sequence, pts) + body
 
 
@@ -57,7 +57,7 @@ class NativeIntegration(unittest.TestCase):
                 self.assertIn("Receive failed", result.stderr)
             return result, (json.loads(result.stdout) if success else None)
 
-    def encoded_packets(self, hevc=False, skip=None, width=320, height=240, turns=lambda seq: 0):
+    def encoded_packets(self, hevc=False, skip=None, width=320, height=240, turns=lambda seq: 0, mirror=False):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / ("clip.hevc" if hevc else "clip.h264")
             command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=size={width}x{height}:rate=30",
@@ -81,7 +81,7 @@ class NativeIntegration(unittest.TestCase):
             if seq == skip: continue
             key = any(16 <= kind(n) <= 21 if hevc else kind(n) == 5 for n in group)
             payload = b"".join(b"\0\0\0\1" + n for n in group)
-            packets.append(packet(2, payload, int(key) | turns(seq) << 1, seq, seq * 33333))
+            packets.append(packet(2, payload, int(key) | turns(seq) << 1 | int(mirror) << 3, seq, seq * 33333))
         return packets
 
     def test_automatic_pairing_forward_and_retry(self):
@@ -142,10 +142,22 @@ esac
     def test_hevc_hardware_decode(self): self.exchange(self.encoded_packets(True, width=1920, height=1080), 12)
     def test_sequence_gap_waits_for_keyframe(self): self.exchange(self.encoded_packets(skip=2), 9)
     def test_malformed_header_rejected(self):
-        self.exchange([struct.pack(">4sHHIIQQ", b"PCAM", 2, 2, 0xffffffff, 0, 0, 0)], 1, False)
-    def test_version_one_sender_rejected(self):
-        result, _ = self.exchange([packet(1, b"\0" * 20, version=1)], 1, False)
-        self.assertIn("different PCAM versions", result.stderr)
+        self.exchange([struct.pack(">4sHHIIQQ", b"PCAM", 3, 2, 0xffffffff, 0, 0, 0)], 1, False)
+    def test_older_sender_rejected(self):
+        for old in (1, 2):
+            result, _ = self.exchange([packet(1, b"\0" * 20, version=old)], 1, False)
+            self.assertIn("different PCAM versions", result.stderr)
+    def test_mirror_flips_picture(self):
+        # testsrc2 is not left-right symmetric; mirroring swaps the outer quarters' brightness.
+        _, plain = self.exchange(self.encoded_packets(width=640, height=360), 12)
+        _, mirrored = self.exchange(self.encoded_packets(width=640, height=360, mirror=True), 12)
+        self.assertGreater(abs(plain["leftLuma"] - plain["rightLuma"]), 2)
+        self.assertAlmostEqual(mirrored["leftLuma"], plain["rightLuma"], delta=2)
+        self.assertAlmostEqual(mirrored["rightLuma"], plain["leftLuma"], delta=2)
+        self.assertEqual((mirrored["lastWidth"], mirrored["lastHeight"]), (640, 360))
+    def test_mirror_with_portrait_rotation(self):
+        _, value = self.exchange(self.encoded_packets(width=640, height=360, turns=lambda seq: 1, mirror=True), 12)
+        self.assertEqual((value["lastWidth"], value["lastHeight"]), (360, 640))
     def test_portrait_rotation_swaps_dimensions(self):
         for turns in (1, 3):
             _, value = self.exchange(self.encoded_packets(True, width=1920, height=1080, turns=lambda seq: turns), 12)

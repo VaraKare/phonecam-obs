@@ -43,10 +43,10 @@ The receiver first writes 64 lowercase hex token bytes plus LF. The phone allows
 | Offset | Size | Meaning |
 |---|---|---|
 | 0 | 4 | ASCII `PCAM` |
-| 4 | 2 | Version 2 (a different version is rejected with a clear app/plugin mismatch error) |
+| 4 | 2 | Version 3 since 0.2.0 (version 2 in 0.1.0). A different version is rejected with a clear app/plugin mismatch error |
 | 6 | 2 | Type: 1 configuration, 2 frame |
 | 8 | 4 | Payload byte length, 1..4 MiB (configuration 20..65536) |
-| 12 | 4 | Flags: bit 0 keyframe; bits 1–2 clockwise quarter turns to display the frame upright; higher bits rejected. Configuration flags must be 0 |
+| 12 | 4 | Flags: bit 0 keyframe; bits 1–2 clockwise quarter turns to display the frame upright; bit 3 mirror the upright picture horizontally ("Mirror in OBS"); higher bits rejected. Configuration flags must be 0 |
 | 16 | 8 | Monotonic frame identity, starting at 0; gaps expose dropped frames |
 | 24 | 8 | Encoder PTS in phone microseconds; increasing, signed-64-bit representable |
 
