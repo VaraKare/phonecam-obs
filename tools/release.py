@@ -97,7 +97,7 @@ def build():
     archive = out / f"PhoneCam-OBS-plugin-macos-arm64-{name}.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
         for path in sorted(plugin.rglob("*")):
-            if path.is_file():
+            if path.is_file() and not any(part.endswith(".dSYM") for part in path.parts):  # debug symbols stay local
                 info = zipfile.ZipInfo.from_file(path, "phonecam-usb.plugin/" + str(path.relative_to(plugin)))
                 info.compress_type = zipfile.ZIP_DEFLATED
                 bundle.writestr(info, path.read_bytes())
