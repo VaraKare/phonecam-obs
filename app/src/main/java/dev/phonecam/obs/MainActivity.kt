@@ -254,7 +254,8 @@ class MainActivity : Activity() {
         badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> GREY }, 6)
         val p = liveProfile
         stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
-        if (state != null && p != null) stats.text = "${Quality.describe(p).substringBefore(" ·")} · ${"%.0f".format(state.fps)} fps · ${state.drops} drops"
+        if (state != null && p != null) stats.text = "${Quality.describe(p).substringBefore(" ·")} · ${"%.0f".format(state.fps)} fps · ${state.drops} drops" +
+            if (state.bitrate in 1 until state.requestedBitrate) "\nLink busy: ${state.bitrate / 1_000_000} of ${state.requestedBitrate / 1_000_000} Mb/s" else ""
         val heat = runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
         thermal.text = when { heat >= PowerManager.THERMAL_STATUS_SEVERE -> "Hot — consider stopping"; heat >= PowerManager.THERMAL_STATUS_MODERATE -> "Warm"; else -> "Cool" }
         thermal.background = rounded(if (heat >= PowerManager.THERMAL_STATUS_SEVERE) RED else if (heat >= PowerManager.THERMAL_STATUS_MODERATE) AMBER else CHIP, 6)

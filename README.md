@@ -77,22 +77,27 @@ To use the phone in Zoom, Meet or Teams, add it to an OBS scene and click **Star
 
 ### Without a cable: Wi-Fi (Wireless debugging)
 
-Uses Android's **Wireless debugging** (Android 11 or newer). The phone and Mac only need to be on the **same Wi-Fi network**; no Internet access is needed. A home router with the Internet down works. Video goes straight from the phone to the Mac over your local network, with the same pairing key as USB.
+Uses Android's **Wireless debugging** (Android 11 or newer). The phone and Mac only need to be on the **same Wi-Fi network**. **No Internet access is needed**: a router with the Internet down works. Video goes straight from the phone to the Mac over your local network, protected by the same key as USB.
 
-**Pair once:**
-1. On the phone, open **Developer options → Wireless debugging**, turn it on (allow the network if asked), then tap **Pair device with pairing code**.
-2. In OBS, open the PhoneCam source's **Properties**. Type the **IP address & Port** and the **6-digit code** the phone shows, then click **Pair over Wi-Fi**.
+**First, set up USB once** (steps 1–4 above) and tick **Always allow from this computer**. That approval also covers Wi-Fi, so there is nothing to pair.
 
-**Every time after that:** turn **Wireless debugging** on (tip: in Developer options → **Quick settings developer tiles**, add the Wireless debugging tile), keep the phone on the same Wi-Fi, and tap **Start live**. The plugin finds the phone by itself and the Status line says **Live over Wi-Fi**. If the cable is also plugged in, USB is used.
+**Each time you want Wi-Fi:**
+1. On the phone, open **Settings**, search for **Wireless debugging** and open it. (It is in **Developer options**, under **USB debugging**. Tap the words, not only the switch.)
+2. Turn it **on** and tap **Allow** for your Wi-Fi network.
+3. Unplug the cable, open OBS and tap **Start live**. Within about 10 seconds the source's Status says **Live over Wi-Fi**. If the cable is plugged in, USB is used instead.
+
+Tip: Developer options → **Quick settings developer tiles** → **Wireless debugging** puts an on/off switch in the phone's quick settings.
+
+**Mac never connected by USB?** Pair it instead: on the Wireless debugging screen tap **Pair device with pairing code** and leave that box open. In OBS, open the PhoneCam source's **Properties**, type the **IP address & Port** and the **6-digit code** from that box (not the address on the main Wireless debugging screen, which has a different port), and click **Pair over Wi-Fi**.
 
 Good to know:
-- Wi-Fi carries less than a cable. Start with **High** (1080p). Use 4K **Best** only on a strong 5 GHz or Wi-Fi 6 network, close to the router.
+- **Speed:** Wireless debugging carried about 50–65 Mb/s on a strong 5 GHz Wi-Fi 6 network in our test, while the cable carried about 140 Mb/s. **High** (1080p, 20 Mb/s) fits comfortably. 4K **Best** (60 Mb/s) does not: PhoneCam then lowers the bitrate by itself until frames stop dropping, and the LIVE badge shows **Link busy: 34 of 60 Mb/s**. It goes back up when the link allows. The size and frame rate never change.
 - The phone isn't charging, so long 4K sessions drain its battery. Without a cable, the phone also no longer charges from the laptop.
-- Android turns Wireless debugging off when the phone changes Wi-Fi network, and usually after a restart. Turn it on again; you don't need to pair again.
+- Android turns Wireless debugging off when the phone changes Wi-Fi network, and usually after a restart. Turn it on again; nothing else is needed.
 - A hotspot from the phone itself usually doesn't work: Wireless debugging needs the phone to be joined to a Wi-Fi network.
 
-<!-- IMAGE: docs/images/android-wireless-debugging.png — Wireless debugging and Pair device with pairing code -->
-<!-- IMAGE: docs/images/obs-wifi-pairing.png — the Pair over Wi-Fi fields in the source properties -->
+<!-- IMAGE: docs/images/android-wireless-debugging.png — Settings search and the Wireless debugging switch -->
+<!-- IMAGE: docs/images/obs-live-over-wifi.png — Status: Live over Wi-Fi -->
 
 ### Quality choices
 
@@ -121,7 +126,7 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | "adb not found" | Install platform-tools (step 1). If it's somewhere unusual, put its full path in the source's **adb path** field. |
 | "Connect the phone with a USB data cable … or turn on Wireless debugging" | Try another cable or USB port and check that USB debugging is on. For Wi-Fi, turn Wireless debugging on and check that the phone and Mac are on the same network (pair first). |
 | "Wi-Fi pairing failed" | The address and code change every time you open **Pair device with pairing code**. Open it again and type the new ones. |
-| Drops or stutter over Wi-Fi | Choose **High** or **Balanced**, move closer to the router, or use the cable. |
+| "Link busy" or drops over Wi-Fi | PhoneCam already lowered the bitrate. For a sharper picture choose **High** instead of Best, move closer to the router, or use the cable. If it says the connection is too slow even at the lowest bitrate, choose **Balanced** or use the cable. |
 | "Unlock the phone and tap Allow" | Unlock the phone and accept the USB debugging prompt. |
 | "Install the PhoneCam app" | Install the phone app (step 3). |
 | "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |

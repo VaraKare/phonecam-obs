@@ -60,6 +60,10 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
     private var lastFrameAt = 0L
     private var loggedDrops = 0L
     private val stats = FrameStats()
+    // Lowers the bitrate while the link (Wi-Fi especially) drops frames; shown on the badge.
+    private val bitrate = BitrateController(profile.bitrate)
+    @Volatile private var sentBytes = 0L
+    private var loggedBytes = 0L
     private val transport = LiveTransport(LiveTransport.token(context.filesDir),
         { handler.post { prepare() } }, { reason -> handler.post { finish(reason) } })
     private val startDeadline = Runnable { finish("No hardware video after 15 seconds; choose another profile or close other camera apps.") }
@@ -73,7 +77,15 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             // Bounded diagnostics (at most one line per second, counts only) to locate drop bursts.
             if (dropped != loggedDrops) Log.w("PhoneCam", "drops +${dropped - loggedDrops} (total $dropped) by frame $sequence, ${"%.1f".format(stats.fps)} fps")
             loggedDrops = dropped
-            post(LiveState(LiveState.Phase.LIVE, note ?: "Sending to OBS. Nothing is saved on the phone.", stats.fps, sequence, dropped, rotation))
+            val sent = sentBytes; val actualMbps = (sent - loggedBytes) * 8 / 1_000_000.0; loggedBytes = sent
+            if (sequence > 0) bitrate.update(dropped)?.let { target ->
+                val applied = runCatching { codec?.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, target) }) }.isSuccess
+                // Requested (the user's choice), target (this controller) and actual output, kept apart.
+                Log.i("PhoneCam", "bitrate target ${target / 1_000_000} of ${profile.bitrate / 1_000_000} Mb/s${if (applied) "" else " (encoder refused)"}; last second ${"%.1f".format(actualMbps)} Mb/s")
+            }
+            val message = note ?: if (bitrate.starved) "The connection is too slow even at ${bitrate.current / 1_000_000} Mb/s. Choose a lower quality, move closer to the Wi-Fi router, or use the USB cable."
+                else "Sending to OBS. Nothing is saved on the phone."
+            post(LiveState(LiveState.Phase.LIVE, message, stats.fps, sequence, dropped, rotation, bitrate.current, profile.bitrate))
             handler.postDelayed(this, 1_000)
         }
     }
@@ -144,6 +156,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                             val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
                             val accepted = transport.offer(LiveQueue.Frame(bytes, sequence++, info.presentationTimeUs, key, rotation / 90, controls.mirror))
                             stats.add(info.presentationTimeUs)
+                            sentBytes += info.size
                             lastFrameAt = SystemClock.elapsedRealtime()
                             handler.removeCallbacks(startDeadline)
                             if (sequence == 1L) handler.post(status)
@@ -286,6 +299,8 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
 
 /** What the screen shows. STOPPED is final for a session; [message] then explains why. */
 data class LiveState(val phase: Phase, val message: String, val fps: Double = 0.0, val frames: Long = 0,
-                     val drops: Long = 0, val rotation: Int = 0) {
+                     val drops: Long = 0, val rotation: Int = 0,
+                     /** Current encoder bitrate target and the user's choice; they differ only while the link is busy. */
+                     val bitrate: Int = 0, val requestedBitrate: Int = 0) {
     enum class Phase { WAITING, LIVE, STOPPED }
 }

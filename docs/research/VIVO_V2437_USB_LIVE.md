@@ -81,6 +81,17 @@ Framing finding: the scene item had been moved and scaled by hand earlier (posit
 
 Not established in this session: Smooth 60 fps (no 60 fps session appears in the logs), each control individually observed by the operator (user-reported as a whole), Mac-side measured fps, long runs, optical latency. Laptop battery drained quickly during USB sessions; the phone also charges from the laptop over USB.
 
+## First Wi-Fi sessions (10 November 2026)
+
+App 0.2.0-alpha.1 (release-signed) with plugin 0.3.0-alpha.1 (Wireless debugging support). The user tapped every Start and Stop.
+
+- **No pairing needed.** The user could not find the "Pair device with pairing code" option on the vivo, but after turning Wireless debugging on, adb already listed the phone as `192.168.1.52:40043` (found by mDNS, `_adb-tls-connect._tcp`): the Mac's key, allowed earlier over USB with "Always allow", is also accepted for Wireless debugging. The plugin connected by itself and reported "Ready".
+- Phone Wi-Fi: 5 GHz (5300 MHz), Wi-Fi 6, RSSI −51 dBm, 480 Mb/s link. Ping 12–18 ms.
+- `adb exec-out` over Wi-Fi carried 60 MiB in 7.8–10.3 s: about **6–8 MB/s (≈50–65 Mb/s)**, roughly half the USB 2.0 cable (≈140 Mb/s).
+- Two sessions, rear 4K Best (2160×3840 H.265 60 Mb/s): OBS reported "Live over Wi-Fi … hardware decoding" both times. The user saw 193–270 drops in the first and about 400 in the second, still growing, with some visible lag. No "Mac decoding fell behind" lines: the bottleneck is the adb Wi-Fi link, not the Mac.
+
+Response: automatic bitrate lowering (user decision, 10 November 2026). While frames drop, the phone lowers the encoder bitrate to 70% (at most every 2 s, never below a sixth of the choice or 2 Mb/s) and shows "Link busy: X of Y Mb/s"; it raises it back by 15% after a calm period. Resolution and frame rate never change. Physical check pending.
+
 ## Still pending
 
 ~5-minute and two-hour runs with recorded frame/drop counts; front camera (Camera 1), deferred by the user.
