@@ -97,6 +97,9 @@ def main():
          "-I", ROOT / "native", ROOT / "native/adb_test.cpp", "-o", BUILD / "adb-test"])
     run([BUILD / "adb-test"])
     run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
+         "-I", ROOT / "native", ROOT / "native/rotate_test.cpp", "-o", BUILD / "rotate-test"])
+    run([BUILD / "rotate-test"])
+    run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
          "-I", ROOT / "native", ROOT / "native/wifi_test.cpp", "-o", BUILD / "wifi-test", "-framework", "Security", "-framework", "CoreFoundation"])
     run([BUILD / "wifi-test"])
     run([BUILD / "obs-smoke", executable])

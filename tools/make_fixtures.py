@@ -13,9 +13,10 @@ from test_native import NativeIntegration  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "native/tests/fixtures"
 CASES = {
-    "avc-320x240.pcam": dict(hevc=False),
+    "avc-640x360.pcam": dict(hevc=False, width=640, height=360),
+    "avc-640x360-mirror.pcam": dict(hevc=False, width=640, height=360, mirror=True),
     "hevc-320x240.pcam": dict(hevc=True),
-    "hevc-portrait-mirror.pcam": dict(hevc=True, turns=lambda seq: 1, mirror=True),
+    "hevc-640x360-portrait.pcam": dict(hevc=True, width=640, height=360, turns=lambda seq: 1),
 }
 
 if __name__ == "__main__":
