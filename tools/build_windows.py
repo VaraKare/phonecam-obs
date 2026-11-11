@@ -55,9 +55,19 @@ def msvc_environment():
     return dict(line.split("=", 1) for line in dump.splitlines() if "=" in line)
 
 
+def tool(name, env):
+    """Windows looks up programs in the parent's PATH, not the one passed in env, so resolve it here."""
+    path = next((value for key, value in env.items() if key.upper() == "PATH"), None)
+    found = shutil.which(name, path=path)
+    if not found: raise SystemExit(f"{name} not found; install Visual Studio 2022 with C++ tools")
+    return found
+
+
 def run(command, env, cwd=ROOT):
-    print("+", " ".join(str(c) for c in command), flush=True)
-    subprocess.run([str(c) for c in command], check=True, env=env, cwd=cwd)
+    command = [str(c) for c in command]
+    if command[0] in ("cl", "lib", "dumpbin"): command[0] = tool(command[0], env)
+    print("+", " ".join(command), flush=True)
+    subprocess.run(command, check=True, env=env, cwd=cwd)
 
 
 def obs_runtime(env):
@@ -72,7 +82,7 @@ def obs_runtime(env):
                 target = runtime / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(bundle.read(member))
-    exports = subprocess.run(["dumpbin", "/nologo", "/exports", str(runtime / "obs.dll")], capture_output=True, text=True, check=True, env=env).stdout
+    exports = subprocess.run([tool("dumpbin", env), "/nologo", "/exports", str(runtime / "obs.dll")], capture_output=True, text=True, check=True, env=env).stdout
     names = re.findall(r"^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)", exports, re.M)
     if len(names) < 500: raise RuntimeError(f"Unexpected obs.dll exports ({len(names)})")
     (OUT / "obs.def").write_text("LIBRARY obs\nEXPORTS\n" + "".join(f"    {n}\n" for n in names))
