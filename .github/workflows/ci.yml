@@ -37,3 +37,18 @@ jobs:
         with:
           name: phonecam-probe-research-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+  windows-plugin:
+    # Test build only: nothing here proves a real Windows PC, phone and OBS (docs/WINDOWS.md).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            native/build/*.zip
+            native/build/*.tar.gz
+          key: windows-downloads-obs-33.0.1-v1
+      - run: python tools/build_windows.py
