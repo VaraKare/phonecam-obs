@@ -207,51 +207,7 @@ Endpoint loadEndpoint(const std::string &configPath) {
 void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output) {
     @autoreleasepool {
         Decoder decoder(output);
-        bool configured = false, waitingForKey = true, seen = false;
-        uint64_t lastSequence = 0, lastPts = 0;
-        // Decode + rotate + hand-off time per frame. Over 33 ms means the Mac, not the USB link, is the
-        // bottleneck at 30 fps; logged once a second only when it happens (bounded telemetry).
-        auto windowStart = std::chrono::steady_clock::now();
-        unsigned windowFrames = 0, slowFrames = 0; double worstMs = 0;
-        bool warmedUp = false;  // the first frame includes decoder start-up; not counted
-        while (!stop) {
-            uint8_t bytes[32];
-            if (!configured) {
-                // ADB accepts locally, then closes at once when the phone app is not listening.
-                try { read(bytes, sizeof(bytes), 15); }
-                catch (const Closed &) { throw NotStreaming("Waiting for Start live on the phone"); }
-            } else {
-                try { read(bytes, sizeof(bytes), seen ? 3 : 15); }
-                catch (const Closed &) { throw std::runtime_error("the phone stopped sending (Stop tapped, app left, cable unplugged or Wi-Fi lost)"); }
-            }
-            Header h = header(bytes);
-            std::vector<uint8_t> body(h.length); read(body.data(), body.size(), 3);
-            if (h.type == 1) {
-                if (configured) throw std::runtime_error("Unexpected reconfiguration; restart live capture");
-                decoder.configure(body); configured = true;
-            } else {
-                if (!configured || (seen && (h.sequence <= lastSequence || h.pts <= lastPts))) throw std::runtime_error("Invalid frame order/timing");
-                if (seen && h.sequence != lastSequence + 1) waitingForKey = true;
-                seen = true; lastSequence = h.sequence; lastPts = h.pts;
-                if (waitingForKey && !(h.flags & 1)) continue;
-                waitingForKey = false;
-                auto began = std::chrono::steady_clock::now();
-                decoder.frame(body, h);
-                auto now = std::chrono::steady_clock::now();
-                double ms = std::chrono::duration<double, std::milli>(now - began).count();
-                if (!warmedUp) { warmedUp = true; windowStart = now; continue; }
-                ++windowFrames; if (ms > 33.3) ++slowFrames; if (ms > worstMs) worstMs = ms;
-                if (now - windowStart >= std::chrono::seconds(1)) {
-                    auto sink = logSink.load();
-                    if (sink && slowFrames) {
-                        char line[160];
-                        snprintf(line, sizeof(line), "Mac decoding fell behind: %u of %u frames over 33 ms in the last second (slowest %.0f ms)", slowFrames, windowFrames, worstMs);
-                        sink(line);
-                    }
-                    windowStart = now; windowFrames = slowFrames = 0; worstMs = 0;
-                }
-            }
-        }
+        decodeMessages(stop, read, decoder, logSink.load(), "Mac");
     }
 }
 void setLog(void (*sink)(const char *)) { logSink = sink; }

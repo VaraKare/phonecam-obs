@@ -320,7 +320,7 @@ void Server::handle(int fd, std::atomic<bool> &stop) {
         [&](CVPixelBufferRef image, uint64_t sequence, uint64_t pts) {
             if (!announced) {
                 announced = true;
-                status("Live over direct Wi-Fi: " + std::to_string(CVPixelBufferGetWidth(image)) + "×" + std::to_string(CVPixelBufferGetHeight(image)) + ", hardware decoding.");
+                status("Live over direct Wi-Fi: " + std::to_string(imageWidth(image)) + "×" + std::to_string(imageHeight(image)) + ", hardware decoding.");
             }
             output(image, sequence, pts);
         });

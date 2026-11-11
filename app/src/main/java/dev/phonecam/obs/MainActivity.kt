@@ -50,7 +50,7 @@ class Stage(context: Context) : FrameLayout(context) {
 class MainActivity : Activity() {
     private companion object {
         const val RED = 0xFFC62828.toInt(); const val AMBER = 0xFFB26A00.toInt(); const val GREY = 0xFF4A4A4A.toInt()
-        const val BLUE = 0xFF1565C0.toInt(); const val PANEL = 0xFF161616.toInt(); const val CHIP = 0xCC000000.toInt()
+        const val BLUE = 0xFF1565C0.toInt(); const val PANEL = 0xFF0E0E0E.toInt(); const val CHIP = 0xCC000000.toInt()
         const val MUTED = 0xFFB0B0B0.toInt()
         const val SCAN_REQUEST = 7
         const val SETTINGS_REQUEST = 8
@@ -65,10 +65,10 @@ class MainActivity : Activity() {
     private lateinit var stats: TextView
     private lateinit var panelScroll: ScrollView
     private lateinit var cameraRow: LinearLayout
-    private lateinit var quality: Spinner
+    private lateinit var qualityValue: TextView
     private lateinit var detail: TextView
     private lateinit var startButton: Button
-    private lateinit var settingsButton: Button
+    private lateinit var settingsButton: ImageButton
     private lateinit var message: TextView
     private lateinit var stageControls: LinearLayout
     private lateinit var sliderRow: LinearLayout
@@ -141,27 +141,40 @@ class MainActivity : Activity() {
         buildStageControls()
         attachGestures()
 
-        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)) }
-        fun label(text: String) = TextView(this).apply { this.text = text; setTextColor(MUTED); textSize = 13f; setPadding(0, dp(8), 0, dp(4)); panel.addView(this) }
-        label("Camera")
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(16), dp(20), dp(16)) }
+        // Row 1: Rear | Front segmented switch, settings icon.
         cameraRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        panel.addView(cameraRow)
-        label("Quality")
-        quality = Spinner(this).apply { contentDescription = "Quality" }
-        panel.addView(quality)
-        detail = TextView(this).apply { setTextColor(MUTED); textSize = 13f }
-        panel.addView(detail)
+        settingsButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_tune); background = null; contentDescription = "Settings"
+            setColorFilter(MUTED); setOnClickListener { openSettings() }
+        }
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(cameraRow, LinearLayout.LayoutParams(0, dp(40), 1f))
+            addView(settingsButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
+        })
+        // Row 2: Quality, tap for the short list.
+        qualityValue = TextView(this).apply { setTextColor(MUTED); textSize = 15f }
+        detail = TextView(this).apply { setTextColor(0xFF6E6E6E.toInt()); textSize = 12f; setPadding(0, dp(2), 0, 0) }
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(0, dp(14), 0, dp(14))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(context).apply { text = "Quality"; setTextColor(Color.WHITE); textSize = 16f }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(qualityValue)
+            })
+            addView(detail)
+            setOnClickListener { chooseQuality() }
+            contentDescription = "Quality"
+        })
+        panel.addView(View(this).apply { setBackgroundColor(0xFF232323.toInt()) }, LinearLayout.LayoutParams(-1, 1))
         startButton = Button(this).apply {
-            textSize = 18f; setTextColor(Color.WHITE); isAllCaps = false; typeface = Typeface.DEFAULT_BOLD
+            textSize = 17f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD; stateListAnimator = null
             setOnClickListener { onStartPressed() }
         }
-        panel.addView(startButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(16) })
-        message = TextView(this).apply { setTextColor(Color.WHITE); textSize = 14f; setPadding(0, dp(10), 0, dp(4)); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        panel.addView(startButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)).apply { topMargin = dp(16) })
+        message = TextView(this).apply { setTextColor(MUTED); textSize = 13f; setPadding(0, dp(10), 0, 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         panel.addView(message)
-        settingsButton = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            text = "Settings"; isAllCaps = false; setTextColor(MUTED); setOnClickListener { openSettings() }
-        }
-        panel.addView(settingsButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END })
         panelScroll = ScrollView(this).apply { setBackgroundColor(PANEL); addView(panel) }
 
         root = LinearLayout(this).apply { setBackgroundColor(Color.BLACK); addView(stage); addView(panelScroll) }
@@ -175,12 +188,6 @@ class MainActivity : Activity() {
                 view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
             }
             insets
-        }
-        quality.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                qualityChoices().getOrNull(position)?.let { if (it != choice) { choice = it; refresh() } }
-            }
         }
         orientation = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
@@ -223,31 +230,34 @@ class MainActivity : Activity() {
         val cameras = Quality.cameras(options)
         if (cameras.isNotEmpty() && cameras.none { it.first == cameraId }) cameraId = cameras.first().first
         cameraRow.removeAllViews()
+        cameraRow.background = GradientDrawable().apply { setStroke(dp(1), 0xFF333333.toInt()); cornerRadius = dp(10).toFloat() }
+        cameraRow.setPadding(dp(3), dp(3), dp(3), dp(3))
         for ((id, name) in cameras) {
             val on = id == cameraId
-            cameraRow.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-                text = name; isAllCaps = false; setTextColor(if (on) Color.WHITE else MUTED)
-                background = rounded(if (on) BLUE else GREY, 8); isEnabled = live == null
+            cameraRow.addView(TextView(this).apply {
+                text = name; gravity = Gravity.CENTER; textSize = 15f
+                setTextColor(if (on) Color.BLACK else MUTED); typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                background = if (on) rounded(Color.WHITE, 8) else null; isEnabled = live == null
                 contentDescription = "$name camera${if (on) ", selected" else ""}"
-                setOnClickListener { cameraId = id; refresh() }
-            }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(8) })
+                setOnClickListener { if (live == null && cameraId != id) { cameraId = id; feedback.play(Feedback.Event.TICK, this); refresh() } }
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
-        val choices = qualityChoices()
-        quality.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, choices.map { it.label })
-        quality.setSelection(choices.indexOf(choice).coerceAtLeast(0))
-        quality.isEnabled = live == null && options.isNotEmpty()
         val profile = selected()
+        qualityValue.text = "${choice.label.substringBefore(" (")}  ›"
         detail.text = when {
             options.isEmpty() -> ""
             profile == null -> "Not available on this camera. Choose another quality."
             else -> Quality.describe(profile) + if (highQuality && profile.highQuality) " · HQ processing" else ""
         }
         settingsButton.isEnabled = live == null
+        fun button(label: String, fill: Int, text: Int, enabled: Boolean) {
+            startButton.text = label; startButton.background = rounded(fill, 12); startButton.setTextColor(text); startButton.isEnabled = enabled
+        }
         when {
-            live != null -> { startButton.text = "Stop live"; startButton.background = rounded(RED, 12); startButton.isEnabled = true }
-            !permitted -> { startButton.text = "Allow camera access"; startButton.background = rounded(BLUE, 12); startButton.isEnabled = true }
-            scanning || options.isEmpty() -> { startButton.text = if (scanning) "Checking camera…" else "Check camera"; startButton.background = rounded(GREY, 12); startButton.isEnabled = !scanning }
-            else -> { startButton.text = "Start live to OBS"; startButton.background = rounded(BLUE, 12); startButton.isEnabled = profile != null }
+            live != null -> button("Stop live", RED, Color.WHITE, true)
+            !permitted -> button("Allow camera access", Color.WHITE, Color.BLACK, true)
+            scanning || options.isEmpty() -> button(if (scanning) "Checking camera…" else "Check camera", GREY, Color.WHITE, !scanning)
+            else -> button("Start live", if (profile != null) Color.WHITE else GREY, if (profile != null) Color.BLACK else MUTED, profile != null)
         }
         if (live == null) arrange()
     }
@@ -261,8 +271,10 @@ class MainActivity : Activity() {
                 feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
             lastPhase = phase
         }
-        badge.text = when (phase) { LiveState.Phase.LIVE -> "● LIVE"; LiveState.Phase.WAITING -> "Waiting for OBS"; else -> "Off" }
-        badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> GREY }, 6)
+        val paired = if (phase == LiveState.Phase.STOPPED) WifiConnector(this).pairings.macs.firstOrNull()?.name else null
+        badge.text = when (phase) { LiveState.Phase.LIVE -> "● LIVE"; LiveState.Phase.WAITING -> "Waiting for OBS"; else -> "Wi-Fi ready · $paired" }
+        badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> CHIP }, 6)
+        badge.visibility = if (phase == LiveState.Phase.STOPPED && paired == null) View.GONE else View.VISIBLE
         val p = liveProfile
         stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
         if (state != null && p != null) stats.text = "${Quality.describe(p).substringBefore(" ·")} · ${"%.0f".format(state.fps)} fps · ${state.drops} drops" +
@@ -270,13 +282,14 @@ class MainActivity : Activity() {
         val heat = runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
         thermal.text = when { heat >= PowerManager.THERMAL_STATUS_SEVERE -> "Hot — consider stopping"; heat >= PowerManager.THERMAL_STATUS_MODERATE -> "Warm"; else -> "Cool" }
         thermal.background = rounded(if (heat >= PowerManager.THERMAL_STATUS_SEVERE) RED else if (heat >= PowerManager.THERMAL_STATUS_MODERATE) AMBER else CHIP, 6)
+        thermal.visibility = if (phase == LiveState.Phase.LIVE || heat >= PowerManager.THERMAL_STATUS_MODERATE) View.VISIBLE else View.GONE
         stageControls.visibility = if (phase == LiveState.Phase.LIVE) View.VISIBLE else View.GONE
         val previewing = phase != LiveState.Phase.STOPPED && showPreview
         placeholder.visibility = if (phase == LiveState.Phase.LIVE && previewing) View.GONE else View.VISIBLE
         placeholder.text = when (phase) {
             LiveState.Phase.LIVE -> "Live. Preview is off."
             LiveState.Phase.WAITING -> "Waiting for OBS…\nOpen OBS with the PhoneCam source visible."
-            else -> "Camera off\nNothing is recorded or saved on this phone."
+            else -> "Camera off"
         }
     }
 
@@ -518,6 +531,15 @@ class MainActivity : Activity() {
             }
             refresh()
         }
+    }
+
+    private fun chooseQuality() {
+        if (live != null || options.isEmpty()) return
+        val choices = qualityChoices()
+        AlertDialog.Builder(this).setTitle("Quality")
+            .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), choices.indexOf(choice)) { dialog, index ->
+                choice = choices[index]; dialog.dismiss(); refresh()
+            }.setNegativeButton("Cancel", null).show()
     }
 
     private fun chooseCustom() {

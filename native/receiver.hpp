@@ -1,5 +1,8 @@
 #pragma once
+#include "stream.hpp"
+#ifdef __APPLE__
 #include <CoreVideo/CoreVideo.h>
+#endif
 #include <cstdint>
 #include <atomic>
 #include <functional>
@@ -7,16 +10,21 @@
 #include <string>
 
 namespace phonecam {
-using Output = std::function<void(CVPixelBufferRef, uint64_t, uint64_t)>;
+#ifdef __APPLE__
+using Image = CVPixelBufferRef;  // hardware-decoded NV12
+inline size_t imageWidth(Image image) { return CVPixelBufferGetWidth(image); }
+inline size_t imageHeight(Image image) { return CVPixelBufferGetHeight(image); }
+#else
+// A decoded, upright picture in memory: NV12 (planes 0-1) or I420 (planes 0-2).
+struct Picture { bool nv12 = true; uint32_t width = 0, height = 0; const uint8_t *plane[3] = {}; uint32_t stride[3] = {}; };
+using Image = const Picture *;
+inline size_t imageWidth(Image image) { return image->width; }
+inline size_t imageHeight(Image image) { return image->height; }
+#endif
+using Output = std::function<void(Image, uint64_t, uint64_t)>;
 struct Endpoint { int port = 0; std::string token; };
 // Nothing listens on the Mac port: the ADB forward is gone (unplugged, USB reset, adb restarted).
 struct ConnectionRefused : std::runtime_error { using std::runtime_error::runtime_error; };
-// The forward exists but the phone closed it before any video: no session started yet (or a stale key).
-struct NotStreaming : std::runtime_error { using std::runtime_error::runtime_error; };
-// The other end closed the connection (as opposed to a timeout or bad data).
-struct Closed : std::runtime_error { using std::runtime_error::runtime_error; };
-// Reads exactly n bytes within the given seconds, or throws (Closed when the peer hung up).
-using Reader = std::function<void(uint8_t *, size_t, int)>;
 // Decodes PCAM v3 messages (configuration, then frames) from any transport until stop or an error.
 void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output);
 // Reads tools/live.py settings (diagnostic CLI path). Validates port range and 64-hex token.
