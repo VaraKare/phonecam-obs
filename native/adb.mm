@@ -136,7 +136,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                     }
                     say(devices.unauthorized ? "Unlock the phone and tap Allow on the USB debugging prompt."
                         : devices.offline ? "The phone is offline. Reconnect the USB cable, or turn Wireless debugging off and on."
-                        : "Connect the phone with a USB data cable (USB debugging on), or turn on Wireless debugging on the same Wi-Fi.");
+                        : "Ready. Tap Start live on a phone paired over Wi-Fi, or connect one with a USB data cable (USB debugging on).");
                     pause(stop, 2000); continue;
                 }
                 for (const auto &candidate : devices.ready) {

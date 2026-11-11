@@ -40,7 +40,7 @@ Order changed on 8 November 2026: wireless comes before Windows because it can b
 Status: step 1 implemented on `feat/v0.3-wifi` (8 November 2026): OBS pairing button, automatic reconnection to a paired phone, USB preferred when both are present, "Live over Wi-Fi/USB" status. Physical check pending.
 
 - Step 1: ADB Wireless debugging. The plugin finds a phone paired over Wireless debugging just like a USB phone; guided pairing steps. Same pipeline and security, no cable.
-- Step 2: direct Wi-Fi with QR-code or typed-code pairing and an encrypted connection; also works on the phone's hotspot. **Approved 11 November 2026** (Android network permission, local network only) after Wireless debugging could not connect on the owner's router. Implemented on `feat/v0.3-wifi` with a phone-to-Mac interoperability test; physical check pending. Spec: [Wi-Fi](WIFI.md).
+- Step 2: direct Wi-Fi with QR-code or typed-code pairing and an encrypted connection; also works on the phone's hotspot. **Approved 11 November 2026** (Android network permission, local network only) after Wireless debugging could not connect on the owner's router. Implemented on `feat/v0.3-wifi` with a phone-to-Mac interoperability test. **Physically checked on 11 November 2026:** QR pairing and 1080p30 live over direct Wi-Fi with 0 drops on the vivo V2437 ([session](research/VIVO_V2437_USB_LIVE.md#first-direct-wi-fi-session-11-november-2026)); 4K over Wi-Fi, typed-code pairing and the hotspot path still unchecked. Spec: [Wi-Fi](WIFI.md).
 - Automatic bitrate lowering when the connection can't keep up (any connection), shown on the LIVE badge.
 - Measured on a real phone: frame rate, drops and delay compared with USB, on 5 GHz / Wi-Fi 6.
 

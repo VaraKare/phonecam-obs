@@ -92,6 +92,24 @@ App 0.2.0-alpha.1 (release-signed) with plugin 0.3.0-alpha.1 (Wireless debugging
 
 Response: automatic bitrate lowering (user decision, 10 November 2026). While frames drop, the phone lowers the encoder bitrate to 70% (at most every 2 s, never below a sixth of the choice or 2 Mb/s) and shows "Link busy: X of Y Mb/s"; it raises it back by 15% after a calm period. Resolution and frame rate never change. Physical check pending.
 
+## First direct Wi-Fi session (11 November 2026)
+
+App and plugin 0.3.0-alpha.2 (release-signed; commit 8cbaea2), installed over USB. The user tapped every Start and Stop.
+
+- Earlier that evening Wireless debugging failed: the phone advertised `_adb-tls-connect._tcp` but the Mac (192.168.1.143) could not reach it at 192.168.1.52 (ping and TCP timed out, ARP incomplete) while the router answered. After the user put both devices on the same network ("home-wifi"), ping worked both ways (phone → Mac 67–114 ms, Mac → phone 10–131 ms; Wi-Fi power saving).
+- On the vivo, the Wireless debugging row only shows an on/off switch with an "Allow on this network" dialog; the "Pair device with pairing code" screen is not shown. The USB "Always allow" key is what made Wireless debugging work earlier.
+- Re-enabling USB debugging had cleared the Mac's authorization (`unauthorized` until the user tapped Allow again).
+
+| Time | Observation | Source |
+|---|---|---|
+| 21:09:51 | Pairing window opened from the source properties; QR card shown in the source. | OBS log |
+| 21:10:10 | The phone scanned the QR code: "Paired with V2437 over Wi-Fi". `wifi.json` saved with mode 600. | OBS log, file |
+| 21:11:14 | Cable unplugged; Start live: "Live over direct Wi-Fi: 1080×1920, hardware decoding". | OBS log |
+| 21:11–21:12 | Rear, High (1080p, 20 Mb/s): **30 fps, 0 drops**, smooth ("earlier the video lagged a lot but today it didn't"). One second with one slow decode (54 ms). | Phone badge (user report), OBS log |
+| 21:12:30 | Stop: "Wi-Fi live ended: the phone stopped sending …". | OBS log |
+
+Not established: 4K Best over direct Wi-Fi (not run), measured direct Wi-Fi throughput, the phone-hotspot path, typed-code pairing, long runs, latency. While live over Wi-Fi the plugin's status line still showed the USB hint; reworded after this session.
+
 ## Still pending
 
 ~5-minute and two-hour runs with recorded frame/drop counts; front camera (Camera 1), deferred by the user.

@@ -138,7 +138,7 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | Status or symptom | What to do |
 |---|---|
 | "adb not found" | Install platform-tools (step 1). If it's somewhere unusual, put its full path in the source's **adb path** field. |
-| "Connect the phone with a USB data cable … or turn on Wireless debugging" | Try another cable or USB port and check that USB debugging is on. For Wi-Fi, turn Wireless debugging on and check that the phone and Mac are on the same network (pair first). |
+| "Ready. Tap Start live on a phone paired over Wi-Fi, or connect one with a USB data cable" | Normal while waiting. For USB, try another cable or port and check USB debugging is on. For Wi-Fi, pair first, then check the phone and Mac are on the same network. |
 | "Wi-Fi pairing failed" | The address and code change every time you open **Pair device with pairing code**. Open it again and type the new ones. |
 | "Link busy" or drops over Wi-Fi | PhoneCam already lowered the bitrate. For a sharper picture choose **High** instead of Best, move closer to the router, or use the cable. If it says the connection is too slow even at the lowest bitrate, choose **Balanced** or use the cable. |
 | "Unlock the phone and tap Allow" | Unlock the phone and accept the USB debugging prompt. |
