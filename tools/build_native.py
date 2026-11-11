@@ -12,7 +12,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "native/build"
-PLUGIN_VERSION = "0.3.0-alpha.2"
+PLUGIN_VERSION = "0.3.0-alpha.3"
 OBS_ARCHIVES = {
     "33.0.0": "55c6767b209a00f1859b315bf977df907b19890d132723731e00fd589f6860c0",
     "33.0.1": "9174ee0e3677c92d0d060bdce4c5d44dfee9fd3afddfb6333f098fd029b8de2b",
@@ -45,7 +45,7 @@ def dependencies(version):
                 if len(parts) < 2 or ".." in parts or Path(member.name).is_absolute() or not member.isfile():
                     continue
                 relative = Path(*parts[1:])
-                if not str(relative).startswith(prefixes):
+                if not relative.as_posix().startswith(prefixes):  # forward slashes on Windows too
                     continue
                 target = BUILD / directory / relative
                 target.parent.mkdir(parents=True, exist_ok=True)

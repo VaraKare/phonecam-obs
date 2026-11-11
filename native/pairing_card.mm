@@ -48,8 +48,8 @@ std::vector<uint8_t> renderPairingCard(const PairingWindow &window, uint32_t wid
         CGFloat x = height * 0.14 * 2 + height * 0.72, top = height * 0.80, s = height / 720.0;
         drawText(context, "Pair a phone over Wi-Fi", x, top, 40 * s, true, 1);
         drawText(context, "1. On the phone, open PhoneCam → Settings", x, top - 70 * s, 24 * s, false, 0.85);
-        drawText(context, "2. Tap Pair with OBS (scan QR) and point it here", x, top - 110 * s, 24 * s, false, 0.85);
-        drawText(context, "    or tap Type pairing code and enter:", x, top - 150 * s, 24 * s, false, 0.85);
+        drawText(context, "2. Tap Pair a computer and point it here", x, top - 110 * s, 24 * s, false, 0.85);
+        drawText(context, "    or tap Type a pairing code and enter:", x, top - 150 * s, 24 * s, false, 0.85);
         drawText(context, window.code, x, top - 230 * s, 40 * s, true, 1);
         drawText(context, "Works for 3 minutes. Hide this source from your stream", x, top - 310 * s, 20 * s, false, 0.65);
         drawText(context, "while pairing: anyone who sees the code could pair.", x, top - 340 * s, 20 * s, false, 0.65);

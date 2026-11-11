@@ -15,7 +15,7 @@ The user approved the Android network permission for this on 11 November 2026, a
 ## Using it
 
 1. In OBS, open the PhoneCam source's **Properties** and click **Pair a phone over Wi-Fi**. For 3 minutes the source shows a QR code and a 16-character code. Hide the source from your stream while pairing: anyone who sees the code could pair.
-2. On the phone, open **Settings → Pair with OBS (scan QR)** and point the camera at the code, or choose **Type pairing code**.
+2. On the phone, open **Settings → Pair a computer** and point the camera at the code, or choose **Type a pairing code**.
 3. Done. From now on, tap **Start live** with the phone and Mac on the same Wi-Fi.
 
 ## How it works

@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launcher icon: a phone whose whole face is a camera lens, with a red LIVE dot. Kept inside the 66dp safe zone. -->
+<!-- Launcher icon: a lens ring with a red record dot. Inside the 66dp safe circle. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#F8FAFC" android:pathData="M45,27h18a7,7 0,0 1,7 7v40a7,7 0,0 1,-7 7h-18a7,7 0,0 1,-7 -7v-40a7,7 0,0 1,7 -7z" />
-    <path android:fillColor="#0B1023" android:pathData="M54,44a12,12 0,1 0,0.01 0z" />
-    <path android:fillColor="#3B82F6" android:pathData="M54,48a8,8 0,1 0,0.01 0z" />
-    <path android:fillColor="#0B1023" android:pathData="M54,51.5a4.5,4.5 0,1 0,0.01 0z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M50.5,50.5a1.8,1.8 0,1 0,0.01 0z" />
-    <path android:fillColor="#EF4444" android:pathData="M63,31.5a3.5,3.5 0,1 0,0.01 0z" />
+    <path android:strokeColor="#111111" android:strokeWidth="8" android:fillColor="#00000000"
+        android:pathData="M49,40a19,19 0,1 0,0.01 0z" />
+    <path android:fillColor="#E5484D" android:pathData="M72,30a6,6 0,1 0,0.01 0z" />
 </vector>
