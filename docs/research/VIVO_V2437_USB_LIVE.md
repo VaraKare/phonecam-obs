@@ -110,6 +110,12 @@ App and plugin 0.3.0-alpha.2 (release-signed; commit 8cbaea2), installed over US
 
 Not established: 4K Best over direct Wi-Fi (not run), measured direct Wi-Fi throughput, the phone-hotspot path, typed-code pairing, long runs, latency. While live over Wi-Fi the plugin's status line still showed the USB hint; reworded after this session.
 
+## Release check for 0.3.0-alpha.5 (11 November 2026)
+
+The exact release files (`dist/0.3.0-alpha.5`, built from the tagged commit): the APK installed over USB on the vivo, the plugin unzipped from the release zip into OBS 33.0.1. The user checked the redesigned home, Settings and Research tools screens, then went live: "Live over direct Wi-Fi: 1920×1080, hardware decoding" at 22:17:36, stopped at 22:17:49 (OBS log). Published as the first public preview.
+
+The phone's USB debugging daemon restarted every 10–20 seconds during this session (new adbd processes in the phone log), which made adb lose the device mid-install and explains the repeated "Allow USB debugging" prompts earlier; likely the cable or the phone's USB power handling. Wi-Fi was unaffected.
+
 ## Still pending
 
 ~5-minute and two-hour runs with recorded frame/drop counts; front camera (Camera 1), deferred by the user.

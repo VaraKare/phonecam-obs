@@ -2,7 +2,7 @@
 
 Use your Android phone's camera as a high-quality video source in [OBS Studio](https://obsproject.com) on your Mac, over a USB cable or Wi-Fi. Choose the rear or front camera and the quality on the phone, then add masks, filters and overlays and record or stream in OBS.
 
-> **Preview release.** It has been tested on one phone (vivo V2437, Android 16) and one Mac (Apple M1, OBS 33.0.1). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. Windows support is planned; see [which phones and computers work](docs/COMPATIBILITY.md) and the [roadmap](docs/ROADMAP.md).
+> **Preview release.** It has been tested on one phone (vivo V2437, Android 16) and one Mac (Apple M1, OBS 33.0.1). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. Windows support is in testing for the next release; see [which phones and computers work](docs/COMPATIBILITY.md) and the [roadmap](docs/ROADMAP.md).
 
 - **Rear or front camera**, up to 4K where your phone allows it, encoded in hardware on the phone and decoded in hardware on the Mac.
 - **Any orientation:** portrait or landscape, and turning the phone during a session keeps the picture upright in OBS.
