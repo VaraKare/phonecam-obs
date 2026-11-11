@@ -27,7 +27,7 @@ Processing comparison: [FAST and HIGH_QUALITY settings confirmed at 30 fps](rese
 
 ## Current working folder
 
-The repository moved on 5 November 2026 to `/Users/owner/Desktop/Projects/Camera Max Camera Mix`. Git history and the `research/camera-quality` branch are preserved. USB work is on `research/usb-obs-latency`, branched from the camera research implementation; no quality-pass merge to main has been made.
+The repository moved on 5 November 2026 to the owner's `Camera Max Camera Mix` project folder. Git history and the `research/camera-quality` branch are preserved. USB work is on `research/usb-obs-latency`, branched from the camera research implementation; no quality-pass merge to main has been made.
 
 ## Product direction (7 November 2026)
 

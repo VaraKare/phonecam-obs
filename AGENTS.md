@@ -1,6 +1,6 @@
 # PhoneCam OBS
 
-Read `/Users/owner/.codex/RTK.md` when present; prefix shell commands with `rtk` on that host.
+Read `~/.codex/RTK.md` when present; prefix shell commands with `rtk` on that host.
 
 This is a separate project from DropBeam. Do not change DropBeam or reuse its uncommitted work.
 

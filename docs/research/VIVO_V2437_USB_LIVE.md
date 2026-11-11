@@ -85,7 +85,7 @@ Not established in this session: Smooth 60 fps (no 60 fps session appears in the
 
 App 0.2.0-alpha.1 (release-signed) with plugin 0.3.0-alpha.1 (Wireless debugging support). The user tapped every Start and Stop.
 
-- **No pairing needed.** The user could not find the "Pair device with pairing code" option on the vivo, but after turning Wireless debugging on, adb already listed the phone as `192.168.1.52:40043` (found by mDNS, `_adb-tls-connect._tcp`): the Mac's key, allowed earlier over USB with "Always allow", is also accepted for Wireless debugging. The plugin connected by itself and reported "Ready".
+- **No pairing needed.** The user could not find the "Pair device with pairing code" option on the vivo, but after turning Wireless debugging on, adb already listed the phone by its Wi-Fi address and port (found by mDNS, `_adb-tls-connect._tcp`): the Mac's key, allowed earlier over USB with "Always allow", is also accepted for Wireless debugging. The plugin connected by itself and reported "Ready".
 - Phone Wi-Fi: 5 GHz (5300 MHz), Wi-Fi 6, RSSI −51 dBm, 480 Mb/s link. Ping 12–18 ms.
 - `adb exec-out` over Wi-Fi carried 60 MiB in 7.8–10.3 s: about **6–8 MB/s (≈50–65 Mb/s)**, roughly half the USB 2.0 cable (≈140 Mb/s).
 - Two sessions, rear 4K Best (2160×3840 H.265 60 Mb/s): OBS reported "Live over Wi-Fi … hardware decoding" both times. The user saw 193–270 drops in the first and about 400 in the second, still growing, with some visible lag. No "Mac decoding fell behind" lines: the bottleneck is the adb Wi-Fi link, not the Mac.
@@ -96,7 +96,7 @@ Response: automatic bitrate lowering (user decision, 10 November 2026). While fr
 
 App and plugin 0.3.0-alpha.2 (release-signed; commit 8cbaea2), installed over USB. The user tapped every Start and Stop.
 
-- Earlier that evening Wireless debugging failed: the phone advertised `_adb-tls-connect._tcp` but the Mac (192.168.1.143) could not reach it at 192.168.1.52 (ping and TCP timed out, ARP incomplete) while the router answered. After the user put both devices on the same network ("home-wifi"), ping worked both ways (phone → Mac 67–114 ms, Mac → phone 10–131 ms; Wi-Fi power saving).
+- Earlier that evening Wireless debugging failed: the phone advertised `_adb-tls-connect._tcp` but the Mac (the Mac's address) could not reach it at the phone's address (ping and TCP timed out, ARP incomplete) while the router answered. After the user put both devices on the same network (the home network), ping worked both ways (phone → Mac 67–114 ms, Mac → phone 10–131 ms; Wi-Fi power saving).
 - On the vivo, the Wireless debugging row only shows an on/off switch with an "Allow on this network" dialog; the "Pair device with pairing code" screen is not shown. The USB "Always allow" key is what made Wireless debugging work earlier.
 - Re-enabling USB debugging had cleared the Mac's authorization (`unauthorized` until the user tapped Allow again).
 
