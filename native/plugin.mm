@@ -137,7 +137,7 @@ struct Source {
         noteSize(width, height);
         card = true;
         obs_source_output_video(source, &frame);
-        setStatus("Pairing for 3 minutes: scan the QR code with PhoneCam (Settings → Pair with OBS) or type " + window.code + ".");
+        setStatus("Pairing for 3 minutes: in PhoneCam open Settings → Pair a computer and scan the QR code, or type " + window.code + ".");
     }
     void hidePairingCard() { if (card.exchange(false)) obs_source_output_video(source, nullptr); }
     void start() {
@@ -192,44 +192,37 @@ obs_properties_t *properties(void *value) {
     auto *p = obs_properties_create();
     std::string status = value ? static_cast<Source *>(value)->currentStatus() : "Not running";
     obs_properties_add_text(p, "status", ("Status: " + status).c_str(), OBS_TEXT_INFO);
-    obs_properties_add_text(p, "help",
-        "Three ways to connect, tried automatically: USB cable (USB debugging on), direct Wi-Fi (pair once below; no Developer "
-        "options) or Android Wireless debugging. Keep this source visible, then tap Start live in the PhoneCam app. Rotate freely: "
-        "the picture stays upright and fits the canvas. Video only, no audio yet.", OBS_TEXT_INFO);
+    obs_properties_add_text(p, "help", "Connect the phone by USB, or pair it once over Wi-Fi. Keep this source visible, then tap Start live on the phone.", OBS_TEXT_INFO);
+    obs_properties_add_button2(p, "wifi_qr", "Pair a phone over Wi-Fi", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (data) static_cast<Source *>(data)->showPairingCard();
+        return true;
+    }, value);
     obs_properties_add_button2(p, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
         if (data) fit(static_cast<Source *>(data)->source, true);  // properties callbacks run on the UI thread
         return false;
     }, value);
-    obs_properties_add_bool(p, "fit_canvas", "Fit the picture to the canvas automatically (until you resize or move it yourself)");
-
-    obs_properties_add_text(p, "wifi_title",
-        "Direct Wi-Fi: phone and Mac on the same Wi-Fi or the phone's hotspot. No Internet needed. Click Pair a phone, then on the "
-        "phone open PhoneCam → Settings → Pair with OBS and scan the code shown in this source (or type it). Hide this source "
-        "from your stream while the code is shown.", OBS_TEXT_INFO);
     if (value) {
         auto *self = static_cast<Source *>(value);
         if (self->wifi) obs_properties_add_text(p, "wifi_summary", self->wifi->summary().c_str(), OBS_TEXT_INFO);
     }
-    obs_properties_add_button2(p, "wifi_qr", "Pair a phone over Wi-Fi (shows a QR code for 3 minutes)", [](obs_properties_t *, obs_property_t *, void *data) {
-        if (data) static_cast<Source *>(data)->showPairingCard();
-        return true;
-    }, value);
-    obs_properties_add_button2(p, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
+
+    obs_properties_t *options = obs_properties_create();
+    obs_properties_add_bool(options, "fit_canvas", "Fit the picture to the canvas automatically");
+    obs_properties_add_bool(options, "wifi_direct", "Allow paired phones over Wi-Fi");
+    obs_properties_add_button2(options, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
         if (!data) return false;
-        try { phonecam::wifi::Server::forgetAll(); static_cast<Source *>(data)->setStatus("Forgot all paired phones. Pair again to use direct Wi-Fi."); }
+        try { phonecam::wifi::Server::forgetAll(); static_cast<Source *>(data)->setStatus("Forgot all paired phones. Pair again to use Wi-Fi."); }
         catch (const std::exception &error) { static_cast<Source *>(data)->setStatus(error.what()); }
         return true;
     }, value);
-    obs_properties_add_bool(p, "wifi_direct", "Allow direct Wi-Fi from paired phones (applies when the source is shown again)");
+    obs_properties_add_group(p, "options", "Options", OBS_GROUP_NORMAL, options);
 
-    obs_properties_add_text(p, "adb_path", "adb path (optional; found automatically)", OBS_TEXT_DEFAULT);
-    obs_properties_add_text(p, "adb_help",
-        "Android Wireless debugging (developer option): if this Mac was allowed over USB with \"Always allow\", just turn on "
-        "Wireless debugging on the phone. Otherwise pair with the address and 6-digit code from its \"Pair device with pairing "
-        "code\" screen:", OBS_TEXT_INFO);
-    obs_properties_add_text(p, "wifi_address", "Wireless debugging pairing address & port", OBS_TEXT_DEFAULT);
-    obs_properties_add_text(p, "wifi_code", "Wireless debugging pairing code", OBS_TEXT_DEFAULT);
-    obs_properties_add_button2(p, "wifi_pair", "Pair Wireless debugging", [](obs_properties_t *, obs_property_t *, void *data) {
+    obs_properties_t *advanced = obs_properties_create();
+    obs_properties_add_text(advanced, "adb_path", "adb path (found automatically)", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(advanced, "adb_help", "Wireless debugging: only needed if this Mac was never allowed over USB.", OBS_TEXT_INFO);
+    obs_properties_add_text(advanced, "wifi_address", "Pairing address and port", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(advanced, "wifi_code", "Pairing code", OBS_TEXT_DEFAULT);
+    obs_properties_add_button2(advanced, "wifi_pair", "Pair Wireless debugging", [](obs_properties_t *, obs_property_t *, void *data) {
         if (data) startWifiPairing(static_cast<Source *>(data)->source);
         return false;
     }, value);
@@ -237,8 +230,9 @@ obs_properties_t *properties(void *value) {
         obs_data_t *settings = obs_source_get_settings(static_cast<Source *>(value)->source);
         std::string result = obs_data_get_string(settings, "wifi_result");
         obs_data_release(settings);
-        if (!result.empty()) obs_properties_add_text(p, "wifi_status", result.c_str(), OBS_TEXT_INFO);
+        if (!result.empty()) obs_properties_add_text(advanced, "wifi_status", result.c_str(), OBS_TEXT_INFO);
     }
+    obs_properties_add_group(p, "advanced", "Advanced", OBS_GROUP_NORMAL, advanced);
     return p;
 }
 }

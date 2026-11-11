@@ -15,7 +15,8 @@
             </intent-filter>
         </activity>
         <activity android:name=".ScanActivity" android:exported="false" android:label="Pair with OBS"
-            android:screenOrientation="unspecified" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+            android:screenOrientation="portrait" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+        <activity android:name=".SettingsActivity" android:exported="false" android:label="Settings" />
         <activity android:name=".BenchmarkActivity" android:exported="false" android:label="Research tools"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <!-- Answers only Android's shell user (an authorized ADB connection); see PairingProvider. -->

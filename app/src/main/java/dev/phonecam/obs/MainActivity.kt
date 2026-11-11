@@ -53,6 +53,7 @@ class MainActivity : Activity() {
         const val BLUE = 0xFF1565C0.toInt(); const val PANEL = 0xFF161616.toInt(); const val CHIP = 0xCC000000.toInt()
         const val MUTED = 0xFFB0B0B0.toInt()
         const val SCAN_REQUEST = 7
+        const val SETTINGS_REQUEST = 8
     }
     private lateinit var prefs: SharedPreferences
     private lateinit var root: LinearLayout
@@ -76,6 +77,8 @@ class MainActivity : Activity() {
     private lateinit var chipRow: LinearLayout
     private lateinit var focusMark: View
     private var sliding: String? = null
+    private val feedback by lazy { Feedback(this) }
+    private var lastPhase: LiveState.Phase? = null
     private var abilities: Abilities? = null
     private var controls = Controls()
     private var options = emptyList<Profile>()
@@ -251,6 +254,13 @@ class MainActivity : Activity() {
 
     private fun showState(state: LiveState?) {
         val phase = state?.phase ?: LiveState.Phase.STOPPED
+        if (phase != lastPhase) {
+            // Sound and vibration only for real transitions, so a reopened screen stays quiet.
+            if (phase == LiveState.Phase.LIVE) feedback.play(Feedback.Event.LIVE, badge)
+            else if (phase == LiveState.Phase.STOPPED && foreground && lastPhase != null && lastPhase != LiveState.Phase.STOPPED)
+                feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
+            lastPhase = phase
+        }
         badge.text = when (phase) { LiveState.Phase.LIVE -> "● LIVE"; LiveState.Phase.WAITING -> "Waiting for OBS"; else -> "Off" }
         badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> GREY }, 6)
         val p = liveProfile
@@ -469,31 +479,7 @@ class MainActivity : Activity() {
 
     private fun openSettings() {
         if (live != null) return
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
-        val previewBox = CheckBox(this).apply { text = "Show phone preview while live"; isChecked = showPreview }
-        val hqBox = CheckBox(this).apply { text = "Extra sharpening and noise reduction (HIGH_QUALITY; may lower frame rate)"; isChecked = highQuality }
-        box.addView(previewBox); box.addView(hqBox)
-        var dialog: AlertDialog? = null
-        fun action(text: String, click: () -> Unit) = box.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            this.text = text; isAllCaps = false; gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            setOnClickListener { dialog?.dismiss(); click() }
-        })
-        val wifi = WifiConnector(this)
-        action("Pair with OBS over Wi-Fi (scan QR code)") { @Suppress("DEPRECATION") startActivityForResult(Intent(this, ScanActivity::class.java), SCAN_REQUEST) }
-        action("Type a Wi-Fi pairing code") { typePairingCode() }
-        if (wifi.hasPairings) action("Forget paired Macs (${wifi.pairings.macs.joinToString { it.name }})") {
-            wifi.pairings.forgetAll(); message.text = "Forgot paired Macs. Pair again to use direct Wi-Fi."
-        }
-        action("Custom quality…") { chooseCustom() }
-        action("Check cameras again") { options = emptyList(); refresh(); scan() }
-        action("Research tools (benchmark recordings)") { startActivity(Intent(this, BenchmarkActivity::class.java)) }
-        box.addView(TextView(this).apply {
-            textSize = 13f; setPadding(0, dp(12), 0, dp(8))
-            text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}. Live mode sends video to OBS over USB, Wireless debugging, or encrypted Wi-Fi to a Mac you paired, and never saves it on the phone. No microphone. The network is used only to reach your paired Mac on your local network; nothing goes to the Internet."
-        })
-        dialog = AlertDialog.Builder(this).setTitle("Settings").setView(ScrollView(this).apply { addView(box) })
-            .setPositiveButton("Done") { _, _ -> showPreview = previewBox.isChecked; highQuality = hqBox.isChecked; refresh() }
-            .setNegativeButton("Cancel", null).show()
+        @Suppress("DEPRECATION") startActivityForResult(Intent(this, SettingsActivity::class.java), SETTINGS_REQUEST)
     }
 
     private fun typePairingCode() {
@@ -513,6 +499,7 @@ class MainActivity : Activity() {
                     val result = runCatching { WifiConnector(this).pair(code) }
                     runOnUiThread {
                         message.text = result.fold({ "Paired with $it. Tap Start live with the phone and Mac on the same Wi-Fi." }, { it.message ?: "Pairing failed." })
+                        feedback.play(if (result.isSuccess) Feedback.Event.SUCCESS else Feedback.Event.ERROR, message)
                     }
                 }.start()
             }.show()
@@ -521,6 +508,16 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == SCAN_REQUEST && resultCode == RESULT_OK) message.text = data?.getStringExtra("message") ?: "Paired."
+        if (requestCode == SCAN_REQUEST && resultCode == ScanActivity.RESULT_TYPE_CODE) typePairingCode()
+        if (requestCode == SETTINGS_REQUEST) {
+            when (data?.getStringExtra(SettingsActivity.EXTRA_ACTION)) {
+                SettingsActivity.SCAN -> @Suppress("DEPRECATION") startActivityForResult(Intent(this, ScanActivity::class.java), SCAN_REQUEST)
+                SettingsActivity.TYPE_CODE -> typePairingCode()
+                SettingsActivity.CUSTOM -> chooseCustom()
+                SettingsActivity.RESCAN -> { options = emptyList(); refresh(); scan() }
+            }
+            refresh()
+        }
     }
 
     private fun chooseCustom() {
@@ -564,7 +561,7 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         destroyed = true; orientation.disable()
-        live?.stop("Activity destroyed"); executor.shutdown()
+        live?.stop("Activity destroyed"); executor.shutdown(); feedback.release()
         super.onDestroy()
     }
 }

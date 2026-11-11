@@ -48,6 +48,7 @@ class WifiPairings(private val file: File) {
     }
     @Synchronized fun remember(mac: PairedMac) { macs = macs.filter { it.id != mac.id } + mac; save() }
     @Synchronized fun forgetAll() { macs = emptyList(); save() }
+    @Synchronized fun forget(id: String) { macs = macs.filter { it.id != id }; save() }
 
     companion object {
         fun isId(text: String) = text.length == 16 && text.all { it in '0'..'9' || it in 'a'..'f' }

@@ -188,11 +188,9 @@ bool Server::pairingOpen() {
 }
 std::string Server::summary() {
     auto pairings = loadPairings();
-    std::string text = port ? "Direct Wi-Fi: listening on port " + std::to_string(port) : "Direct Wi-Fi: not listening";
     auto addresses = localAddresses();
-    if (port && !addresses.empty()) text += " (" + addresses[0] + ")";
-    text += ". Paired phones: ";
-    if (pairings.phones.empty()) text += "none yet.";
+    std::string text = !port ? "Wi-Fi: not available" : "Wi-Fi: ready" + (addresses.empty() ? std::string() : " on " + addresses[0]);
+    text += pairings.phones.empty() ? " · No paired phones yet" : " · Paired: ";
     for (size_t i = 0; i < pairings.phones.size(); ++i) text += (i ? ", " : "") + pairings.phones[i].name;
     return text;
 }

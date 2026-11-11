@@ -80,7 +80,7 @@ To use the phone in Zoom, Meet or Teams, add it to an OBS scene and click **Star
 Pair once with a QR code; no Developer options needed for this part. The phone and Mac need to be on the **same Wi-Fi network** (Internet not required), or the Mac can join the **phone's hotspot** when there is no router.
 
 1. In OBS, right-click the PhoneCam source → **Properties** → **Pair a phone over Wi-Fi**. The source shows a QR code and a 16-character code for 3 minutes. Hide the source from your stream while it shows.
-2. On the phone, open PhoneCam → **Settings** → **Pair with OBS over Wi-Fi (scan QR code)** and point the camera at the code. Or choose **Type a Wi-Fi pairing code** and type the 16 characters.
+2. On the phone, open PhoneCam → **Settings** → **Pair a computer** and point the camera at the code. The phone vibrates and chimes when it's paired. Or choose **Type a pairing code** and type the 16 characters.
 3. The phone says **Paired with …**. From now on, unplug the cable and tap **Start live**; the phone finds OBS by itself and the source's Status says **Live over direct Wi-Fi**.
 
 <!-- IMAGE: docs/images/obs-pairing-card.png — the QR code in the OBS source -->
