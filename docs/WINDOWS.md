@@ -19,7 +19,7 @@ The phone app does not change: the Windows plugin speaks the same PCAM v3 messag
 
 | Step | Contents | Proof |
 |---|---|---|
-| W1 | Shared portable headers; Windows build of the plugin; OBS loads it on a Windows test machine | CI: build, protocol and adb tests, OBS module load |
+| W1 | Shared portable headers; Windows build of the plugin; OBS loads it on a Windows test machine | **Passed in CI on 11 November 2026** (run 43105615013): MSVC `/W4 /WX` protocol and adb tests, official OBS 33.0.1 x64 libobs loaded the skeleton source. Not a physical check |
 | W2 | FFmpeg decoding, rotation and mirror; same synthetic streams as the Mac tests | CI: H.264 and H.265 streams decode at the right size and orientation |
 | W3 | adb discovery, pairing key, forward and reconnection | CI with a fake adb (as on the Mac) |
 | W4 | Direct Wi-Fi: listener, Bonjour, pairing card, BCrypt crypto | CI: shared vectors, and the phone's Kotlin client pairing and streaming to the Windows server |
