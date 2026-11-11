@@ -19,8 +19,8 @@ phone preview                                                         rotate / m
 
 1. **Capture.** The phone app opens the camera with Android's Camera2 API and points it at two places: the on-screen preview and the input surface of a hardware video encoder (`MediaCodec`). Pixels never pass through app code, which is what makes 4K possible on a phone.
 2. **Encode.** The encoder compresses frames to H.265 (HEVC) or H.264 (AVC) in hardware. Each compressed frame goes into a tiny queue that holds at most two frames. If the Mac falls behind, old frames are dropped instead of building up delay.
-3. **Transport.** The app listens on an Android *abstract local socket* (`phonecam-live-v1`). No network permission is used. The Mac reaches that socket through `adb forward`, which tunnels it over the USB cable.
-4. **Pairing.** Before sending video, the Mac must present a secret key. Only the Mac's `adb shell` (the shell user that exists for an authorized USB debugging connection) can read that key from the app's `PairingProvider`. Other apps on the phone cannot, so they cannot connect to the camera socket.
+3. **Transport.** Over USB, the app listens on an Android *abstract local socket* (`phonecam-live-v1`), which the Mac reaches through `adb forward` over the cable (or over Wireless debugging). Over direct Wi-Fi, the phone connects to the plugin on the Mac and encrypts every message ([Wi-Fi](WIFI.md)). Both run when you tap Start; the first that connects is used.
+4. **Pairing.** Before sending video, the Mac must present a secret key. Only the Mac's `adb shell` (the shell user that exists for an authorized USB debugging connection) can read that key from the app's `PairingProvider`. Other apps on the phone cannot, so they cannot connect to the camera socket. Wi-Fi uses a one-time QR or typed code instead, which sets up a long-term key on both sides.
 5. **Decode.** The OBS plugin decodes frames with Apple's VideoToolbox (hardware), rotates them upright and mirrors them if asked (`VTPixelRotationSession`), and hands them to OBS as an asynchronous video source.
 
 Masks, filters, recording, streaming and the Virtual Camera are all OBS's own features. PhoneCam only delivers the picture.
@@ -43,6 +43,11 @@ All Kotlin, in `app/src/main/java/dev/phonecam/obs/`.
 | `LiveTransport.kt` | The socket server: checks the key, sends the configuration and frames in the wire format, and sets the frame flags. |
 | `LiveQueue.kt` | The two-frame queue between encoder and socket. It drops the oldest frame rather than adding delay. |
 | `PairingProvider.kt` | Gives the connection key to the Mac's `adb shell` and to nobody else. |
+| `WifiCrypto.kt` | Direct Wi-Fi security: pairing codes, P-256 key exchange, handshake tags and the encrypted records ([Wi-Fi](WIFI.md)). Checked against the same reference numbers as the Mac. |
+| `WifiLink.kt` | The phone's Wi-Fi client: pairing store, QR link parsing, the handshake and the encrypted sender. |
+| `WifiDiscovery.kt` | Finds PhoneCam OBS sources on the network (Bonjour) and connects to a paired Mac when live starts. |
+| `ScanActivity.kt` | Scans the pairing QR code shown in OBS (decoded in memory, never saved). |
+| `BitrateController.kt` | Lowers the bitrate while the connection drops frames and raises it back later; shown on the LIVE badge. |
 | `Orientation.kt` | Works out how many quarter turns the picture needs to be upright, from the sensor angle and how the phone is held. |
 | `FrameStats.kt` | Bounded counters for frames per second and drops, shown on the LIVE badge. |
 | `BenchmarkActivity.kt`, `BenchmarkRecorder.kt` | Research tools (Settings → Research tools): record short test clips on the phone, only when you press Record. Not used for live. |
@@ -58,6 +63,10 @@ Objective-C++ for macOS, built without Xcode by `tools/build_native.py`.
 | `plugin.mm` | Registers the **PhoneCam (phone camera)** source with OBS, shows the Status line in its properties and pushes decoded frames into OBS. |
 | `adb.mm`, `adb.hpp` | Finds `adb`, finds the phone, reads the key, creates the `adb forward` and reconnects after unplugging. Produces the friendly status messages ("Unlock the phone and tap Allow", …). |
 | `receiver.mm`, `receiver.hpp` | Connects to the forwarded port, sends the key, reads messages, decodes with VideoToolbox, rotates and mirrors. |
+| `wifi.mm`, `wifi.hpp` | Direct Wi-Fi: listens on port 47183, announces itself with Bonjour, pairs phones and receives encrypted video into the same decoder. |
+| `wifi_crypto.hpp` | The Mac's half of the Wi-Fi security, using only Apple's CommonCrypto and Security frameworks. |
+| `pairing_card.mm` | Draws the QR code and pairing code that the source shows while pairing. |
+| `wifi_test.cpp` | Checks the Mac's Wi-Fi crypto against shared reference numbers. |
 | `protocol.hpp` | Parses and checks the wire-format headers. Rejects anything malformed or the wrong version. |
 | `receiver_cli.mm` | A command-line receiver used by tests and `tools/live.py` to check the pipeline without OBS. |
 | `protocol_test.cpp`, `adb_test.cpp`, `smoke.mm` | Native tests, run under sanitizers by the build script. |

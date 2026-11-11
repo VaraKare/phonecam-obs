@@ -12,7 +12,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "native/build"
-PLUGIN_VERSION = "0.3.0-alpha.1"
+PLUGIN_VERSION = "0.3.0-alpha.2"
 OBS_ARCHIVES = {
     "33.0.0": "55c6767b209a00f1859b315bf977df907b19890d132723731e00fd589f6860c0",
     "33.0.1": "9174ee0e3677c92d0d060bdce4c5d44dfee9fd3afddfb6333f098fd029b8de2b",
@@ -70,7 +70,8 @@ def main():
     common = ["xcrun", "clang++", "-std=c++17", "-O2", "-g", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
               "-mmacosx-version-min=13.0", "-arch", "arm64", "-fobjc-arc", "-I", ROOT / "native"]
     headers = ["-I", sdk, "-I", BUILD / "simde"]
-    apple = ["-framework", "Foundation", "-framework", "VideoToolbox", "-framework", "CoreMedia", "-framework", "CoreVideo"]
+    apple = ["-framework", "Foundation", "-framework", "VideoToolbox", "-framework", "CoreMedia", "-framework", "CoreVideo",
+             "-framework", "Security", "-framework", "CoreImage", "-framework", "CoreText", "-framework", "CoreGraphics"]
     libobs = ["-F", frameworks, "-framework", "libobs", "-Wl,-rpath," + str(frameworks)]
     bundle = BUILD / "phonecam-usb.plugin"
     executable = bundle / "Contents/MacOS/phonecam-usb"
@@ -79,13 +80,15 @@ def main():
     shutil.copyfile(ROOT / "LICENSE", bundle / "Contents/Resources/COPYING-GPL-2.0.txt")
     shutil.copyfile(ROOT / "NOTICE", bundle / "Contents/Resources/NOTICE.txt")
     shutil.copyfile(BUILD / "simde/COPYING", bundle / "Contents/Resources/COPYING-SIMDe.txt")
-    run(common + headers + ["-bundle", ROOT / "native/plugin.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", "-o", executable] + apple + libobs)
+    run(common + headers + ["-bundle", ROOT / "native/plugin.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm",
+                                    ROOT / "native/wifi.mm", ROOT / "native/pairing_card.mm", "-o", executable] + apple + libobs)
     info = {"CFBundleExecutable": "phonecam-usb", "CFBundleIdentifier": "dev.phonecam.obs.usb",
             "CFBundleName": "phonecam-usb", "CFBundlePackageType": "BNDL", "CFBundleShortVersionString": PLUGIN_VERSION,
             "CFBundleVersion": "3", "LSMinimumSystemVersion": "13.0"}
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
     run(["codesign", "--force", "--sign", "-", bundle])
-    run(common + [ROOT / "native/receiver_cli.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", "-o", BUILD / "phonecam-receive"] + apple)
+    run(common + [ROOT / "native/receiver_cli.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", ROOT / "native/wifi.mm",
+                  ROOT / "native/pairing_card.mm", "-o", BUILD / "phonecam-receive"] + apple)
     run(common + headers + [ROOT / "native/smoke.mm", "-o", BUILD / "obs-smoke"] + libobs)
     run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
          ROOT / "native/protocol_test.cpp", "-o", BUILD / "protocol-test"])
@@ -93,6 +96,9 @@ def main():
     run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
          "-I", ROOT / "native", ROOT / "native/adb_test.cpp", "-o", BUILD / "adb-test"])
     run([BUILD / "adb-test"])
+    run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
+         "-I", ROOT / "native", ROOT / "native/wifi_test.cpp", "-o", BUILD / "wifi-test", "-framework", "Security", "-framework", "CoreFoundation"])
+    run([BUILD / "wifi-test"])
     run([BUILD / "obs-smoke", executable])
     if args.install:
         target = Path.home() / "Library/Application Support/obs-studio/plugins/phonecam-usb.plugin"

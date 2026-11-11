@@ -2,6 +2,7 @@
 """Synthetic transport/VideoToolbox integration; never establishes a physical-device gate."""
 from pathlib import Path
 import json
+import os
 import re
 import shutil
 import socket
@@ -137,6 +138,35 @@ esac
             process.terminate()
             _, errors = process.communicate(timeout=10)
         self.assertIn("not an executable", errors)
+
+    @unittest.skipUnless((ROOT / "gradlew").exists(), "Gradle wrapper missing")
+    def test_wifi_pairing_and_encrypted_stream_with_kotlin_phone(self):
+        """The real Mac Wi-Fi server and the phone's Kotlin client: wrong code refused, pairing, encrypted HEVC."""
+        with tempfile.TemporaryDirectory() as directory:
+            stream = Path(directory) / "packets.bin"
+            stream.write_bytes(b"".join(self.encoded_packets(True, width=640, height=480)))
+            env = dict(os.environ, PHONECAM_WIFI_STORE=str(Path(directory) / "wifi.json"))
+            receiver = subprocess.Popen([str(RECEIVER), "--wifi", "12"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+            try:
+                line = receiver.stdout.readline().split()
+                self.assertEqual(line[0], "PAIR", line)
+                env["PHONECAM_WIFI_PEER"] = f"127.0.0.1 {line[1]} {line[2]} {line[3]}"
+                env["PHONECAM_WIFI_PACKETS"] = str(stream)
+                gradle = subprocess.run(["./gradlew", "-q", "testDebugUnitTest", "--tests", "*WifiInteropTest*", "--rerun"],
+                                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
+                self.assertEqual(gradle.returncode, 0, gradle.stdout[-3000:] + gradle.stderr[-3000:])
+                report = (ROOT / "app/build/test-results/testDebugUnitTest/TEST-dev.phonecam.obs.WifiInteropTest.xml").read_text()
+                self.assertIn('skipped="0"', report)
+                out, err = receiver.communicate(timeout=30)
+            finally:
+                if receiver.poll() is None: receiver.kill()
+            self.assertEqual(receiver.returncode, 0, err)
+            value = json.loads(out.strip().splitlines()[-1])
+            self.assertEqual(value["decodedFrames"], 12)
+            self.assertEqual((value["lastWidth"], value["lastHeight"]), (640, 480))
+            self.assertIn("wrong code", err)
+            self.assertIn("Paired with Test phone", err)
+            self.assertEqual(json.loads((Path(directory) / "wifi.json").read_text())["phones"][0]["name"], "Test phone")
 
     def test_avc_hardware_decode(self): self.exchange(self.encoded_packets(width=1920, height=1080), 12)
     def test_hevc_hardware_decode(self): self.exchange(self.encoded_packets(True, width=1920, height=1080), 12)

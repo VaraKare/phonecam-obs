@@ -6,8 +6,8 @@ Use your Android phone's camera as a high-quality video source in [OBS Studio](h
 
 - **Rear or front camera**, up to 4K where your phone allows it, encoded in hardware on the phone and decoded in hardware on the Mac.
 - **Any orientation:** portrait or landscape, and turning the phone during a session keeps the picture upright in OBS.
-- **Automatic connection:** plug in, open OBS, tap **Start live** on the phone. No commands to type.
-- **Private:** the phone saves nothing during live sessions. No microphone, no Internet access, no accounts, no analytics.
+- **Cable or Wi-Fi:** plug in, or pair once over Wi-Fi by scanning a QR code in OBS. Then open OBS and tap **Start live** on the phone. No commands to type.
+- **Private:** the phone saves nothing during live sessions. Wi-Fi video is encrypted and stays on your local network. No microphone, no accounts, no analytics.
 
 ## What you need
 
@@ -75,7 +75,21 @@ Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on t
 
 To use the phone in Zoom, Meet or Teams, add it to an OBS scene and click **Start Virtual Camera** in OBS.
 
-### Without a cable: Wi-Fi (Wireless debugging)
+### Without a cable: direct Wi-Fi (recommended)
+
+Pair once with a QR code; no Developer options needed for this part. The phone and Mac need to be on the **same Wi-Fi network** (Internet not required), or the Mac can join the **phone's hotspot** when there is no router.
+
+1. In OBS, right-click the PhoneCam source → **Properties** → **Pair a phone over Wi-Fi**. The source shows a QR code and a 16-character code for 3 minutes. Hide the source from your stream while it shows.
+2. On the phone, open PhoneCam → **Settings** → **Pair with OBS over Wi-Fi (scan QR code)** and point the camera at the code. Or choose **Type a Wi-Fi pairing code** and type the 16 characters.
+3. The phone says **Paired with …**. From now on, unplug the cable and tap **Start live**; the phone finds OBS by itself and the source's Status says **Live over direct Wi-Fi**.
+
+<!-- IMAGE: docs/images/obs-pairing-card.png — the QR code in the OBS source -->
+<!-- IMAGE: docs/images/phone-scan-qr.png — scanning on the phone -->
+
+If the phone says it **can't reach** the Mac: they are on different networks, or the router keeps devices apart (common on guest networks and some mesh or dual-band routers). Put both on the same network name, or turn on the phone's **hotspot**, join it from the Mac, and tap Start live. How it works and how it is secured: [Wi-Fi without a cable](docs/WIFI.md).
+
+### Without a cable: Wireless debugging (developer option)
+
 
 Uses Android's **Wireless debugging** (Android 11 or newer). The phone and Mac only need to be on the **same Wi-Fi network**. **No Internet access is needed**: a router with the Internet down works. Video goes straight from the phone to the Mac over your local network, protected by the same key as USB.
 
@@ -139,7 +153,7 @@ Still stuck? Open an issue with your phone model, Android version, OBS version a
 
 ## Privacy
 
-The phone app has only the Camera permission. It has no microphone, Internet, location or storage access. Live video goes over the USB cable to OBS on your Mac and is never saved on the phone. The connection is protected by a key that only an authorized USB debugging connection can read. The optional **Research tools** in Settings can save test clips on the phone, but only when you tap Record there.
+The phone app has the Camera permission and, for direct Wi-Fi, Android's network permission (which Android calls "Internet"). It has no microphone, location or storage access. Live video goes over the USB cable, or over your local Wi-Fi to the Mac you paired, and is never saved on the phone. PhoneCam never contacts servers on the Internet: no accounts, analytics or update checks. USB is protected by a key that only an authorized USB debugging connection can read; Wi-Fi by pairing and per-session encryption ([details](docs/WIFI.md)). The optional **Research tools** in Settings can save test clips on the phone, but only when you tap Record there.
 
 ## Uninstall
 

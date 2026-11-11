@@ -1,4 +1,6 @@
 #include "adb.hpp"
+#include "wifi.hpp"
+#include <thread>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -10,7 +12,8 @@ static void stop(int) { stopped = true; }
 int main(int argc, char **argv) {
     // phonecam-receive CONFIG_JSON FRAMES      (tools/live.py prepare settings)
     // phonecam-receive --auto FRAMES [ADB]     (find, pair and forward automatically, like the OBS source)
-    bool automatic = argc >= 3 && !strcmp(argv[1], "--auto");
+    // phonecam-receive --wifi FRAMES            (direct Wi-Fi: listen, open a pairing window, print it; tests)
+    bool automatic = argc >= 3 && !strcmp(argv[1], "--auto"), wifi = argc == 3 && !strcmp(argv[1], "--wifi");
     if (!(automatic ? (argc == 3 || argc == 4) : argc == 3)) {
         fprintf(stderr, "Usage: phonecam-receive CONFIG_JSON FRAME_COUNT | --auto FRAME_COUNT [ADB_PATH]\nNo media is saved. Requires an explicitly started phone stream.\n"); return 2;
     }
@@ -44,7 +47,18 @@ int main(int argc, char **argv) {
             ++frames; lastPts = pts; lastSeq = seq;
             if (frames >= uint64_t(requested)) stopped = true;
         };
-        if (automatic) {
+        if (wifi) {
+            phonecam::wifi::Server server([](const std::string &value) { fprintf(stderr, "%s\n", value.c_str()); }, onFrame);
+            std::thread listener([&] { server.run(stopped); });
+            for (int i = 0; i < 100 && !server.listeningPort(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            auto window = server.openPairing();
+            std::string code; for (char ch : window.code) if (ch != '-') code += ch;
+            printf("PAIR %d %s %s\n", server.listeningPort(), phonecam::wifi::loadPairings().macId.c_str(), code.c_str());
+            fflush(stdout);
+            auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+            while (!stopped && std::chrono::steady_clock::now() < limit) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            stopped = true; listener.join();
+        } else if (automatic) {
             std::string adb = argc == 4 ? argv[3] : "";
             phonecam::autoReceive(stopped, [&] { return adb; }, [](const std::string &value) { fprintf(stderr, "%s\n", value.c_str()); }, onFrame);
         } else phonecam::receive(stopped, phonecam::loadEndpoint(argv[1]), onFrame);

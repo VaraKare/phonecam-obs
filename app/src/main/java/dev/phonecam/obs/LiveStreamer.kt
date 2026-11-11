@@ -64,8 +64,10 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
     private val bitrate = BitrateController(profile.bitrate)
     @Volatile private var sentBytes = 0L
     private var loggedBytes = 0L
+    @Volatile private var route = "USB"
     private val transport = LiveTransport(LiveTransport.token(context.filesDir),
-        { handler.post { prepare() } }, { reason -> handler.post { finish(reason) } })
+        { via -> route = via; handler.post { prepare() } }, { reason -> handler.post { finish(reason) } },
+        WifiConnector(context).takeIf { it.hasPairings })
     private val startDeadline = Runnable { finish("No hardware video after 15 seconds; choose another profile or close other camera apps.") }
     private val status = object : Runnable {
         override fun run() {
@@ -84,7 +86,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                 Log.i("PhoneCam", "bitrate target ${target / 1_000_000} of ${profile.bitrate / 1_000_000} Mb/s${if (applied) "" else " (encoder refused)"}; last second ${"%.1f".format(actualMbps)} Mb/s")
             }
             val message = note ?: if (bitrate.starved) "The connection is too slow even at ${bitrate.current / 1_000_000} Mb/s. Choose a lower quality, move closer to the Wi-Fi router, or use the USB cable."
-                else "Sending to OBS. Nothing is saved on the phone."
+                else "Sending to OBS over $route. Nothing is saved on the phone."
             post(LiveState(LiveState.Phase.LIVE, message, stats.fps, sequence, dropped, rotation, bitrate.current, profile.bitrate))
             handler.postDelayed(this, 1_000)
         }

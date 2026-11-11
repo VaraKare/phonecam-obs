@@ -18,8 +18,8 @@ android {
         applicationId = "dev.phonecam.obs"
         minSdk = 29
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.3.0-alpha.1"
+        versionCode = 7
+        versionName = "0.3.0-alpha.2"
     }
     signingConfigs {
         if (signing.getProperty("storeFile") != null) create("release") {
@@ -43,4 +43,8 @@ android {
     testOptions { unitTests.isReturnDefaultValues = false }
 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies {
+    // QR decoding for Wi-Fi pairing (Apache-2.0, pure Java, no network or Google services).
+    implementation("com.google.zxing:core:3.5.3")
+    testImplementation("junit:junit:4.13.2")
+}

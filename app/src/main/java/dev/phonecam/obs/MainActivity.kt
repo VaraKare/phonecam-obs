@@ -52,6 +52,7 @@ class MainActivity : Activity() {
         const val RED = 0xFFC62828.toInt(); const val AMBER = 0xFFB26A00.toInt(); const val GREY = 0xFF4A4A4A.toInt()
         const val BLUE = 0xFF1565C0.toInt(); const val PANEL = 0xFF161616.toInt(); const val CHIP = 0xCC000000.toInt()
         const val MUTED = 0xFFB0B0B0.toInt()
+        const val SCAN_REQUEST = 7
     }
     private lateinit var prefs: SharedPreferences
     private lateinit var root: LinearLayout
@@ -477,16 +478,49 @@ class MainActivity : Activity() {
             this.text = text; isAllCaps = false; gravity = Gravity.START or Gravity.CENTER_VERTICAL
             setOnClickListener { dialog?.dismiss(); click() }
         })
+        val wifi = WifiConnector(this)
+        action("Pair with OBS over Wi-Fi (scan QR code)") { @Suppress("DEPRECATION") startActivityForResult(Intent(this, ScanActivity::class.java), SCAN_REQUEST) }
+        action("Type a Wi-Fi pairing code") { typePairingCode() }
+        if (wifi.hasPairings) action("Forget paired Macs (${wifi.pairings.macs.joinToString { it.name }})") {
+            wifi.pairings.forgetAll(); message.text = "Forgot paired Macs. Pair again to use direct Wi-Fi."
+        }
         action("Custom quality…") { chooseCustom() }
         action("Check cameras again") { options = emptyList(); refresh(); scan() }
         action("Research tools (benchmark recordings)") { startActivity(Intent(this, BenchmarkActivity::class.java)) }
         box.addView(TextView(this).apply {
             textSize = 13f; setPadding(0, dp(12), 0, dp(8))
-            text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}. Live mode sends video to OBS over USB or Wireless debugging and never saves it on the phone. No microphone or Internet access."
+            text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}. Live mode sends video to OBS over USB, Wireless debugging, or encrypted Wi-Fi to a Mac you paired, and never saves it on the phone. No microphone. The network is used only to reach your paired Mac on your local network; nothing goes to the Internet."
         })
         dialog = AlertDialog.Builder(this).setTitle("Settings").setView(ScrollView(this).apply { addView(box) })
             .setPositiveButton("Done") { _, _ -> showPreview = previewBox.isChecked; highQuality = hqBox.isChecked; refresh() }
             .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun typePairingCode() {
+        val input = EditText(this).apply {
+            hint = "e.g. 000G-40R4-0M30-E209"; isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        AlertDialog.Builder(this).setTitle("Wi-Fi pairing code")
+            .setMessage("In OBS: PhoneCam source → Properties → Pair a phone over Wi-Fi. Type the 16-character code it shows. The phone and Mac must be on the same Wi-Fi.")
+            .setView(FrameLayout(this).apply { setPadding(dp(20), 0, dp(20), 0); addView(input) })
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Pair") { _, _ ->
+                val code = WifiCrypto.decodeCode(input.text.toString())
+                if (code == null) { message.text = "The code has 16 letters and numbers, like 000G-40R4-0M30-E209. Check it and try again."; return@setPositiveButton }
+                message.text = "Looking for OBS on this Wi-Fi…"
+                Thread {
+                    val result = runCatching { WifiConnector(this).pair(code) }
+                    runOnUiThread {
+                        message.text = result.fold({ "Paired with $it. Tap Start live with the phone and Mac on the same Wi-Fi." }, { it.message ?: "Pairing failed." })
+                    }
+                }.start()
+            }.show()
+    }
+    @Deprecated("Activity result API is not used in this app")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == SCAN_REQUEST && resultCode == RESULT_OK) message.text = data?.getStringExtra("message") ?: "Paired."
     }
 
     private fun chooseCustom() {

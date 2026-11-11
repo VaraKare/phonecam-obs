@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Direct Wi-Fi to a paired Mac on the local network only (docs/WIFI.md); approved 11 Nov 2026. No Internet servers. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <application android:label="PhoneCam" android:theme="@android:style/Theme.Material.NoActionBar"
         android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules"
@@ -11,6 +14,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".ScanActivity" android:exported="false" android:label="Pair with OBS"
+            android:screenOrientation="unspecified" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name=".BenchmarkActivity" android:exported="false" android:label="Research tools"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <!-- Answers only Android's shell user (an authorized ADB connection); see PairingProvider. -->

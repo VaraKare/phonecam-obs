@@ -25,14 +25,14 @@ void readExact(int fd, uint8_t *p, size_t size, std::atomic<bool> &stop, int sec
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
     while (size) {
         if (stop) throw std::runtime_error("Stopped");
-        if (std::chrono::steady_clock::now() > deadline) throw std::runtime_error("USB video stalled for 3 seconds");
+        if (std::chrono::steady_clock::now() > deadline) throw std::runtime_error("video stalled for " + std::to_string(seconds) + " seconds");
         pollfd event{fd, POLLIN, 0};
         int ready = poll(&event, 1, 50);
         if (ready < 0 && errno == EINTR) continue;
-        if (ready < 0) throw std::runtime_error("USB poll failed");
+        if (ready < 0) throw std::runtime_error("connection poll failed");
         if (!ready) continue;
         ssize_t count = recv(fd, p, size, 0);
-        if (count <= 0) throw std::runtime_error("USB disconnected");
+        if (count <= 0) throw Closed("connection closed");
         size -= size_t(count); p += count;
     }
 }
@@ -204,21 +204,8 @@ Endpoint loadEndpoint(const std::string &configPath) {
         return {port, token};
     }
 }
-void setLog(void (*sink)(const char *)) { logSink = sink; }
-void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output) {
+void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output) {
     @autoreleasepool {
-        int port = endpoint.port;
-        std::string token = endpoint.token;
-        if (port < 1 || port > 65535 || token.size() != 64 || token.find_first_not_of("0123456789abcdef") != std::string::npos)
-            throw std::runtime_error("Invalid USB port/token");
-        Socket socket; socket.fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (socket.fd < 0) throw std::runtime_error("Cannot allocate USB socket");
-        int noSigpipe = 1; setsockopt(socket.fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, sizeof(noSigpipe));
-        timeval timeout{1, 0}; setsockopt(socket.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-        sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(uint16_t(port)); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        if (connect(socket.fd, reinterpret_cast<sockaddr *>(&address), sizeof(address))) throw ConnectionRefused("No USB link to the phone");
-        token += '\n';
-        if (send(socket.fd, token.data(), token.size(), 0) != ssize_t(token.size())) throw std::runtime_error("USB authentication write failed");
         Decoder decoder(output);
         bool configured = false, waitingForKey = true, seen = false;
         uint64_t lastSequence = 0, lastPts = 0;
@@ -231,20 +218,14 @@ void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &ou
             uint8_t bytes[32];
             if (!configured) {
                 // ADB accepts locally, then closes at once when the phone app is not listening.
-                try { readExact(socket.fd, bytes, sizeof(bytes), stop, 15); }
-                catch (const std::runtime_error &error) {
-                    if (std::string(error.what()) == "USB disconnected") throw NotStreaming("Waiting for Start live on the phone");
-                    throw;
-                }
+                try { read(bytes, sizeof(bytes), 15); }
+                catch (const Closed &) { throw NotStreaming("Waiting for Start live on the phone"); }
             } else {
-                try { readExact(socket.fd, bytes, sizeof(bytes), stop, seen ? 3 : 15); }
-                catch (const std::runtime_error &error) {
-                    if (std::string(error.what()) == "USB disconnected") throw std::runtime_error("the phone stopped sending (Stop tapped, app left, or cable unplugged)");
-                    throw;
-                }
+                try { read(bytes, sizeof(bytes), seen ? 3 : 15); }
+                catch (const Closed &) { throw std::runtime_error("the phone stopped sending (Stop tapped, app left, cable unplugged or Wi-Fi lost)"); }
             }
             Header h = header(bytes);
-            std::vector<uint8_t> body(h.length); readExact(socket.fd, body.data(), body.size(), stop);
+            std::vector<uint8_t> body(h.length); read(body.data(), body.size(), 3);
             if (h.type == 1) {
                 if (configured) throw std::runtime_error("Unexpected reconfiguration; restart live capture");
                 decoder.configure(body); configured = true;
@@ -271,6 +252,24 @@ void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &ou
                 }
             }
         }
+    }
+}
+void setLog(void (*sink)(const char *)) { logSink = sink; }
+void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output) {
+    @autoreleasepool {
+        int port = endpoint.port;
+        std::string token = endpoint.token;
+        if (port < 1 || port > 65535 || token.size() != 64 || token.find_first_not_of("0123456789abcdef") != std::string::npos)
+            throw std::runtime_error("Invalid USB port/token");
+        Socket socket; socket.fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (socket.fd < 0) throw std::runtime_error("Cannot allocate USB socket");
+        int noSigpipe = 1; setsockopt(socket.fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, sizeof(noSigpipe));
+        timeval timeout{1, 0}; setsockopt(socket.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(uint16_t(port)); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (connect(socket.fd, reinterpret_cast<sockaddr *>(&address), sizeof(address))) throw ConnectionRefused("No USB link to the phone");
+        token += '\n';
+        if (send(socket.fd, token.data(), token.size(), 0) != ssize_t(token.size())) throw std::runtime_error("USB authentication write failed");
+        decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { readExact(socket.fd, p, n, stop, seconds); }, output);
     }
 }
 }

@@ -1,6 +1,8 @@
 #include <obs-module.h>
 #include <util/platform.h>
 #include "adb.hpp"
+#include "wifi.hpp"
+#include <memory>
 #include <thread>
 #include <mutex>
 #include <chrono>
@@ -85,7 +87,11 @@ struct Source {
     std::thread worker;
     std::mutex lock;
     std::string adbPath, status = "Starting…";
-    uint32_t shownWidth = 0, shownHeight = 0;  // touched only by the receiving thread
+    std::mutex sizeLock;
+    uint32_t shownWidth = 0, shownHeight = 0;  // last picture size, for automatic fitting
+    std::unique_ptr<phonecam::wifi::Server> wifi;
+    std::thread wifiWorker;
+    std::atomic<bool> card{false};
     explicit Source(obs_source_t *value) : source(value) {}
     std::string adbSetting() { std::lock_guard<std::mutex> guard(lock); return adbPath; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
@@ -94,35 +100,76 @@ struct Source {
         blog(LOG_INFO, "[phonecam] %s", value.c_str());
         obs_source_update_properties(source);
     }
+    // One picture path for every connection: hardware-decoded NV12 from USB or Wi-Fi.
+    void showFrame(CVPixelBufferRef image) {
+        if (stop) return;
+        if (CVPixelBufferLockBaseAddress(image, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return;
+        card = false;
+        struct obs_source_frame frame{};
+        frame.format = VIDEO_FORMAT_NV12;
+        frame.width = uint32_t(CVPixelBufferGetWidth(image)); frame.height = uint32_t(CVPixelBufferGetHeight(image));
+        noteSize(frame.width, frame.height);
+        for (size_t i = 0; i < 2; ++i) {
+            frame.data[i] = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(image, i));
+            frame.linesize[i] = uint32_t(CVPixelBufferGetBytesPerRowOfPlane(image, i));
+        }
+        // Arrival-based OBS clock. Sender PTS is carried for diagnostics, not subtracted across clocks.
+        frame.timestamp = os_gettime_ns(); frame.full_range = false;
+        video_format_get_parameters(VIDEO_CS_709, VIDEO_RANGE_PARTIAL, frame.color_matrix, frame.color_range_min, frame.color_range_max);
+        obs_source_output_video(source, &frame);
+        CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
+    }
+    void noteSize(uint32_t width, uint32_t height) {
+        std::lock_guard<std::mutex> guard(sizeLock);
+        if (width == shownWidth && height == shownHeight) return;
+        shownWidth = width; shownHeight = height;
+        obs_queue_task(OBS_TASK_UI, fitToCanvas, obs_source_get_weak_source(source), false);
+    }
+    void showPairingCard() {
+        if (!wifi) { setStatus("Direct Wi-Fi is off. Turn on \"Allow direct Wi-Fi\" first, and keep this source visible."); return; }
+        auto window = wifi->openPairing();
+        const uint32_t width = 1280, height = 720;
+        auto pixels = phonecam::wifi::renderPairingCard(window, width, height);
+        struct obs_source_frame frame{};
+        frame.format = VIDEO_FORMAT_BGRA; frame.width = width; frame.height = height;
+        frame.data[0] = pixels.data(); frame.linesize[0] = width * 4;
+        frame.timestamp = os_gettime_ns(); frame.full_range = true;
+        noteSize(width, height);
+        card = true;
+        obs_source_output_video(source, &frame);
+        setStatus("Pairing for 3 minutes: scan the QR code with PhoneCam (Settings → Pair with OBS) or type " + window.code + ".");
+    }
+    void hidePairingCard() { if (card.exchange(false)) obs_source_output_video(source, nullptr); }
     void start() {
         if (worker.joinable()) return;
-        stop = false; shownWidth = shownHeight = 0;
+        stop = false;
+        { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
         worker = std::thread([this] {
             phonecam::autoReceive(stop, [this] { return adbSetting(); }, [this](const std::string &value) { setStatus(value); },
-                [this](CVPixelBufferRef image, uint64_t, uint64_t) {
-                    if (stop) return;
-                    if (CVPixelBufferLockBaseAddress(image, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return;
-                    struct obs_source_frame frame{};
-                    frame.format = VIDEO_FORMAT_NV12;
-                    frame.width = uint32_t(CVPixelBufferGetWidth(image)); frame.height = uint32_t(CVPixelBufferGetHeight(image));
-                    if (frame.width != shownWidth || frame.height != shownHeight) {
-                        shownWidth = frame.width; shownHeight = frame.height;
-                        obs_queue_task(OBS_TASK_UI, fitToCanvas, obs_source_get_weak_source(source), false);
-                    }
-                    for (size_t i = 0; i < 2; ++i) {
-                        frame.data[i] = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(image, i));
-                        frame.linesize[i] = uint32_t(CVPixelBufferGetBytesPerRowOfPlane(image, i));
-                    }
-                    // Arrival-based OBS clock. Sender PTS is carried for diagnostics, not subtracted across clocks.
-                    frame.timestamp = os_gettime_ns(); frame.full_range = false;
-                    video_format_get_parameters(VIDEO_CS_709, VIDEO_RANGE_PARTIAL, frame.color_matrix, frame.color_range_min, frame.color_range_max);
-                    obs_source_output_video(source, &frame);
-                    CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
-                });
+                [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
             obs_source_output_video(source, nullptr);
         });
+        if (wifiAllowed()) {
+            wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
+                setStatus(value);
+                if (value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0) hidePairingCard();
+            }, [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
+            wifiWorker = std::thread([this] { wifi->run(stop); });
+        }
     }
-    void end() { stop = true; if (worker.joinable()) worker.join(); obs_source_output_video(source, nullptr); }
+    void end() {
+        stop = true;
+        if (worker.joinable()) worker.join();
+        if (wifiWorker.joinable()) wifiWorker.join();
+        wifi.reset(); card = false;
+        obs_source_output_video(source, nullptr);
+    }
+    bool wifiAllowed() {
+        obs_data_t *settings = obs_source_get_settings(source);
+        bool allowed = obs_data_get_bool(settings, "wifi_direct");
+        obs_data_release(settings);
+        return allowed;
+    }
     ~Source() { end(); }
 };
 const char *name(void *) { return "PhoneCam (phone camera)"; }
@@ -137,7 +184,7 @@ void *create(obs_data_t *settings, obs_source_t *source) {
     update(self, settings);
     return self;
 }
-void defaults(obs_data_t *settings) { obs_data_set_default_bool(settings, "fit_canvas", true); }
+void defaults(obs_data_t *settings) { obs_data_set_default_bool(settings, "fit_canvas", true); obs_data_set_default_bool(settings, "wifi_direct", true); }
 void destroy(void *value) { delete static_cast<Source *>(value); }
 void show(void *value) { static_cast<Source *>(value)->start(); }
 void hide(void *value) { static_cast<Source *>(value)->end(); }
@@ -146,23 +193,43 @@ obs_properties_t *properties(void *value) {
     std::string status = value ? static_cast<Source *>(value)->currentStatus() : "Not running";
     obs_properties_add_text(p, "status", ("Status: " + status).c_str(), OBS_TEXT_INFO);
     obs_properties_add_text(p, "help",
-        "Connect the phone by USB (USB debugging on) or Wi-Fi (below), keep this source visible, then tap Start live in the PhoneCam app. "
-        "Pairing and reconnection are automatic. Rotate freely: the picture stays upright and, with the option below, "
-        "fits the canvas in portrait and landscape. Video only, no audio yet.", OBS_TEXT_INFO);
+        "Three ways to connect, tried automatically: USB cable (USB debugging on), direct Wi-Fi (pair once below; no Developer "
+        "options) or Android Wireless debugging. Keep this source visible, then tap Start live in the PhoneCam app. Rotate freely: "
+        "the picture stays upright and fits the canvas. Video only, no audio yet.", OBS_TEXT_INFO);
     obs_properties_add_button2(p, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
         if (data) fit(static_cast<Source *>(data)->source, true);  // properties callbacks run on the UI thread
         return false;
     }, value);
     obs_properties_add_bool(p, "fit_canvas", "Fit the picture to the canvas automatically (until you resize or move it yourself)");
+
+    obs_properties_add_text(p, "wifi_title",
+        "Direct Wi-Fi: phone and Mac on the same Wi-Fi or the phone's hotspot. No Internet needed. Click Pair a phone, then on the "
+        "phone open PhoneCam → Settings → Pair with OBS and scan the code shown in this source (or type it). Hide this source "
+        "from your stream while the code is shown.", OBS_TEXT_INFO);
+    if (value) {
+        auto *self = static_cast<Source *>(value);
+        if (self->wifi) obs_properties_add_text(p, "wifi_summary", self->wifi->summary().c_str(), OBS_TEXT_INFO);
+    }
+    obs_properties_add_button2(p, "wifi_qr", "Pair a phone over Wi-Fi (shows a QR code for 3 minutes)", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (data) static_cast<Source *>(data)->showPairingCard();
+        return true;
+    }, value);
+    obs_properties_add_button2(p, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (!data) return false;
+        try { phonecam::wifi::Server::forgetAll(); static_cast<Source *>(data)->setStatus("Forgot all paired phones. Pair again to use direct Wi-Fi."); }
+        catch (const std::exception &error) { static_cast<Source *>(data)->setStatus(error.what()); }
+        return true;
+    }, value);
+    obs_properties_add_bool(p, "wifi_direct", "Allow direct Wi-Fi from paired phones (applies when the source is shown again)");
+
     obs_properties_add_text(p, "adb_path", "adb path (optional; found automatically)", OBS_TEXT_DEFAULT);
-    obs_properties_add_text(p, "wifi_help",
-        "Wi-Fi (no cable): on the phone open Developer options → Wireless debugging → turn it on → Pair device with pairing code. "
-        "Type the IP address & port and the 6-digit code below, then click Pair over Wi-Fi. Pair once; after that, turn Wireless "
-        "debugging on (phone and Mac on the same Wi-Fi) and the phone connects automatically. No Internet access is needed. "
-        "With the cable plugged in, USB is used.", OBS_TEXT_INFO);
-    obs_properties_add_text(p, "wifi_address", "Pairing IP address & port", OBS_TEXT_DEFAULT);
-    obs_properties_add_text(p, "wifi_code", "Pairing code", OBS_TEXT_DEFAULT);
-    obs_properties_add_button2(p, "wifi_pair", "Pair over Wi-Fi", [](obs_properties_t *, obs_property_t *, void *data) {
+    obs_properties_add_text(p, "adb_help",
+        "Android Wireless debugging (developer option): if this Mac was allowed over USB with \"Always allow\", just turn on "
+        "Wireless debugging on the phone. Otherwise pair with the address and 6-digit code from its \"Pair device with pairing "
+        "code\" screen:", OBS_TEXT_INFO);
+    obs_properties_add_text(p, "wifi_address", "Wireless debugging pairing address & port", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(p, "wifi_code", "Wireless debugging pairing code", OBS_TEXT_DEFAULT);
+    obs_properties_add_button2(p, "wifi_pair", "Pair Wireless debugging", [](obs_properties_t *, obs_property_t *, void *data) {
         if (data) startWifiPairing(static_cast<Source *>(data)->source);
         return false;
     }, value);

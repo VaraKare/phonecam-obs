@@ -13,6 +13,14 @@ Last updated 8 November 2026. "Tested" means it worked on a real device with rea
 | iPhone | Mac | Not supported by PhoneCam. Apple's built-in **Continuity Camera** already does this for free: in OBS, add a **Video Capture Device** and choose the iPhone (macOS 13+, iOS 16+). |
 | iPhone | Windows | Not yet. Needs a separate iPhone app; planned for later. |
 
+## Connections
+
+| Connection | Works when | Notes |
+|---|---|---|
+| USB cable | USB debugging on, Mac allowed once | Fastest (≈140 Mb/s on a USB 2.0 phone) |
+| Direct Wi-Fi | Paired once by QR or code; phone and Mac on the same network, or the Mac on the phone's hotspot | No Developer options for this part. Some routers keep devices apart (guest networks, some mesh or dual-band setups); use the same network name or the hotspot |
+| Wireless debugging | Developer options; same Wi-Fi | ≈50–65 Mb/s through adb in our test; the bitrate lowers itself to fit |
+
 ## Why other Android phones should work, and what can differ
 
 The app doesn't assume anything about the phone. On first open it asks the phone which cameras, sizes, frame rates and hardware encoders it has, and offers only those. So other phones get their own Best/High/Balanced choices. What varies by maker:
