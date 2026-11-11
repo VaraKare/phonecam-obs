@@ -211,6 +211,7 @@ void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &out
     }
 }
 void setLog(void (*sink)(const char *)) { logSink = sink; }
+std::string decoderName() { return "hardware decoding"; }  // software fallback is disabled on the Mac
 void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output) {
     @autoreleasepool {
         int port = endpoint.port;

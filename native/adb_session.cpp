@@ -74,7 +74,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
             receive(stop, {port, token}, [&](Image image, uint64_t sequence, uint64_t pts) {
                 if (!announced) {
                     announced = true;
-                    say(std::string(isWireless(serial) ? "Live over Wi-Fi: " : "Live over USB: ") + std::to_string(imageWidth(image)) + "×" + std::to_string(imageHeight(image)) + ", hardware decoding.");
+                    say(std::string(isWireless(serial) ? "Live over Wi-Fi: " : "Live over USB: ") + std::to_string(imageWidth(image)) + "×" + std::to_string(imageHeight(image)) + ", " + decoderName() + ".");
                 }
                 output(image, sequence, pts);
             });
