@@ -60,7 +60,7 @@ bool listening(int port) {
     auto *table = reinterpret_cast<MIB_TCPTABLE *>(memory.data());
     if (GetTcpTable(table, &size, FALSE) != NO_ERROR) return false;
     for (DWORD i = 0; i < table->dwNumEntries; ++i)
-        if (table->table[i].dwState == MIB_TCP_STATE_LISTEN && ntohs(u_short(table->table[i].dwLocalPort)) == port) return true;
+        if (table->table[i].dwState == DWORD(MIB_TCP_STATE_LISTEN) && ntohs(u_short(table->table[i].dwLocalPort)) == port) return true;
     return false;
 }
 
@@ -87,9 +87,9 @@ bool startServer(const std::string &adb, int port, bool noMdns) {
     std::vector<wchar_t> environmentBlock;
     if (noMdns) {
         if (wchar_t *current = GetEnvironmentStringsW()) {
-            const wchar_t *end = current;
+            const wchar_t *begin = current, *end = current;
             while (*end) end += wcslen(end) + 1;
-            environmentBlock.assign(current, end);
+            environmentBlock.assign(begin, end);
             FreeEnvironmentStringsW(current);
         }
         const std::wstring extra = L"ADB_MDNS=0";
