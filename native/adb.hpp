@@ -11,6 +11,10 @@ struct AdbResult { int status = -1; std::string output; };
 AdbResult runAdb(const std::string &adb, const std::vector<std::string> &args, int timeoutMs = 5000);
 // Configured path, then the Android SDK, Homebrew and PATH locations. Empty if none is executable.
 std::string findAdb(const std::string &configured);
+// Windows: makes sure an adb server is listening. If none is, starts one in adb's foreground mode
+// (`adb -L tcp:PORT server nodaemon`), tied to this process so it ends with OBS. Some antivirus programs
+// (seen with Avast) stop adb's own background start, which then hangs. Does nothing on macOS.
+void prepareAdb(const std::string &adb);
 
 using Status = std::function<void(const std::string &)>;
 // One-time Wireless debugging pairing (`adb pair`); returns a sentence for the status line.

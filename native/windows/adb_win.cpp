@@ -1,11 +1,16 @@
-// Windows half of the adb integration: finding adb.exe and running it without a shell or console window,
-// passing only our output pipe to it (OBS's other handles never leak into the adb server).
+// Windows half of the adb integration: finding adb.exe, starting its server when needed and running it
+// without a shell or console window, passing only our output pipe to it (OBS's other handles never leak
+// into the adb server).
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <winsock2.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #include "adb.hpp"
 #include <chrono>
 #include <cstdlib>
+#include <mutex>
+#include <thread>
 
 namespace phonecam {
 namespace {
@@ -40,6 +45,103 @@ std::wstring quote(const std::wstring &arg) {
     out.append(slashes * 2, L'\\');
     return out + L"\"";
 }
+
+// The adb server's port: ANDROID_ADB_SERVER_PORT when set, as adb itself does, else 5037.
+int serverPort() {
+    const std::string value = environment("ANDROID_ADB_SERVER_PORT");
+    const int port = value.empty() ? 5037 : atoi(value.c_str());
+    return port > 0 && port < 65536 ? port : 5037;
+}
+// Reads the TCP table rather than connecting: a refused connection to localhost takes about 2 s on Windows.
+bool listening(int port) {
+    ULONG size = 0;
+    if (GetTcpTable(nullptr, &size, FALSE) != ERROR_INSUFFICIENT_BUFFER) return false;
+    std::vector<uint8_t> memory(size);
+    auto *table = reinterpret_cast<MIB_TCPTABLE *>(memory.data());
+    if (GetTcpTable(table, &size, FALSE) != NO_ERROR) return false;
+    for (DWORD i = 0; i < table->dwNumEntries; ++i)
+        if (table->table[i].dwState == MIB_TCP_STATE_LISTEN && ntohs(u_short(table->table[i].dwLocalPort)) == port) return true;
+    return false;
+}
+
+std::mutex serverLock;
+HANDLE serverProcess = nullptr;
+// Closing OBS closes this job handle, which ends the adb server we started.
+HANDLE serverJob() {
+    static HANDLE job = [] {
+        HANDLE created = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (created) SetInformationJobObject(created, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+        return created;
+    }();
+    return job;
+}
+// Starts `adb -L tcp:PORT server nodaemon` with no window and all output discarded. noMdns adds
+// ADB_MDNS=0 (network discovery off) for this process only.
+bool startServer(const std::string &adb, int port, bool noMdns) {
+    SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
+    HANDLE nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
+    if (nul == INVALID_HANDLE_VALUE) return false;
+    std::wstring command = quote(wide(adb)) + L" -L tcp:" + std::to_wstring(port) + L" server nodaemon";
+    std::vector<wchar_t> environmentBlock;
+    if (noMdns) {
+        if (wchar_t *current = GetEnvironmentStringsW()) {
+            const wchar_t *end = current;
+            while (*end) end += wcslen(end) + 1;
+            environmentBlock.assign(current, end);
+            FreeEnvironmentStringsW(current);
+        }
+        const std::wstring extra = L"ADB_MDNS=0";
+        environmentBlock.insert(environmentBlock.end(), extra.begin(), extra.end());
+        environmentBlock.push_back(L'\0'); environmentBlock.push_back(L'\0');
+    }
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::vector<uint8_t> attributeMemory(size);
+    auto *attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeMemory.data());
+    bool listed = InitializeProcThreadAttributeList(attributes, 1, 0, &size) &&
+        UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &nul, sizeof(nul), nullptr, nullptr);
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = nul; startup.StartupInfo.hStdOutput = nul; startup.StartupInfo.hStdError = nul;
+    startup.lpAttributeList = listed ? attributes : nullptr;
+    PROCESS_INFORMATION process{};
+    BOOL started = listed && CreateProcessW(wide(adb).c_str(), command.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+        noMdns ? environmentBlock.data() : nullptr, nullptr, &startup.StartupInfo, &process);
+    if (listed) DeleteProcThreadAttributeList(attributes);
+    CloseHandle(nul);
+    if (!started) return false;
+    if (HANDLE job = serverJob()) AssignProcessToJobObject(job, process.hProcess);
+    ResumeThread(process.hThread);
+    CloseHandle(process.hThread);
+    serverProcess = process.hProcess;
+    return true;
+}
+bool serverRunning() { return serverProcess && WaitForSingleObject(serverProcess, 0) == WAIT_TIMEOUT; }
+void stopServer() {
+    if (!serverProcess) return;
+    if (serverRunning()) { TerminateProcess(serverProcess, 1); WaitForSingleObject(serverProcess, 2000); }
+    CloseHandle(serverProcess); serverProcess = nullptr;
+}
+}
+
+void prepareAdb(const std::string &adb) {
+    std::lock_guard<std::mutex> guard(serverLock);
+    const int port = serverPort();
+    if (listening(port)) return;
+    if (serverRunning()) stopServer();  // ours, but not answering: start again
+    // Network discovery is only needed for Wireless debugging; drop it if adb won't start with it.
+    for (bool noMdns : {false, true}) {
+        if (!startServer(adb, port, noMdns)) return;  // adb's own start will be tried (and timed out) instead
+        for (int waited = 0; waited < 10000 && serverRunning(); waited += 100) {
+            if (listening(port)) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        stopServer();
+    }
 }
 
 std::string findAdb(const std::string &configured) {

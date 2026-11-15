@@ -157,7 +157,10 @@ def native_tests(runtime, receiver, fake_adb):
                 try: client.recv(1)
                 except OSError: pass
         worker = threading.Thread(target=phone, daemon=True); worker.start()
-        env = dict(os.environ, FAKE_ADB_LOG=str(log), FAKE_ADB_TOKEN=token, FAKE_ADB_PORT=str(server.getsockname()[1]))
+        with socket.socket() as probe:  # a free port for the adb server, away from any real one on 5037
+            probe.bind(("127.0.0.1", 0)); adb_port = probe.getsockname()[1]
+        env = dict(os.environ, FAKE_ADB_LOG=str(log), FAKE_ADB_TOKEN=token, FAKE_ADB_PORT=str(server.getsockname()[1]),
+                   ANDROID_ADB_SERVER_PORT=str(adb_port))
         result = subprocess.run([str(receiver), "--auto", "12", str(fake_adb)], capture_output=True, text=True, cwd=runtime, env=env, timeout=60)
         worker.join(10)
         if result.returncode: raise RuntimeError(f"automatic connection: {result.stderr}{result.stdout}")
@@ -168,7 +171,13 @@ def native_tests(runtime, receiver, fake_adb):
         assert "-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1" in calls, calls
         assert f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}" in calls, calls
         assert "Ready. Tap Start live on the phone." in result.stderr, result.stderr
-    print("PASS: Windows automatic adb pairing, forward, retry and receive", flush=True)
+        # No adb server was running, so the receiver started one in foreground mode, once, and it ended
+        # with the receiver (job object).
+        assert calls.count(f"-L tcp:{adb_port} server nodaemon") == 1, calls
+        with socket.socket() as probe:
+            probe.settimeout(5)
+            assert probe.connect_ex(("127.0.0.1", adb_port)) != 0, "adb server outlived the receiver"
+    print("PASS: Windows automatic adb server start, pairing, forward, retry and receive", flush=True)
 
 
 def main():
@@ -190,14 +199,14 @@ def main():
     obs_headers = ["/external:I", sdk, "/external:I", BUILD / "simde"]
     shared = [ROOT / "native/windows/receiver_win.cpp", ROOT / "native/windows/adb_win.cpp", ROOT / "native/adb_session.cpp"]
     includes = ["/I", ROOT / "native", "/external:I", ffmpeg_include]
-    system = ["ws2_32.lib"] + ffmpeg_libs
+    system = ["ws2_32.lib", "iphlpapi.lib"] + ffmpeg_libs
     plugin = OUT / "phonecam-obs.dll"
     run(strict + ["/O2", "/LD"] + includes + obs_headers + [ROOT / "native/windows/plugin_win.cpp"] + shared +
         [f"/Fe:{plugin}", f"/Fo:{OUT}\\", "/link", OUT / "obs.lib"] + system, env)
     receiver = runtime / "phonecam-receive.exe"  # next to OBS's FFmpeg DLLs
     run(strict + ["/O2"] + includes + [ROOT / "native/windows/receiver_cli_win.cpp"] + shared + [f"/Fe:{receiver}", f"/Fo:{OUT}\\", "/link"] + system, env)
     fake_adb = OUT / "fake-adb.exe"
-    run(strict + [ROOT / "native/windows/fake_adb.cpp", f"/Fe:{fake_adb}", f"/Fo:{OUT}\\"], env)
+    run(strict + [ROOT / "native/windows/fake_adb.cpp", f"/Fe:{fake_adb}", f"/Fo:{OUT}\\", "/link", "ws2_32.lib"], env)
     native_tests(runtime, receiver, fake_adb)
     smoke = runtime / "phonecam-smoke.exe"  # next to obs.dll so its dependencies load
     run(strict + obs_headers + [ROOT / "native/windows/smoke_win.cpp", f"/Fe:{smoke}", f"/Fo:{OUT}\\", "/link", OUT / "obs.lib"], env)

@@ -1,5 +1,6 @@
 // Windows receiver: Winsock connection to the adb-forwarded port, FFmpeg decoding (D3D11VA hardware with
-// software fallback, OBS's own pinned FFmpeg), CPU rotation and mirror, then the shared PCAM loop.
+// software fallback, OBS's own pinned FFmpeg), CPU rotation and mirror split across threads, then the shared
+// PCAM loop. When frames run late it logs where the time went, once a second.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <winsock2.h>
@@ -8,6 +9,8 @@
 #include "rotate.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <future>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -58,6 +61,24 @@ class Decoder {
     std::vector<uint8_t> parameters, rotated[3];
     bool hardware = false, delivered = false;
     uint64_t sequence = 0, pts = 0;
+    // Per-second timing of each step, logged only when some frame took longer than a 30 fps frame.
+    using Clock = std::chrono::steady_clock;
+    struct Timing { double decode = 0, copy = 0, rotate = 0, hand = 0; unsigned frames = 0, slow = 0; Clock::time_point start = Clock::now(); } timing;
+    Clock::time_point sent;
+    static double ms(Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); }
+    void account(double decode, double copy, double rotate, double hand) {
+        timing.decode += decode; timing.copy += copy; timing.rotate += rotate; timing.hand += hand; ++timing.frames;
+        if (decode + copy + rotate + hand > 33.3) ++timing.slow;
+        if (Clock::now() - timing.start < std::chrono::seconds(1)) return;
+        if (timing.slow) if (auto sink = logSink.load()) {
+            const double n = timing.frames;
+            char line[200];
+            snprintf(line, sizeof(line), "PC frame timing (average of %u): decode %.1f ms, copy from GPU %.1f ms, rotate %.1f ms, hand to OBS %.1f ms",
+                     timing.frames, timing.decode / n, timing.copy / n, timing.rotate / n, timing.hand / n);
+            sink(line);
+        }
+        timing = Timing{};
+    }
 
     static AVPixelFormat pickFormat(AVCodecContext *, const AVPixelFormat *formats) {
         for (const AVPixelFormat *f = formats; *f != AV_PIX_FMT_NONE; ++f) if (*f == AV_PIX_FMT_D3D11) return *f;
@@ -82,7 +103,8 @@ class Decoder {
         int status = avcodec_open2(context, decoder, nullptr);
         if (status < 0) throw std::runtime_error("Decoder setup failed: " + averror(status));
     }
-    void deliver(AVFrame *frame, unsigned turns, bool mirror) {
+    // Returns the rotation time; the hand-over to OBS is timed by the caller.
+    double deliver(AVFrame *frame, unsigned turns, bool mirror) {
         if (uint32_t(frame->width) != width || uint32_t(frame->height) != height)
             throw std::runtime_error("Encoded dimensions differ from the requested profile");
         const bool nv12 = frame->format == AV_PIX_FMT_NV12;
@@ -90,23 +112,39 @@ class Decoder {
             throw std::runtime_error("Unsupported decoded picture format (only 8-bit 4:2:0 video is supported)");
         Picture picture; picture.nv12 = nv12;
         const int planes = nv12 ? 2 : 3;
+        const auto began = Clock::now();
         if (!turns && !mirror) {
             picture.width = width; picture.height = height;
             for (int i = 0; i < planes; ++i) { picture.plane[i] = frame->data[i]; picture.stride[i] = uint32_t(frame->linesize[i]); }
         } else {
             picture.width = (turns & 1) ? height : width; picture.height = (turns & 1) ? width : height;
+            // Luma in two halves plus each chroma plane: three or four similar-sized pieces of work.
+            struct Piece { int plane, first, last; };
+            std::vector<Piece> pieces;
             for (int i = 0; i < planes; ++i) {
                 const int w = i ? int(width / 2) : int(width), h = i ? int(height / 2) : int(height);
                 const int element = (nv12 && i == 1) ? 2 : 1;
-                const int outStride = ((turns & 1) ? h : w) * element;
-                rotated[i].resize(size_t(outStride) * ((turns & 1) ? w : h));
-                if (element == 2) rotatePlane<2>(frame->data[i], frame->linesize[i], w, h, rotated[i].data(), outStride, int(turns), mirror);
-                else rotatePlane<1>(frame->data[i], frame->linesize[i], w, h, rotated[i].data(), outStride, int(turns), mirror);
+                const int outStride = ((turns & 1) ? h : w) * element, outRows = (turns & 1) ? w : h;
+                rotated[i].resize(size_t(outStride) * outRows);
                 picture.plane[i] = rotated[i].data(); picture.stride[i] = uint32_t(outStride);
+                if (i == 0) { pieces.push_back({0, 0, outRows / 2}); pieces.push_back({0, outRows / 2, outRows}); }
+                else pieces.push_back({i, 0, outRows});
             }
+            auto rotate = [&](const Piece &piece) {
+                const int i = piece.plane;
+                const int w = i ? int(width / 2) : int(width), h = i ? int(height / 2) : int(height);
+                if (nv12 && i == 1) rotatePlane<2>(frame->data[i], frame->linesize[i], w, h, rotated[i].data(), int(picture.stride[i]), int(turns), mirror, piece.first, piece.last);
+                else rotatePlane<1>(frame->data[i], frame->linesize[i], w, h, rotated[i].data(), int(picture.stride[i]), int(turns), mirror, piece.first, piece.last);
+            };
+            std::vector<std::future<void>> others;
+            for (size_t k = 1; k < pieces.size(); ++k) others.push_back(std::async(std::launch::async, rotate, pieces[k]));
+            rotate(pieces[0]);
+            for (auto &other : others) other.get();
         }
+        const double rotateMs = ms(began, Clock::now());
         delivered = true;
         output(&picture, sequence, pts);
+        return rotateMs;
     }
     void drain(unsigned turns, bool mirror) {
         while (true) {
@@ -117,12 +155,24 @@ class Decoder {
                 std::lock_guard<std::mutex> guard(nameLock);
                 lastDecoder = decoded->format == AV_PIX_FMT_D3D11 ? "hardware decoding (D3D11)" : "software decoding";
             }
+            const auto decodedAt = Clock::now();
+            double rotateMs;
+            auto copiedAt = decodedAt;
             if (decoded->format == AV_PIX_FMT_D3D11) {
-                av_frame_unref(system);
-                status = av_hwframe_transfer_data(system, decoded, 0);  // to NV12 in memory
+                // Copy to NV12 in memory, reusing one buffer instead of allocating 12 MB per 4K frame.
+                const auto *frames = reinterpret_cast<const AVHWFramesContext *>(decoded->hw_frames_ctx->data);
+                if (!system->buf[0] || system->width != decoded->width || system->height != decoded->height || system->format != frames->sw_format) {
+                    av_frame_unref(system);
+                    system->format = frames->sw_format; system->width = decoded->width; system->height = decoded->height;
+                    if (av_frame_get_buffer(system, 0) < 0) throw std::runtime_error("Out of memory");
+                }
+                status = av_hwframe_transfer_data(system, decoded, 0);
                 if (status < 0) throw std::runtime_error("Hardware frame copy failed: " + averror(status));
-                deliver(system, turns, mirror);
-            } else deliver(decoded, turns, mirror);
+                copiedAt = Clock::now();
+                rotateMs = deliver(system, turns, mirror);
+            } else rotateMs = deliver(decoded, turns, mirror);
+            const double total = ms(copiedAt, Clock::now());
+            account(ms(sent, decodedAt), ms(decodedAt, copiedAt), rotateMs, total - rotateMs);
             av_frame_unref(decoded);
         }
     }
@@ -130,6 +180,7 @@ class Decoder {
         av_packet_unref(packet);
         if (av_new_packet(packet, int(data.size())) < 0) throw std::runtime_error("Out of memory");
         memcpy(packet->data, data.data(), data.size());
+        sent = Clock::now();
         int status = avcodec_send_packet(context, packet);
         if (status < 0) throw std::runtime_error("Decoding failed: " + averror(status));
         drain(turns, mirror);

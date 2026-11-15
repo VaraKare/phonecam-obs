@@ -42,6 +42,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                                              : "The adb path in this source's properties is not an executable file.");
                     pause(stop, 3000); continue;
                 }
+                prepareAdb(adb);
                 auto listed = runAdb(adb, {"devices"});
                 auto devices = parseDevices(listed.output);
                 if (devices.ready.empty()) {

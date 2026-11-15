@@ -42,6 +42,8 @@ std::string findAdb(const std::string &configured) {
     return {};
 }
 
+void prepareAdb(const std::string &) {}  // adb's own background start works on macOS
+
 AdbResult runAdb(const std::string &adb, const std::vector<std::string> &args, int timeoutMs) {
     int pipeFds[2];
     if (pipe(pipeFds)) return {};
