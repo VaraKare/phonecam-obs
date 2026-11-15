@@ -202,6 +202,14 @@ def main():
     smoke = runtime / "phonecam-smoke.exe"  # next to obs.dll so its dependencies load
     run(strict + obs_headers + [ROOT / "native/windows/smoke_win.cpp", f"/Fe:{smoke}", f"/Fo:{OUT}\\", "/link", OUT / "obs.lib"], env)
     run([smoke, plugin], env, cwd=runtime)
+    # Microsoft's C++ runtime, for app-local use in the portable test kit (redistributable per the
+    # Visual Studio license), so a PC without the runtime installed can still run portable OBS.
+    redist = Path(env.get("VCToolsRedistDir", ""))
+    runtime_out = OUT / "vc-runtime"
+    runtime_out.mkdir(exist_ok=True)
+    found = sorted((redist / "x64").glob("Microsoft.VC*.CRT/*.dll")) if redist.name else []
+    for dll in found: shutil.copy2(dll, runtime_out / dll.name)
+    print("VC runtime for the kit:", [d.name for d in found], flush=True)
     print(json.dumps({"plugin": str(plugin), "physicalGate": "not passed: test build only"}))
 
 

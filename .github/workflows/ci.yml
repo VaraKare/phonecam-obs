@@ -58,4 +58,5 @@ jobs:
           name: phonecam-obs-windows-test
           path: |
             native/build/windows/phonecam-obs.dll
+            native/build/windows/vc-runtime/*.dll
             docs/WINDOWS_TEST.md
