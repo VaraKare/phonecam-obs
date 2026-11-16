@@ -33,4 +33,4 @@ This is a partial W5 result: the Windows plugin works on a real PC over USB at 1
 
 ## Next Windows test
 
-Use a new CI build with these changes and the [test-day checklist](../WINDOWS_TEST.md): 1080p for a few minutes, 4K (read the "PC frame timing" lines), rotation, front camera with Mirror in OBS, and reconnecting after unplugging.
+Use a new CI build with these changes, the reusable portable kit (`tools/windows_kit.py`, built from what this test taught) and the [test-day checklist](../WINDOWS_TEST.md): 1080p for a few minutes, 4K (read the "PC frame timing" lines), rotation, front camera with Mirror in OBS, and reconnecting after unplugging.

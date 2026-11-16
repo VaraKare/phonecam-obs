@@ -7,6 +7,26 @@ For the first real test on a Windows PC (W5 in the [Windows plan](WINDOWS.md)). 
 - Windows 10 (1809+) or 11, 64-bit, with **OBS Studio 33.0.1** (the plugin is built against it).
 - The phone with PhoneCam 0.3 and USB debugging on; a USB data cable.
 
+## Borrowed PC: portable kit (nothing installed)
+
+For a PC that isn't yours. OBS runs in portable mode from one Desktop folder, which is deleted when OBS closes, together with anything adb created. The PC sends only its Windows version, processor, graphics, antivirus name and the PhoneCam log lines to your Mac.
+
+On the Mac (same Wi-Fi as the PC; keep OBS on the Mac closed so the phone doesn't connect to it):
+
+```bash
+python3 tools/windows_kit.py build --run RUN_ID
+```
+
+```bash
+python3 tools/windows_kit.py serve
+```
+
+`RUN_ID` is a green CI run on `feat/v0.4-windows` (`gh run list --branch feat/v0.4-windows`). `serve` prints one line. On the PC, open **Windows PowerShell** (not as administrator), type that line and press Enter. Plug the phone in when asked and tap **Allow** on it. OBS opens with the PhoneCam source; do the checks below, then close OBS. The window removes everything and the Mac receives "Left behind: nothing". Reports are in `native/build/windows-kit/reports/`.
+
+- If macOS asks whether python3 may accept incoming connections, allow it.
+- Wi-Fi is off in the kit unless you build it with `--wifi`. Answering Windows Firewall's prompt about OBS, even with Cancel, leaves a firewall entry that only an administrator can remove (the kit reports any it finds). Test Wi-Fi only on a PC whose owner agrees to that.
+- Don't install anything Windows or the phone offers (drivers, "Mobile Assistant"); the phone may also show up as a CD drive, which can be ignored.
+
 ## Install (about 10 minutes)
 
 1. **adb:** download [SDK Platform-Tools for Windows](https://developer.android.com/tools/releases/platform-tools), unzip it to `C:\platform-tools` (the plugin looks there automatically).
