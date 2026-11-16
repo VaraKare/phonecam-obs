@@ -16,7 +16,7 @@ The status of each finding in [FINDINGS.md](FINDINGS.md). "Fixed in code" means 
 | AUDIT-021e Store wiped on read failure; accept before save | Fixed | Unreadable files are reported and kept; a new pairing is saved before the phone is told | Damaged-store tests | — |
 | AUDIT-021g / 022f Unlocked mDNS handle / `wifi` pointer | Fixed | mDNS is touched only by the server thread; the `wifi` pointer is guarded by `wifiLock` in both plugins | TSan run of the native suite: no reports | — |
 
-**Runs after Stage 1** (macOS 27.2): Android unit tests 44/0 failed (1 skipped by design), lint 0 errors; tool tests 29 OK; Mac build and sanitizer unit tests pass; `test_native.py` 16 OK; the same suite under ASan+UBSan and TSan, no reports. Windows CI result: see the commit's CI run.
+**Runs after Stage 1** (macOS 27.2): Android unit tests 44/0 failed (1 skipped by design), lint 0 errors; tool tests 29 OK; Mac build and sanitizer unit tests pass; `test_native.py` 16 OK; the same suite under ASan+UBSan and TSan, no reports. Windows CI run 43946715250 (commit 72f5c6d): all jobs green, including the new damaged-store and "no port before pairing" checks, the replug test and Kotlin ↔ Windows Wi-Fi interop.
 
 ## Next (Stage 2, not started)
 
