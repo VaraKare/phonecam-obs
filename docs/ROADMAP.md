@@ -48,7 +48,7 @@ Status: step 1 implemented on `feat/v0.3-wifi` (8 November 2026): OBS pairing bu
 
 ### v0.4 — Windows (phase 1: USB, then Wi-Fi)
 
-Status: started 11 November 2026 on `feat/v0.4-windows`; plan and phases W1–W5 in [Windows plan](WINDOWS.md).
+Status: started 11 November 2026 on `feat/v0.4-windows`; plan and phases W1–W5 in [Windows plan](WINDOWS.md). W1–W4 (build, decoding, adb, direct Wi-Fi) pass in CI; on 15 November 2026 USB live at 1080p worked on a real Windows laptop, and the full W5 check on real hardware is still to come.
 
 Most laptop users run Windows, so Windows support is required, delivered in phases.
 - Windows OBS plugin with hardware video decoding (Windows' Media Foundation / Direct3D 11 decoder, the Windows equivalent of the Mac's VideoToolbox).

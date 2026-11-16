@@ -289,6 +289,10 @@ def main():
     found = sorted((redist / "x64").glob("Microsoft.VC*.CRT/*.dll")) if redist.name else []
     for dll in found: shutil.copy2(dll, runtime_out / dll.name)
     print("VC runtime for the kit:", [d.name for d in found], flush=True)
+    # The plugin includes the QR library (MIT): ship its notice with the test build.
+    header = (qr / "qrcodegen.hpp").read_text(encoding="utf-8").split("*/", 1)[0]
+    notice = "\n".join(line.lstrip("/* ").rstrip() for line in header.splitlines())
+    (OUT / "THIRD_PARTY_NOTICES.txt").write_text("PhoneCam OBS Windows test build includes:\n\n" + notice.strip() + "\n", encoding="utf-8")
     print(json.dumps({"plugin": str(plugin), "physicalGate": "not passed: test build only"}))
 
 

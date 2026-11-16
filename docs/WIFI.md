@@ -22,6 +22,8 @@ The user approved the Android network permission for this on 11 November 2026, a
 
 The Mac is the listener: the plugin accepts connections on TCP port 47183 (or a free port if that is taken) and announces itself with Bonjour as `_phonecam._tcp` with TXT `v=1`, `id=<Mac id>` and `pair=1` while a pairing window is open. The phone connects out, to the Bonjour address or to the addresses it learned from the QR code.
 
+Windows (test build, [Windows plan](WINDOWS.md) W4) runs the same server code with the same protocol. It announces through Windows' own DNS-SD (`DnsServiceRegister`, Windows 10 1809 or later), uses Windows CNG for the cryptography, and lists addresses of adapters with a default gateway first, so virtual adapters (Hyper-V, WSL) come last in the QR code. The first time the source listens, Windows Defender Firewall asks whether OBS may accept connections: allow it on **private** networks. Below, "Mac" means the computer running OBS.
+
 ### Pairing secret
 
 The Mac creates 10 random bytes (80 bits) for each pairing window. They are shown as 16 characters from the alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (typed codes ignore case, spaces and dashes, and read I/L as 1 and O as 0), and inside the QR code:
@@ -71,4 +73,5 @@ Record numbers start at 0 and count up, so a dropped, repeated, reordered or alt
 ### Stored data
 
 - Mac: `~/Library/Application Support/phonecam-obs/wifi.json` (mode 600): the Mac id and, for each paired phone, its id, name and long-term key. **Forget paired phones** in the source properties clears them.
+- Windows: `%APPDATA%\phonecam-obs\wifi.json`, the same contents, in the user's own profile.
 - Phone: app-private storage, excluded from backups: the phone id and, for each paired Mac, its id, name, long-term key, port and last addresses. **Forget paired Macs** in Settings clears them.

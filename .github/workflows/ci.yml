@@ -72,4 +72,5 @@ jobs:
             native/build/windows/phonecam-obs.dll
             native/build/windows/vc-runtime/*.dll
             native/build/windows/pairing-card.bmp
+            native/build/windows/THIRD_PARTY_NOTICES.txt
             docs/WINDOWS_TEST.md

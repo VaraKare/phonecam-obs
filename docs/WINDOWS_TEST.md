@@ -27,5 +27,7 @@ For the first real test on a Windows PC (W5 in the [Windows plan](WINDOWS.md)). 
 | Fit | The whole picture fits the canvas; **Fit to canvas now** works after moving it |
 | Stop and unplug | Stop: OBS returns to Ready. Unplug and replug: it reconnects by itself |
 | CPU | Task Manager: OBS CPU use during 4K (rotation runs on the CPU in this build) |
+| Wi-Fi pairing | Unplug the phone. **Pair a phone over Wi-Fi** shows the QR card; Windows Firewall asks once (allow on private networks); the phone pairs by QR and by typed code |
+| Wi-Fi live | Start live on the same Wi-Fi: "Live over direct Wi-Fi" in the Status line; note fps and drops at High after 30 s |
 
-Then copy the OBS log (Help → Log Files → Show Log Files) lines that start with `[phonecam]` into the research notes. Direct Wi-Fi is not in this Windows build yet (W4).
+Then copy the OBS log (Help → Log Files → Show Log Files) lines that start with `[phonecam]` into the research notes.
