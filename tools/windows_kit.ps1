@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $Url = '__URL__'
 $Wifi = __WIFI__
+$ZipSha = '__ZIPSHA__'   # SHA-256 of kit.zip on the Mac: a download changed on the network is refused
 $Started = Get-Date
 $Dir = Join-Path ([Environment]::GetFolderPath('Desktop')) 'PhoneCam-Test'
 $Zip = Join-Path $env:TEMP 'PhoneCam-Test.zip'
@@ -27,6 +28,9 @@ $env:ADB_MDNS = '0'                                          # USB only: adb ope
 $env:PHONECAM_WIFI_STORE = Join-Path $Dir 'wifi-pairings.json' # Wi-Fi pairings stay inside the kit folder
 
 function Send([string]$Name, [string]$Text) {
+    # Reports leave out this PC's user name and profile path (audit/FINDINGS.md AUDIT-016).
+    if ($env:USERPROFILE) { $Text = $Text.Replace($env:USERPROFILE, '~') }
+    if ($env:USERNAME) { $Text = $Text.Replace($env:USERNAME, '<user>') }
     try { Invoke-RestMethod -UseBasicParsing -Method Post -Uri "$Url/report/$Name" -Body ([Text.Encoding]::UTF8.GetBytes($Text)) -ContentType 'text/plain; charset=utf-8' -TimeoutSec 15 | Out-Null } catch { }
 }
 function Say([string]$Text, [string]$Color = 'White') { Write-Host $Text -ForegroundColor $Color }
@@ -51,6 +55,9 @@ try {
     if (Test-Path $Dir) { Start-Sleep 1; Remove-Item -Recurse -Force $Dir }
     Say "1/4  Downloading the kit (about 240 MB)..."
     Invoke-WebRequest -UseBasicParsing "$Url/kit.zip" -OutFile $Zip
+    if ((Get-FileHash -Algorithm SHA256 $Zip).Hash.ToLowerInvariant() -ne $ZipSha) {
+        throw "The kit download does not match the Mac's copy (it may have been changed on the network). Nothing was run."
+    }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [IO.Compression.ZipFile]::ExtractToDirectory($Zip, $Dir)
     Remove-Item -Force $Zip
@@ -88,7 +95,7 @@ try {
     }
     $usb = (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'ADB|Android' } | ForEach-Object { "$($_.FriendlyName) [$($_.Status)]" }) -join '; '
     $app = (Adb shell dumpsys package dev.phonecam.obs | Select-String 'versionName') -join ''
-    Send 'adb' ("Phone: $state`nUSB devices: $usb`nPhoneCam app: $app`n" + ((Adb devices -l) -join "`n"))
+    Send 'adb' ("Phone: $state`nUSB devices: $usb`nPhoneCam app: $app")   # no serial numbers
     if ($state -eq 'device') { Say "     Phone connected." Green }
     else { Say "     The phone isn't connected yet ($state). OBS keeps looking; check the cable and the Allow prompt." Yellow }
 
@@ -111,7 +118,8 @@ try {
     }
     Say "4/4  OBS closed. Sending the final logs..."
     $log = Get-ChildItem $logs -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
-    if ($log) { Send 'obs-log' (Get-Content $log.FullName -Raw) }
+    # Only PhoneCam lines, problems and OBS's own frame statistics, not the whole log (device names, paths).
+    if ($log) { Send 'obs-log' ((Get-Content $log.FullName | Select-String -Pattern 'phonecam|error|warning|crash|Shutting down|frames missed|lagged|skipped frames' | ForEach-Object { $_.Line }) -join "`n") }
     Send 'phone-log' ((Adb logcat -d -s PhoneCam:V) -join "`n")
 }
 catch {

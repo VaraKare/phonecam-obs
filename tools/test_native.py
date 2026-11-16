@@ -219,7 +219,20 @@ esac
             self.assertEqual((value["lastWidth"], value["lastHeight"]), (640, 480))
             self.assertIn("wrong code", err)
             self.assertIn("Paired with Test phone", err)
+            self.assertIn("Listening before pairing: 0", err)  # nothing paired yet: no open port (AUDIT-006)
             self.assertEqual(json.loads((Path(directory) / "wifi.json").read_text())["phones"][0]["name"], "Test phone")
+
+    def test_damaged_pairings_file_is_kept_and_reported(self):
+        """A pairings file that cannot be read is reported and left as it is, never replaced (pairings kept)
+        and never a crash (AUDIT-004, AUDIT-021e)."""
+        with tempfile.TemporaryDirectory() as directory:
+            store = Path(directory) / "wifi.json"
+            store.write_bytes(b"{not json")
+            env = dict(os.environ, PHONECAM_WIFI_STORE=str(store))
+            result = subprocess.run([str(RECEIVER), "--wifi", "1"], capture_output=True, text=True, env=env, timeout=60)
+            self.assertEqual(result.returncode, 1, result.stderr)  # an orderly failure, not an abort signal
+            self.assertIn("could not be read", result.stderr)
+            self.assertEqual(store.read_bytes(), b"{not json")
 
     def test_avc_hardware_decode(self): self.exchange(self.encoded_packets(width=1920, height=1080), 12)
     def test_hevc_hardware_decode(self): self.exchange(self.encoded_packets(True, width=1920, height=1080), 12)

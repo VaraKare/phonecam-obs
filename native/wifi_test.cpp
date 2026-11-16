@@ -62,5 +62,11 @@ int main() {
     assert(loaded.phones[0].name == "A/B \xc3\xa9\xf0\x9f\x98\x80" && loaded.phones[0].key == Bytes(32, 0xaa));
     assert(!readStore("{\"macId\":", loaded) && !readStore("[]", loaded) && !readStore("{} x", loaded) && !readStore("{\"a\":\"\\ud800\"}", loaded));
     assert(readStore("{}", loaded) && loaded.macId.empty() && loaded.phones.empty());
+    // Phone names arrive outside the handshake MAC: only valid UTF-8 survives (AUDIT-003), never cut mid-character.
+    assert(cleanName(std::string("Pixel\xff\xfe")) == "Pixel");
+    assert(cleanName(std::string("\xc0\xaf" "a\xed\xa0\x80" "b\xf4\x90\x80\x80" "c\xe2\x82")) == "abc");  // overlong, surrogate, > U+10FFFF, cut
+    assert(cleanName("\xf0\x9f\x98\x80 \xe0\xa4\x85") == "\xf0\x9f\x98\x80 \xe0\xa4\x85");                   // emoji, Devanagari kept
+    assert(cleanName(std::string(63, 'x') + "\xc3\xa9") == std::string(63, 'x'));                          // 65 bytes: é not cut in half
+    assert(cleanName("\x01\x7f") == "Phone");
     puts("PASS: Wi-Fi pairing codes, handshake tags, keys, records (shared vectors), P-256 ECDH and the pairings file");
 }

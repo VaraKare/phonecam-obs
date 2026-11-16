@@ -16,7 +16,9 @@
 
 namespace phonecam::wifi {
 // macOS: ~/Library/Application Support/phonecam-obs/wifi.json, mode 600. Windows: %APPDATA%\phonecam-obs\wifi.json.
-// PHONECAM_WIFI_STORE overrides the path (tests). A new computer id is created on first use.
+// PHONECAM_WIFI_STORE overrides the path (tests). A new computer id is created only when the file does not
+// exist; a file that exists but cannot be read throws instead of being replaced, so pairings are never lost
+// to a passing lock or a corrupt write. Use Server::forgetAll to start over.
 Pairings loadPairings();
 void savePairings(const Pairings &value);
 
@@ -25,32 +27,43 @@ std::string macName();                      // this computer's name, shown on th
 std::vector<std::string> localAddresses();  // up, non-loopback, non-link-local IPv4, at most 4
 // The pairing card shown in the OBS source: QR code, typed code and steps, as a BGRA image.
 std::vector<uint8_t> renderPairingCard(const PairingWindow &window, uint32_t width, uint32_t height);
+// Phones are accepted only from the local network: private, link-local or loopback IPv4 (docs/WIFI.md).
+bool localPeer(uint32_t hostOrderAddress);
 
 class Server {
 public:
     using Status = std::function<void(const std::string &)>;
     Server(Status status, Output output) : status(std::move(status)), output(std::move(output)) {}
-    // Listens until stop: one connection at a time (pairing or live video).
+    // Until stop: listens only while a phone is paired or a pairing window is open, one connection at a time
+    // (pairing or live video). Never throws: problems are reported through status.
     void run(std::atomic<bool> &stop);
-    // Opens a 3-minute pairing window and returns the code and QR link to show.
+    // Opens a 3-minute pairing window and returns the code and QR link to show. Throws if Wi-Fi is unavailable.
     PairingWindow openPairing();
     void closePairing();
     bool pairingOpen();
-    // Short line for the source properties: port, addresses and paired phones.
+    // Short line for the source properties: addresses and paired phones.
     std::string summary();
-    static void forgetAll();
+    // Forgets every paired phone, in this server and in the pairings file.
+    void forget();
+    // The same without a running server. Starts a new file if the old one cannot be read.
+    static Pairings forgetAll();
     int listeningPort() const { return port; }
+    std::string computerId();
 private:
     Status status;
     Output output;
     std::mutex lock;
+    Pairings pairings;                             // the pairings file, read once; changed only through the server
     Bytes secret;                                  // current pairing window; empty when closed
     std::chrono::steady_clock::time_point expires;
     int failures = 0;
     std::atomic<int> port{0};
-    void *bonjour = nullptr;                       // platform announcement handle
+    std::atomic<bool> ready{false};                // pairings loaded
+    std::atomic<bool> announceNeeded{false};       // the server thread re-announces; no other thread touches mDNS
+    void *bonjour = nullptr;                       // platform announcement handle (server thread only)
     void announce();                               // (re)announces with the current pairing state
     void withdraw();                               // stops announcing
+    void loop(std::atomic<bool> &stop);
     void handle(std::uintptr_t fd, std::atomic<bool> &stop);
 };
 }

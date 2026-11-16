@@ -86,6 +86,10 @@ def main():
             "CFBundleName": "phonecam-usb", "CFBundlePackageType": "BNDL", "CFBundleShortVersionString": PLUGIN_VERSION,
             "CFBundleVersion": "3", "LSMinimumSystemVersion": "13.0"}
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+    # Debug symbols name the build folder (the builder's home path) and temporary object files: never ship them
+    # (audit/FINDINGS.md AUDIT-015). Stripped before signing, so the signature covers the final binary.
+    run(["xcrun", "strip", "-S", executable])
+    if b"/Users/" in executable.read_bytes(): raise RuntimeError("Build paths left in the plugin binary")
     run(["codesign", "--force", "--sign", "-", bundle])
     run(common + [ROOT / "native/receiver_cli.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", ROOT / "native/adb_session.cpp", ROOT / "native/wifi.mm", ROOT / "native/wifi_server.cpp",
                   ROOT / "native/pairing_card.mm", "-o", BUILD / "phonecam-receive"] + apple)

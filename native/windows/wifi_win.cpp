@@ -67,18 +67,21 @@ void drop(void *&handle) { delete static_cast<Registration *>(handle); handle = 
 
 Pairings loadPairings() {
     Pairings result;
-    std::ifstream file(storePath(), std::ios::binary);
-    if (file) {
-        std::ostringstream text; text << file.rdbuf();
-        if (text.str().size() < 1024 * 1024) readStore(text.str(), result);
-    }
-    Bytes check;
-    if (result.macId.size() != 16 || !fromHex(result.macId, check)) {
+    const auto path = storePath();
+    std::error_code missing;
+    if (!std::filesystem::exists(path, missing)) {  // first use: a new computer id
         Bytes id = randomBytes(8);
         result.macId = hexString(id.data(), id.size());
-        result.phones.clear();
         savePairings(result);
+        return result;
     }
+    std::ifstream file(path, std::ios::binary);
+    std::ostringstream text;
+    if (file) text << file.rdbuf();
+    if (!file || text.str().empty() || text.str().size() >= 1024 * 1024 || !readStore(text.str(), result))
+        throw std::runtime_error("The Wi-Fi pairings file could not be read.");
+    Bytes check;
+    if (result.macId.size() != 16 || !fromHex(result.macId, check)) throw std::runtime_error("The Wi-Fi pairings file is damaged.");
     return result;
 }
 
@@ -137,7 +140,7 @@ void Server::announce() {
     if (!port) return;
     std::lock_guard<std::mutex> guard(announcing);
     drop(bonjour);  // DNS-SD on Windows cannot update a TXT record in place: register again
-    const std::wstring id = wide(loadPairings().macId), host = wide(macName());
+    const std::wstring id = wide(computerId()), host = wide(macName());
     const std::wstring instance = L"PhoneCam on " + host + L"._phonecam._tcp.local", hostName = host + L".local";
     std::vector<PCWSTR> keys{L"v", L"id"}, values{L"1", id.c_str()};
     if (pairingOpen()) { keys.push_back(L"pair"); values.push_back(L"1"); }

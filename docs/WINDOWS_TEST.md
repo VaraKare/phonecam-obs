@@ -9,7 +9,17 @@ For the first real test on a Windows PC (W5 in the [Windows plan](WINDOWS.md)). 
 
 ## Borrowed PC: portable kit (nothing installed)
 
-For a PC that isn't yours. OBS runs in portable mode from one Desktop folder, which is deleted when OBS closes, together with anything adb created. The PC sends only its Windows version, processor, graphics, antivirus name and the PhoneCam log lines to your Mac.
+For a PC that isn't yours. OBS runs in portable mode from one Desktop folder, which is deleted when OBS closes, together with anything adb created. The PC sends to your Mac:
+- its Windows version, processor, graphics, memory and antivirus name;
+- whether the phone connected and which USB driver it used (no serial numbers);
+- the PhoneCam log lines, plus OBS's error, warning and frame-statistics lines;
+- what the cleanup removed.
+
+The user name and profile folder are replaced with `<user>` and `~` before anything is sent.
+
+**Use it only on a network you trust**, such as your home Wi-Fi. The kit travels as plain HTTP. The PC refuses a `kit.zip` that doesn't match the Mac's SHA-256, but the short script typed on the PC is not protected. On a network you don't control, copy the kit on a USB stick instead.
+
+After the test, on the phone, open Developer options and tap **Revoke USB debugging authorisations**. If the PC already had its own adb key, the phone would otherwise keep trusting that PC.
 
 On the Mac (same Wi-Fi as the PC; keep OBS on the Mac closed so the phone doesn't connect to it):
 

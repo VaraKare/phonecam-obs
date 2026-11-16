@@ -12,6 +12,7 @@ Cancel) leaves a firewall entry that only an administrator can remove. Steps: do
 """
 from pathlib import Path
 import argparse
+import hashlib
 import http.server
 import json
 import re
@@ -93,10 +94,20 @@ def build_kit(artifact, obs_zip, tools_zip, out, wifi):
     return out
 
 
-def kit_script(url, wifi):
-    script = TEMPLATE.read_text(encoding="utf-8").replace("__URL__", url).replace("__WIFI__", "$true" if wifi else "$false")
-    assert "__URL__" not in script and "__WIFI__" not in script
+def kit_script(url, wifi, zip_sha256):
+    """The PowerShell script the PC runs, filled in. It refuses a kit.zip whose SHA-256 differs from zip_sha256."""
+    if not re.fullmatch(r"[0-9a-f]{64}", zip_sha256): raise ValueError("zip_sha256 must be 64 lowercase hex digits")
+    script = (TEMPLATE.read_text(encoding="utf-8").replace("__URL__", url).replace("__WIFI__", "$true" if wifi else "$false")
+              .replace("__ZIPSHA__", zip_sha256))
+    assert "__URL__" not in script and "__WIFI__" not in script and "__ZIPSHA__" not in script
     return script
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for block in iter(lambda: source.read(1 << 20), b""): digest.update(block)
+    return digest.hexdigest()
 
 
 def lan_address():
@@ -141,7 +152,10 @@ def serve(port, address=None):
     host = address or lan_address()
     reports = KIT / "reports" / time.strftime("%Y-%m-%d-%H%M")
     reports.mkdir(parents=True, exist_ok=True)
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), make_handler(token, kit_script(f"http://{host}:{port}/{token}", wifi), kit_zip, reports))
+    zip_sha256 = sha256_file(kit_zip)
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), make_handler(token, kit_script(f"http://{host}:{port}/{token}", wifi, zip_sha256), kit_zip, reports))
+    print("Use this only on a network you trust (your home Wi-Fi): the kit travels as plain HTTP. The PC refuses a")
+    print(f"kit.zip that was changed on the way (SHA-256 {zip_sha256[:16]}…), but the short script itself is not protected.\n")
     print(f"Kit ({'with' if wifi else 'without'} Wi-Fi) ready. On the Windows PC, open Windows PowerShell and type:\n")
     print(f"    iex (iwr -UseBasicParsing http://{host}:{port}/{token}).Content\n")
     print(f"Reports: {reports}\nStop with Ctrl+C after the PC reports its cleanup.", flush=True)

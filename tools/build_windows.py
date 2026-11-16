@@ -104,8 +104,26 @@ def wifi_checks(runtime, receiver):
         value = json.loads(out.strip().splitlines()[-1])
         assert value["decodedFrames"] == 12 and (value["lastWidth"], value["lastHeight"]) == (640, 360), value
         assert "wrong code" in err and "Paired with Test phone" in err and "Live over direct Wi-Fi" in err, err
+        assert "Listening before pairing: 0" in err, err  # nothing paired yet: no open port (AUDIT-006)
         assert json.loads((Path(directory) / "wifi.json").read_text())["phones"][0]["name"] == "Test phone"
     print("PASS: Windows direct Wi-Fi with the phone's Kotlin client: wrong code refused, pairing, encrypted video", flush=True)
+    damaged_store_check(receiver, runtime)
+
+
+def damaged_store_check(receiver, runtime):
+    """A pairings file that cannot be read is reported and left as it is, never replaced (pairings kept) and never
+    a crash (AUDIT-004, AUDIT-021e)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        store = Path(directory) / "wifi.json"
+        store.write_bytes(b"{not json")
+        env = dict(os.environ, PHONECAM_WIFI_STORE=str(store))
+        result = subprocess.run([str(receiver), "--wifi", "1"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                env=env, cwd=runtime, timeout=60)
+        assert result.returncode == 1, (result.returncode, result.stderr)  # an orderly failure, not an abort
+        assert "could not be read" in result.stderr, result.stderr
+        assert store.read_bytes() == b"{not json"
+    print("PASS: Windows Wi-Fi keeps a damaged pairings file and reports it", flush=True)
 
 
 def msvc_environment():

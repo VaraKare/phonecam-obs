@@ -54,7 +54,8 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
     auto wait = [&](int milliseconds) { doing(Activity::Idle); pause(stop, milliseconds); };
     auto dropForward = [&] {
         doing(Activity::RemovingLink);
-        if (port && !adb.empty() && !serial.empty()) runAdb(adb, {"-s", serial, "forward", "--remove", "tcp:" + std::to_string(port)}, 3000);
+        try { if (port && !adb.empty() && !serial.empty()) runAdb(adb, {"-s", serial, "forward", "--remove", "tcp:" + std::to_string(port)}, 3000); }
+        catch (...) {}  // called from catch handlers and after the loop: must not throw (AUDIT-004)
         port = 0; serial.clear(); token.clear();
     };
     // An adb call without an answer. Two in a row: the server is stuck (seen on Windows after unplugging),

@@ -28,10 +28,31 @@ inline bool fromHex(const std::string &text, Bytes &out) {
     }
     return true;
 }
-// Printable, at most 64 bytes; "Phone" when empty.
+// Printable, valid UTF-8, at most 64 bytes, never cutting a character; "Phone" when empty. The name arrives
+// from the network outside the handshake's MAC, so invalid bytes are dropped rather than trusted: on macOS
+// a non-UTF-8 name made saving the pairings abort the process (audit/FINDINGS.md AUDIT-003).
 inline std::string cleanName(const std::string &raw) {
     std::string out;
-    for (unsigned char c : raw) if (c >= 32 && c != 127 && out.size() < 64) out += char(c);
+    const auto *p = reinterpret_cast<const unsigned char *>(raw.data());
+    const size_t n = raw.size();
+    for (size_t i = 0; i < n;) {
+        const unsigned char c = p[i];
+        size_t length = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 0;
+        if (!length || i + length > n) { ++i; continue; }
+        uint32_t code = length == 1 ? c : length == 2 ? (c & 0x1F) : length == 3 ? (c & 0x0F) : (c & 0x07);
+        bool valid = true;
+        for (size_t k = 1; k < length; ++k) {
+            if ((p[i + k] & 0xC0) != 0x80) { valid = false; break; }
+            code = code << 6 | (p[i + k] & 0x3F);
+        }
+        static const uint32_t smallest[] = {0, 0, 0x80, 0x800, 0x10000};
+        valid = valid && code >= smallest[length] && code <= 0x10FFFF && !(code >= 0xD800 && code <= 0xDFFF);
+        if (!valid) { ++i; continue; }
+        if (length == 1 && (c < 32 || c == 127)) { ++i; continue; }
+        if (out.size() + length > 64) break;
+        out.append(raw, i, length);
+        i += length;
+    }
     return out.empty() ? "Phone" : out;
 }
 

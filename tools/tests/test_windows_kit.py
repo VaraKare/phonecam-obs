@@ -58,12 +58,22 @@ class KitTest(unittest.TestCase):
         self.assertIs(next(s for s in scene["sources"] if s["id"] == "phonecam_usb_v1")["settings"]["wifi_direct"], True)
 
     def test_script_is_filled_and_plain_ascii(self):
-        script = windows_kit.kit_script("http://192.168.1.5:8765/abc234", False)
+        script = windows_kit.kit_script("http://192.168.1.5:8765/abc234", False, "ab" * 32)
         self.assertIn("$Url = 'http://192.168.1.5:8765/abc234'", script)
         self.assertIn("$Wifi = $false", script)
+        self.assertIn("$ZipSha = '" + "ab" * 32 + "'", script)
+        self.assertIn("Get-FileHash -Algorithm SHA256 $Zip", script)   # a changed download is refused (AUDIT-016)
+        self.assertNotIn("devices -l", script)                          # no phone serial numbers in reports
+        self.assertNotIn("-Raw", script)                                # never the whole OBS log
+        self.assertIn("Replace($env:USERPROFILE, '~')", script)
+        with self.assertRaises(ValueError): windows_kit.kit_script("http://x", False, "not-a-hash")
         script.encode("ascii")   # Windows PowerShell 5 reads scripts in the system code page
         for setting in ("ADB_TRACE", "ANDROID_ADB_SERVER_PORT", "PHONECAM_WIFI_STORE", "server', 'nodaemon"):
             self.assertIn(setting, script)
+
+    def test_sha256_file(self):
+        data = self.folder / "data.bin"; data.write_bytes(b"abc")
+        self.assertEqual(windows_kit.sha256_file(data), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 
     def test_server_needs_the_token(self):
         kit_zip = make_zip(self.folder / "kit.zip", {"a": "b"})

@@ -50,10 +50,15 @@ int main(int argc, char **argv) {
         if (wifi) {
             phonecam::wifi::Server server([](const std::string &value) { fprintf(stderr, "%s\n", value.c_str()); }, onFrame);
             std::thread listener([&] { server.run(stopped); });
-            for (int i = 0; i < 100 && !server.listeningPort(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            auto window = server.openPairing();
+            // With nothing paired the server must not listen until a pairing window opens (AUDIT-006).
+            for (int i = 0; i < 100 && server.computerId().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            fprintf(stderr, "Listening before pairing: %d\n", server.listeningPort());
+            phonecam::wifi::PairingWindow window;
+            try { window = server.openPairing(); }
+            catch (...) { stopped = true; listener.join(); throw; }  // never leave the server thread running
             std::string code; for (char ch : window.code) if (ch != '-') code += ch;
-            printf("PAIR %d %s %s\n", server.listeningPort(), phonecam::wifi::loadPairings().macId.c_str(), code.c_str());
+            printf("PAIR %d %s %s\n", server.listeningPort(), server.computerId().c_str(), code.c_str());
             fflush(stdout);
             auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(120);
             while (!stopped && std::chrono::steady_clock::now() < limit) std::this_thread::sleep_for(std::chrono::milliseconds(50));

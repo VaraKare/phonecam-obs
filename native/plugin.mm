@@ -20,6 +20,11 @@ struct Source {
     std::string adbPath, status = "Starting…";
     std::mutex sizeLock;
     uint32_t shownWidth = 0, shownHeight = 0;  // last picture size, for automatic fitting
+    // Direct Wi-Fi server: started and stopped under wifiLock, from show/hide and from the "Allow paired phones
+    // over Wi-Fi" switch (applied at once, audit/FINDINGS.md AUDIT-006). The UI thread reads it under the same lock.
+    std::mutex wifiLock;
+    bool showing = false, wifiWanted = true;
+    std::atomic<bool> wifiStop{false};
     std::unique_ptr<phonecam::wifi::Server> wifi;
     std::thread wifiWorker;
     std::atomic<bool> card{false};
@@ -57,8 +62,11 @@ struct Source {
         obs_queue_task(OBS_TASK_UI, fitToCanvas, obs_source_get_weak_source(source), false);
     }
     void showPairingCard() {
-        if (!wifi) { setStatus("Direct Wi-Fi is off. Turn on \"Allow direct Wi-Fi\" first, and keep this source visible."); return; }
-        auto window = wifi->openPairing();
+        std::lock_guard<std::mutex> guard(wifiLock);
+        if (!wifi) { setStatus("Direct Wi-Fi is off. Turn on \"Allow paired phones over Wi-Fi\" first, and keep this source visible."); return; }
+        phonecam::wifi::PairingWindow window;
+        try { window = wifi->openPairing(); }
+        catch (const std::exception &error) { setStatus(error.what()); return; }
         const uint32_t width = 1280, height = 720;
         auto pixels = phonecam::wifi::renderPairingCard(window, width, height);
         struct obs_source_frame frame{};
@@ -76,38 +84,65 @@ struct Source {
         stop = false;
         { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
         worker = std::thread([this] {
-            phonecam::autoReceive(stop, [this] { return adbSetting(); }, [this](const std::string &value) { setStatus(value); },
-                [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
+            // Nothing may escape a thread (std::terminate would close OBS; audit/FINDINGS.md AUDIT-004).
+            try {
+                phonecam::autoReceive(stop, [this] { return adbSetting(); }, [this](const std::string &value) { setStatus(value); },
+                    [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
+            } catch (const std::exception &error) { setStatus(std::string("USB connection stopped: ") + error.what()); }
+            catch (...) { setStatus("USB connection stopped after an unexpected error. Hide and show this source to retry."); }
             obs_source_output_video(source, nullptr);
         });
-        if (wifiAllowed()) {
-            wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
-                setStatus(value);
-                if (value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0) hidePairingCard();
-            }, [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
-            wifiWorker = std::thread([this] { wifi->run(stop); });
-        }
+        std::lock_guard<std::mutex> guard(wifiLock);
+        showing = true;
+        startWifi();
     }
     void end() {
         stop = true;
         if (worker.joinable()) worker.join();
-        if (wifiWorker.joinable()) wifiWorker.join();
-        wifi.reset(); card = false;
+        {
+            std::lock_guard<std::mutex> guard(wifiLock);
+            showing = false;
+            stopWifi();
+        }
+        card = false;
         obs_source_output_video(source, nullptr);
     }
-    bool wifiAllowed() {
-        obs_data_t *settings = obs_source_get_settings(source);
-        bool allowed = obs_data_get_bool(settings, "wifi_direct");
-        obs_data_release(settings);
-        return allowed;
+    // wifiLock held.
+    void startWifi() {
+        if (wifi || !showing || !wifiWanted) return;
+        wifiStop = false;
+        wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
+            setStatus(value);
+            if (value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0) hidePairingCard();
+        }, [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
+        auto *server = wifi.get();
+        wifiWorker = std::thread([server, this] {
+            try { server->run(wifiStop); }  // run() reports its own problems; this is the last line of defence
+            catch (...) { setStatus("Direct Wi-Fi stopped after an unexpected error."); }
+        });
+    }
+    // wifiLock held.
+    void stopWifi() {
+        wifiStop = true;
+        if (wifiWorker.joinable()) wifiWorker.join();
+        wifi.reset();
+        hidePairingCard();
+    }
+    void setWifiWanted(bool wanted) {
+        std::lock_guard<std::mutex> guard(wifiLock);
+        wifiWanted = wanted;
+        if (wanted) startWifi(); else stopWifi();
     }
     ~Source() { end(); }
 };
 const char *name(void *) { return "PhoneCam (phone camera)"; }
 void update(void *value, obs_data_t *settings) {
     auto *self = static_cast<Source *>(value);
-    std::lock_guard<std::mutex> guard(self->lock);
-    self->adbPath = obs_data_get_string(settings, "adb_path");
+    {
+        std::lock_guard<std::mutex> guard(self->lock);
+        self->adbPath = obs_data_get_string(settings, "adb_path");
+    }
+    self->setWifiWanted(obs_data_get_bool(settings, "wifi_direct"));
 }
 void *create(obs_data_t *settings, obs_source_t *source) {
     obs_source_set_async_unbuffered(source, true);
@@ -125,7 +160,7 @@ obs_properties_t *properties(void *value) {
     obs_properties_add_text(p, "status", ("Status: " + status).c_str(), OBS_TEXT_INFO);
     obs_properties_add_text(p, "help", "Connect the phone by USB, or pair it once over Wi-Fi. Keep this source visible, then tap Start live on the phone.", OBS_TEXT_INFO);
     obs_properties_add_button2(p, "wifi_qr", "Pair a phone over Wi-Fi", [](obs_properties_t *, obs_property_t *, void *data) {
-        if (data) static_cast<Source *>(data)->showPairingCard();
+        if (data) { try { static_cast<Source *>(data)->showPairingCard(); } catch (...) {} }
         return true;
     }, value);
     obs_properties_add_button2(p, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
@@ -134,7 +169,12 @@ obs_properties_t *properties(void *value) {
     }, value);
     if (value) {
         auto *self = static_cast<Source *>(value);
-        if (self->wifi) obs_properties_add_text(p, "wifi_summary", self->wifi->summary().c_str(), OBS_TEXT_INFO);
+        std::string summary;
+        {
+            std::lock_guard<std::mutex> guard(self->wifiLock);
+            try { if (self->wifi) summary = self->wifi->summary(); } catch (...) {}
+        }
+        if (!summary.empty()) obs_properties_add_text(p, "wifi_summary", summary.c_str(), OBS_TEXT_INFO);
     }
 
     obs_properties_t *options = obs_properties_create();
@@ -142,8 +182,14 @@ obs_properties_t *properties(void *value) {
     obs_properties_add_bool(options, "wifi_direct", "Allow paired phones over Wi-Fi");
     obs_properties_add_button2(options, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
         if (!data) return false;
-        try { phonecam::wifi::Server::forgetAll(); static_cast<Source *>(data)->setStatus("Forgot all paired phones. Pair again to use Wi-Fi."); }
-        catch (const std::exception &error) { static_cast<Source *>(data)->setStatus(error.what()); }
+        auto *self = static_cast<Source *>(data);
+        try {
+            std::lock_guard<std::mutex> guard(self->wifiLock);
+            if (self->wifi) self->wifi->forget(); else phonecam::wifi::Server::forgetAll();
+            self->setStatus("Forgot all paired phones. Pair again to use Wi-Fi.");
+        }
+        catch (const std::exception &error) { self->setStatus(error.what()); }
+        catch (...) { self->setStatus("Could not forget the paired phones."); }
         return true;
     }, value);
     obs_properties_add_group(p, "options", "Options", OBS_GROUP_NORMAL, options);

@@ -2,7 +2,10 @@ package dev.phonecam.obs
 
 import android.net.LocalServerSocket
 import android.net.LocalSocket
+import android.net.LocalSocketAddress
 import android.os.SystemClock
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -24,7 +27,8 @@ class LiveTransport(private val token: String, private val connected: (String) -
     private class UsbSink(private val socket: LocalSocket) : Sink("USB", 750) {
         private val output = socket.outputStream
         override fun write(header: ByteArray, payload: ByteArray) { output.write(header); output.write(payload); output.flush() }
-        override fun close() { runCatching { socket.close() } }
+        // close() alone does not wake a thread blocked writing to a LocalSocket; shutting it down does.
+        override fun close() { runCatching { socket.shutdownInput() }; runCatching { socket.shutdownOutput() }; runCatching { socket.close() } }
     }
     private class WifiSink(private val session: WifiClient.Session) : Sink("Wi-Fi", 3000) {
         override fun write(header: ByteArray, payload: ByteArray) = session.send(header, payload)
@@ -119,7 +123,7 @@ class LiveTransport(private val token: String, private val connected: (String) -
                 val sink = WifiSink(session)
                 if (!claim(sink)) { sink.close(); return@Thread }
                 mine = sink
-                runCatching { server?.close() }  // stop waiting for USB
+                stopListening()  // stop waiting for USB
                 pump(sink)
             } catch (e: Exception) {
                 if (!closed && active === mine && mine != null) { close(); failed(stopReason(e)) }
@@ -164,9 +168,22 @@ class LiveTransport(private val token: String, private val connected: (String) -
         sink.write(header(type, flags, seq, pts, data.size), data)
         deadline = Long.MAX_VALUE
     }
+    /**
+     * Ends the wait for a USB connection. Closing a LocalServerSocket does not wake a thread blocked in
+     * accept(): the socket name then stays bound and the next Start fails with "Address already in use"
+     * (audit/FINDINGS.md AUDIT-001). Shutting the socket down and connecting to it once makes accept()
+     * return; the waiting thread sees the session is over and discards that connection.
+     */
+    private fun stopListening() {
+        val listener = server ?: return
+        server = null
+        runCatching { Os.shutdown(listener.fileDescriptor, OsConstants.SHUT_RDWR) }
+        runCatching { LocalSocket().use { it.connect(LocalSocketAddress(NAME)) } }
+        runCatching { listener.close() }
+    }
     fun close() {
         closed = true
-        runCatching { socket?.close() }; runCatching { server?.close() }; active?.close()
+        runCatching { socket?.close() }; stopListening(); active?.close()
         synchronized(signal) { signal.notifyAll() }
         watchdog.shutdownNow()
     }

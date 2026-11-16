@@ -62,7 +62,9 @@ void startWifiPairing(obs_source_t *source) {
     obs_data_release(settings);
     obs_weak_source_t *weak = obs_source_get_weak_source(source);
     std::thread([weak, adbPath, address, code] {
-        std::string result = phonecam::pairWifi(phonecam::findAdb(adbPath), address, code);
+        std::string result;
+        try { result = phonecam::pairWifi(phonecam::findAdb(adbPath), address, code); }  // nothing may escape a thread
+        catch (...) { result = "Wi-Fi pairing could not run adb. Check the adb path and try again."; }
         blog(LOG_INFO, "[phonecam] %s", result.c_str());
         obs_source_t *strong = obs_weak_source_get_source(weak);
         obs_weak_source_release(weak);

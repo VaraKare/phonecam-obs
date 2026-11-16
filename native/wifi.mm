@@ -11,6 +11,10 @@
 
 namespace phonecam::wifi {
 namespace {
+// Never nil, even for bytes that are not UTF-8 (a nil value in a dictionary literal raises and aborts OBS).
+NSString *text(const std::string &value) {
+    return [[NSString alloc] initWithBytes:value.data() length:value.size() encoding:NSUTF8StringEncoding] ?: @"";
+}
 NSString *storePath() {
     if (const char *test = getenv("PHONECAM_WIFI_STORE")) return @(test);  // tests never touch the real pairings
     return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/phonecam-obs/wifi.json"];
@@ -20,26 +24,27 @@ NSString *storePath() {
 Pairings loadPairings() {
     @autoreleasepool {
         Pairings result;
-        NSData *data = [NSData dataWithContentsOfFile:storePath()];
-        id json = data.length && data.length < 1024 * 1024 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-        if ([json isKindOfClass:[NSDictionary class]]) {
-            id mac = json[@"macId"];
-            if ([mac isKindOfClass:[NSString class]] && [mac length] == 16) result.macId = [mac UTF8String];
-            id phones = json[@"phones"];
-            if ([phones isKindOfClass:[NSArray class]]) for (id item in phones) {
-                if (![item isKindOfClass:[NSDictionary class]]) continue;
-                id pid = item[@"id"], name = item[@"name"], key = item[@"key"];
-                if (![pid isKindOfClass:[NSString class]] || ![name isKindOfClass:[NSString class]] || ![key isKindOfClass:[NSString class]]) continue;
-                PairedPhone phone{[pid UTF8String], cleanName([name UTF8String]), {}};
-                if (phone.id.size() == 16 && fromHex([key UTF8String], phone.key) && phone.key.size() == keyBytes) result.phones.push_back(phone);
-            }
-        }
-        Bytes check;
-        if (result.macId.size() != 16 || !fromHex(result.macId, check)) {
+        NSString *path = storePath();
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {  // first use: a new computer id
             Bytes id = randomBytes(8);
             result.macId = hexString(id.data(), id.size());
-            result.phones.clear();
             savePairings(result);
+            return result;
+        }
+        NSData *data = [NSData dataWithContentsOfFile:path];
+        id json = data.length && data.length < 1024 * 1024 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        if (![json isKindOfClass:[NSDictionary class]]) throw std::runtime_error("The Wi-Fi pairings file could not be read.");
+        id mac = json[@"macId"];
+        if ([mac isKindOfClass:[NSString class]] && [mac length] == 16) result.macId = [mac UTF8String];
+        Bytes check;
+        if (result.macId.size() != 16 || !fromHex(result.macId, check)) throw std::runtime_error("The Wi-Fi pairings file is damaged.");
+        id phones = json[@"phones"];
+        if ([phones isKindOfClass:[NSArray class]]) for (id item in phones) {
+            if (![item isKindOfClass:[NSDictionary class]]) continue;
+            id pid = item[@"id"], name = item[@"name"], key = item[@"key"];
+            if (![pid isKindOfClass:[NSString class]] || ![name isKindOfClass:[NSString class]] || ![key isKindOfClass:[NSString class]]) continue;
+            PairedPhone phone{[pid UTF8String], cleanName([name UTF8String]), {}};
+            if (phone.id.size() == 16 && fromHex([key UTF8String], phone.key) && phone.key.size() == keyBytes) result.phones.push_back(phone);
         }
         return result;
     }
@@ -49,8 +54,8 @@ void savePairings(const Pairings &value) {
     @autoreleasepool {
         NSMutableArray *phones = [NSMutableArray array];
         for (const auto &p : value.phones)
-            [phones addObject:@{@"id": @(p.id.c_str()), @"name": @(p.name.c_str()), @"key": @(hexString(p.key.data(), p.key.size()).c_str())}];
-        NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"macId": @(value.macId.c_str()), @"phones": phones} options:0 error:nil];
+            [phones addObject:@{@"id": text(p.id), @"name": text(p.name), @"key": text(hexString(p.key.data(), p.key.size()))}];
+        NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"macId": text(value.macId), @"phones": phones} options:0 error:nil];
         NSString *path = storePath(), *folder = [path stringByDeletingLastPathComponent];
         [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:nil];
         if (!data || ![data writeToFile:path options:NSDataWritingAtomic error:nil]) throw std::runtime_error("Could not save Wi-Fi pairings");
@@ -83,7 +88,7 @@ std::vector<std::string> localAddresses() {
 
 void Server::announce() {
     if (!port) return;
-    std::string id = loadPairings().macId;
+    std::string id = computerId();
     bool open = pairingOpen();
     TXTRecordRef txt; TXTRecordCreate(&txt, 0, nullptr);
     TXTRecordSetValue(&txt, "v", 1, "1");

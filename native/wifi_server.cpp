@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <thread>
 
 namespace phonecam::wifi {
 namespace {
@@ -58,6 +59,12 @@ public:
         }
     }
 };
+// One pairings file per OS user, shared by every PhoneCam source in OBS: reads and writes never overlap.
+std::mutex storeLock;
+Pairings readPairings() { std::lock_guard<std::mutex> guard(storeLock); return loadPairings(); }
+void pauseFor(std::atomic<bool> &stop, int milliseconds) {
+    for (int waited = 0; waited < milliseconds && !stop; waited += 20) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+}
 // Percent-encodes everything except ASCII letters and digits (the phone URL-decodes the name).
 std::string percentEncode(const std::string &text) {
     static const char *digits = "0123456789ABCDEF";
@@ -70,7 +77,16 @@ std::string percentEncode(const std::string &text) {
 }
 }
 
+bool localPeer(uint32_t a) {
+    return (a >> 24) == 10 || (a & 0xFFF00000u) == 0xAC100000u || (a >> 16) == 0xC0A8 ||  // 10/8, 172.16/12, 192.168/16
+           (a >> 16) == 0xA9FE || (a >> 24) == 127;                                     // link-local, loopback
+}
+
+std::string Server::computerId() { std::lock_guard<std::mutex> guard(lock); return pairings.macId; }
+
 PairingWindow Server::openPairing() {
+    for (int i = 0; i < 100 && !ready; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    if (!ready) throw std::runtime_error("Direct Wi-Fi is not ready. Hide and show this source, then try again.");
     std::string code;
     {
         std::lock_guard<std::mutex> guard(lock);
@@ -78,67 +94,128 @@ PairingWindow Server::openPairing() {
         expires = std::chrono::steady_clock::now() + pairingLifetime;
         code = encodeCode(secret);
     }
-    announce();
+    announceNeeded = true;
+    // The server thread opens the listener as soon as a window is open (it stays closed with nothing paired).
+    for (int i = 0; i < 150 && !port; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    if (!port) { closePairing(); throw std::runtime_error("Direct Wi-Fi could not open a network port."); }
     std::string addresses;
     for (const auto &a : localAddresses()) addresses += (addresses.empty() ? "" : ",") + a;
-    std::string link = "phonecam://pair?v=1&id=" + loadPairings().macId + "&c=" + code + "&p=" + std::to_string(port) +
+    std::string link = "phonecam://pair?v=1&id=" + computerId() + "&c=" + code + "&p=" + std::to_string(port) +
                        "&a=" + addresses + "&n=" + percentEncode(macName());
     return {formatCode(code), link};
 }
 void Server::closePairing() {
     { std::lock_guard<std::mutex> guard(lock); secret.clear(); }
-    announce();
+    announceNeeded = true;
 }
 bool Server::pairingOpen() {
     std::lock_guard<std::mutex> guard(lock);
     return !secret.empty() && std::chrono::steady_clock::now() < expires;
 }
 std::string Server::summary() {
-    auto pairings = loadPairings();
-    auto addresses = localAddresses();
-    std::string text = !port ? "Wi-Fi: not available" : "Wi-Fi: ready" + (addresses.empty() ? std::string() : " on " + addresses[0]);
-    text += pairings.phones.empty() ? " · No paired phones yet" : " · Paired: ";
-    for (size_t i = 0; i < pairings.phones.size(); ++i) text += (i ? ", " : "") + pairings.phones[i].name;
+    std::vector<std::string> names;
+    { std::lock_guard<std::mutex> guard(lock); for (const auto &p : pairings.phones) names.push_back(p.name); }
+    if (!ready) return "Wi-Fi: not available";
+    std::string text;
+    if (port) {
+        auto addresses = localAddresses();
+        text = "Wi-Fi: ready" + (addresses.empty() ? std::string() : " on " + addresses[0]);
+    } else text = "Wi-Fi: listens only while pairing or once a phone is paired";
+    text += names.empty() ? " · No paired phones yet" : " · Paired: ";
+    for (size_t i = 0; i < names.size(); ++i) text += (i ? ", " : "") + names[i];
     return text;
 }
-void Server::forgetAll() {
-    auto pairings = loadPairings();
-    pairings.phones.clear();
-    savePairings(pairings);
+Pairings Server::forgetAll() {
+    std::lock_guard<std::mutex> guard(storeLock);
+    Pairings value;
+    try { value = loadPairings(); }
+    catch (const std::exception &) {  // unreadable file: forgetting is the way to start over
+        Bytes id = randomBytes(8);
+        value.macId = hexString(id.data(), id.size());
+    }
+    value.phones.clear();
+    savePairings(value);
+    return value;
+}
+void Server::forget() {
+    Pairings value = forgetAll();
+    std::lock_guard<std::mutex> guard(lock);
+    pairings = value;
 }
 
 void Server::run(std::atomic<bool> &stop) {
+    try { loop(stop); }
+    catch (const std::exception &error) { status(std::string("Direct Wi-Fi stopped: ") + error.what()); }
+    catch (...) { status("Direct Wi-Fi stopped after an unexpected error."); }
+    try { withdraw(); } catch (...) {}
+    ready = false;
+}
+
+void Server::loop(std::atomic<bool> &stop) {
     net::startup();
-    net::Fd listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listener == net::invalid) { status("Direct Wi-Fi unavailable: cannot open a network socket."); return; }
-    net::prepareListener(listener);
-    sockaddr_in address{}; address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_ANY);
-    address.sin_port = htons(preferredPort);
-    if (bind(listener, reinterpret_cast<sockaddr *>(&address), net::Length(sizeof(address)))) {
-        address.sin_port = 0;  // another PhoneCam source or app has 47183; Bonjour tells the phone the real port
-        if (bind(listener, reinterpret_cast<sockaddr *>(&address), net::Length(sizeof(address)))) { net::closeFd(listener); status("Direct Wi-Fi unavailable: no free port."); return; }
+    Pairings loaded;
+    try { loaded = readPairings(); }
+    catch (const std::exception &error) {
+        status(std::string("Direct Wi-Fi is off: ") + error.what() + " Click Forget paired phones to start over.");
+        return;
     }
-    net::Length length = net::Length(sizeof(address));
-    getsockname(listener, reinterpret_cast<sockaddr *>(&address), &length);
-    listen(listener, 4);
-    port = ntohs(address.sin_port);
-    announce();
+    { std::lock_guard<std::mutex> guard(lock); pairings = std::move(loaded); }
+    ready = true;
+    net::Fd listener = net::invalid;
+    auto closeListener = [&] {
+        if (listener == net::invalid) return;
+        withdraw();
+        net::closeFd(listener); listener = net::invalid; port = 0;
+    };
+    bool portProblem = false;
     while (!stop) {
-        bool expired;
-        { std::lock_guard<std::mutex> guard(lock); expired = !secret.empty() && std::chrono::steady_clock::now() >= expires; }
-        if (expired) { closePairing(); status("Pairing window closed. Click Pair a phone over Wi-Fi to try again."); }
+        bool expired, wanted;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            expired = !secret.empty() && std::chrono::steady_clock::now() >= expires;
+            if (expired) secret.clear();
+            wanted = !pairings.phones.empty() || !secret.empty();
+        }
+        if (expired) { announceNeeded = true; status("Pairing window closed. Click Pair a phone over Wi-Fi to try again."); }
+        // Nothing paired and no window open: no listening port at all (audit/FINDINGS.md AUDIT-006).
+        if (!wanted) { closeListener(); pauseFor(stop, 200); continue; }
+        if (listener == net::invalid) {
+            listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (listener == net::invalid) {
+                if (!portProblem) status("Direct Wi-Fi unavailable: cannot open a network socket.");
+                portProblem = true; pauseFor(stop, 1000); continue;
+            }
+            net::prepareListener(listener);
+            sockaddr_in address{}; address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_ANY);
+            address.sin_port = htons(preferredPort);
+            if (bind(listener, reinterpret_cast<sockaddr *>(&address), net::Length(sizeof(address)))) {
+                address.sin_port = 0;  // another PhoneCam source or app has 47183; Bonjour tells the phone the real port
+                if (bind(listener, reinterpret_cast<sockaddr *>(&address), net::Length(sizeof(address)))) {
+                    net::closeFd(listener); listener = net::invalid;
+                    if (!portProblem) status("Direct Wi-Fi unavailable: no free port.");
+                    portProblem = true; pauseFor(stop, 1000); continue;
+                }
+            }
+            net::Length length = net::Length(sizeof(address));
+            getsockname(listener, reinterpret_cast<sockaddr *>(&address), &length);
+            listen(listener, 4);
+            portProblem = false;
+            port = ntohs(address.sin_port);
+            announceNeeded = true;
+        }
+        if (announceNeeded.exchange(false)) announce();
         if (net::pollRead(listener, 200) <= 0) continue;
-        net::Fd fd = accept(listener, nullptr, nullptr);
+        sockaddr_in peer{}; net::Length peerLength = net::Length(sizeof(peer));
+        net::Fd fd = accept(listener, reinterpret_cast<sockaddr *>(&peer), &peerLength);
         if (fd == net::invalid) continue;
+        if (peer.sin_family != AF_INET || !localPeer(ntohl(peer.sin_addr.s_addr))) { net::closeFd(fd); continue; }
         net::prepareConnection(fd);
         try { handle(std::uintptr_t(fd), stop); }
         catch (const NotStreaming &) {}
         catch (const std::exception &error) { if (!stop) status(std::string("Wi-Fi live ended: ") + error.what() + ". Tap Start live on the phone to go live again."); }
         net::closeFd(fd);
     }
-    withdraw();
-    port = 0;
-    net::closeFd(listener);
+    closeListener();
 }
 
 void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
@@ -147,17 +224,22 @@ void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
     readAll(fd, hello.data(), hello.size(), stop, 5);
     if (std::memcmp(hello.data(), "PCW1", 4) || (hello[4] != 1 && hello[4] != 2)) return;  // not a PhoneCam phone
     bool pairing = hello[4] == 2;
-    auto pairings = loadPairings();
     std::string macId = hexString(hello.data() + 5, 8), phoneId = hexString(hello.data() + 13, 8);
     auto refuse = [&](uint8_t code) { writeAll(fd, Bytes{'P', 'C', 'W', '1', code}); };
-    if (macId != pairings.macId) { refuse(1); return; }
+    if (macId != computerId()) { refuse(1); return; }
     Bytes key;
     if (pairing) {
         std::lock_guard<std::mutex> guard(lock);
         if (secret.empty() || std::chrono::steady_clock::now() >= expires) { refuse(2); return; }
         key = codeKey(secret);
     } else {
-        for (const auto &p : pairings.phones) if (p.id == phoneId) key = p.key;
+        auto find = [&] { std::lock_guard<std::mutex> guard(lock); for (const auto &p : pairings.phones) if (p.id == phoneId) key = p.key; };
+        find();
+        if (key.empty()) {  // perhaps paired through another PhoneCam source since this one started
+            try { Pairings fresh = readPairings(); std::lock_guard<std::mutex> guard(lock); if (fresh.macId == pairings.macId) pairings = std::move(fresh); }
+            catch (const std::exception &) {}
+            find();
+        }
         if (key.empty()) { refuse(1); return; }
     }
     Ephemeral session;
@@ -170,11 +252,13 @@ void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
     writeAll(fd, join(prefix, shake.tagM));
     Bytes finish(tagBytes + 1);
     auto failed = [&](const char *message) {
+        bool lockedOut = false;
         if (pairing) {
             std::lock_guard<std::mutex> guard(lock);
-            if (++failures >= maxPairingFailures) secret.clear();  // closes the window against repeated guessing
+            if (++failures >= maxPairingFailures && !secret.empty()) { secret.clear(); lockedOut = true; }  // against repeated guessing
         }
         status(message);
+        if (lockedOut) { announceNeeded = true; status("Pairing window closed after too many failed attempts. Click Pair a phone over Wi-Fi to try again."); }
     };
     // The phone checks tagM first and hangs up if the code (or long-term key) does not match.
     try { readAll(fd, finish.data(), finish.size(), stop, pairing ? 30 : 5); }
@@ -190,20 +274,27 @@ void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
         failed(pairing ? "A phone tried to pair with the wrong code. Check the code and try again." : "A phone failed the Wi-Fi security check. Pair it again.");
         return;
     }
-    writeAll(fd, Bytes{0});
     SessionKeys keys = shake.keys();
     if (pairing) {
+        // Saved before the phone is told it is paired: if saving fails, neither side keeps a half pairing.
         std::string phoneName = cleanName(std::string(name.begin(), name.end()));
-        auto updated = loadPairings();
-        std::vector<PairedPhone> kept;
-        for (auto &p : updated.phones) if (p.id != phoneId) kept.push_back(p);
-        kept.push_back({phoneId, phoneName, keys.longTerm});
-        updated.phones = kept;
-        savePairings(updated);
+        Pairings updated;
+        {
+            std::lock_guard<std::mutex> guard(storeLock);
+            try { updated = loadPairings(); } catch (const std::exception &) { std::lock_guard<std::mutex> inner(lock); updated = pairings; }
+            std::vector<PairedPhone> kept;
+            for (auto &p : updated.phones) if (p.id != phoneId) kept.push_back(p);
+            kept.push_back({phoneId, phoneName, keys.longTerm});
+            updated.phones = kept;
+            savePairings(updated);
+        }
+        { std::lock_guard<std::mutex> guard(lock); pairings = updated; }
+        writeAll(fd, Bytes{0});
         closePairing();
         status("Paired with " + phoneName + " over Wi-Fi. Tap Start live on the phone.");
         return;
     }
+    writeAll(fd, Bytes{0});
     RecordReader reader(fd, keys, stop);
     bool announced = false;
     decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { reader.read(p, n, seconds); },
