@@ -1,11 +1,13 @@
 #include "wifi_crypto.hpp"
+#include "wifi_store.hpp"
 #include <cassert>
 #include <cstdio>
 // Expected values come from an independent Python + openssl computation (see docs/WIFI.md); the phone's
 // Kotlin tests check the same numbers, so both ends provably agree.
 using namespace phonecam::wifi;
 static Bytes hex(const char *text) {
-    Bytes out; for (size_t i = 0; text[i] && text[i + 1]; i += 2) { unsigned v; sscanf(text + i, "%2x", &v); out.push_back(uint8_t(v)); }
+    auto digit = [](char c) { return c <= '9' ? c - '0' : c - 'a' + 10; };
+    Bytes out; for (size_t i = 0; text[i] && text[i + 1]; i += 2) out.push_back(uint8_t(digit(text[i]) << 4 | digit(text[i + 1])));
     return out;
 }
 int main() {
@@ -45,5 +47,20 @@ int main() {
     rejected = false;
     try { b.shared(notOnCurve); } catch (const std::runtime_error &) { rejected = true; }
     assert(rejected);
-    puts("PASS: Wi-Fi pairing codes, handshake tags, keys, records (shared vectors) and P-256 ECDH");
+    // Pairings file (Windows reads and writes it with wifi_store.hpp; the Mac with Foundation).
+    Pairings stored{"0123456789abcdef", {{"fedcba9876543210", "Vivo \"V2437\" \\ \x01 \xc3\xa9", Bytes(32, 7)}}};
+    Pairings loaded;
+    assert(readStore(writeStore(stored), loaded) && loaded.macId == stored.macId && loaded.phones.size() == 1);
+    assert(loaded.phones[0].id == "fedcba9876543210" && loaded.phones[0].key == Bytes(32, 7));
+    assert(loaded.phones[0].name == "Vivo \"V2437\" \\  \xc3\xa9");                // control character dropped by cleanName
+    // Foundation-style text: escaped slashes, \u escapes (including a surrogate pair), spacing, extra fields,
+    // and entries that are not well formed (skipped).
+    const std::string mac = "{ \"phones\" : [ {\"id\":\"1111111111111111\",\"name\":\"A\\/B \\u00e9\\ud83d\\ude00\",\"key\":\""
+                            + std::string(64, 'a') + "\",\"extra\":[1,true,null,{\"x\":-2.5e3}]},"
+                            "{\"id\":\"short\",\"name\":\"x\",\"key\":\"00\"}, 7], \"macId\" : \"aaaaaaaaaaaaaaaa\" }";
+    assert(readStore(mac, loaded) && loaded.macId == "aaaaaaaaaaaaaaaa" && loaded.phones.size() == 1);
+    assert(loaded.phones[0].name == "A/B \xc3\xa9\xf0\x9f\x98\x80" && loaded.phones[0].key == Bytes(32, 0xaa));
+    assert(!readStore("{\"macId\":", loaded) && !readStore("[]", loaded) && !readStore("{} x", loaded) && !readStore("{\"a\":\"\\ud800\"}", loaded));
+    assert(readStore("{}", loaded) && loaded.macId.empty() && loaded.phones.empty());
+    puts("PASS: Wi-Fi pairing codes, handshake tags, keys, records (shared vectors), P-256 ECDH and the pairings file");
 }

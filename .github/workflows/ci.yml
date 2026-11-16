@@ -52,11 +52,24 @@ jobs:
             native/build/*.zip
             native/build/*.tar.gz
           key: windows-downloads-obs-33.0.1-v1
+      # Java and the Android SDK run the phone's Kotlin Wi-Fi client against the Windows Wi-Fi server.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools'
+      - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - run: python tools/build_windows.py
+        env:
+          PHONECAM_WINDOWS_INTEROP: '1'
       - uses: actions/upload-artifact@v4
         with:
           name: phonecam-obs-windows-test
           path: |
             native/build/windows/phonecam-obs.dll
             native/build/windows/vc-runtime/*.dll
+            native/build/windows/pairing-card.bmp
             docs/WINDOWS_TEST.md

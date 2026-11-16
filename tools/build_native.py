@@ -81,13 +81,13 @@ def main():
     shutil.copyfile(ROOT / "NOTICE", bundle / "Contents/Resources/NOTICE.txt")
     shutil.copyfile(BUILD / "simde/COPYING", bundle / "Contents/Resources/COPYING-SIMDe.txt")
     run(common + headers + ["-bundle", ROOT / "native/plugin.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", ROOT / "native/adb_session.cpp",
-                                    ROOT / "native/wifi.mm", ROOT / "native/pairing_card.mm", "-o", executable] + apple + libobs)
+                                    ROOT / "native/wifi.mm", ROOT / "native/wifi_server.cpp", ROOT / "native/pairing_card.mm", "-o", executable] + apple + libobs)
     info = {"CFBundleExecutable": "phonecam-usb", "CFBundleIdentifier": "dev.phonecam.obs.usb",
             "CFBundleName": "phonecam-usb", "CFBundlePackageType": "BNDL", "CFBundleShortVersionString": PLUGIN_VERSION,
             "CFBundleVersion": "3", "LSMinimumSystemVersion": "13.0"}
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
     run(["codesign", "--force", "--sign", "-", bundle])
-    run(common + [ROOT / "native/receiver_cli.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", ROOT / "native/adb_session.cpp", ROOT / "native/wifi.mm",
+    run(common + [ROOT / "native/receiver_cli.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", ROOT / "native/adb_session.cpp", ROOT / "native/wifi.mm", ROOT / "native/wifi_server.cpp",
                   ROOT / "native/pairing_card.mm", "-o", BUILD / "phonecam-receive"] + apple)
     run(common + headers + [ROOT / "native/smoke.mm", "-o", BUILD / "obs-smoke"] + libobs)
     run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",

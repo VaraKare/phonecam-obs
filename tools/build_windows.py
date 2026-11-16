@@ -26,6 +26,11 @@ OBS_ZIP = ("OBS-Studio-33.0.1-Windows-x64.zip",
 OBS_DEPS = ("windows-deps-2026-10-23-x64.zip",  # pinned by OBS 33.0.1 (CMakePresets.json)
             "https://github.com/obsproject/obs-deps/releases/download/2026-10-23/windows-deps-2026-10-23-x64.zip",
             "7508972a867a0ef68c26cd8bdba61fd999edd0a92fa9eb9585774de9bf51bfbe")
+# Project Nayuki's QR Code generator (MIT) for the Wi-Fi pairing card; the Mac uses Core Image instead.
+QRCODEGEN = [("qrcodegen.hpp", "https://raw.githubusercontent.com/nayuki/QR-Code-generator/v1.8.0/cpp/qrcodegen.hpp",
+              "b779c3b156cf7a57ce789d6fee4fc991ccc2913774d26c909d22bb8f26b2a793"),
+             ("qrcodegen.cpp", "https://raw.githubusercontent.com/nayuki/QR-Code-generator/v1.8.0/cpp/qrcodegen.cpp",
+              "1f3b3fcdac6954c32cf583ccd02ec9b5901f756a38c461acedc70be4a77d3757")]
 OUT = BUILD / "windows"
 FIXTURES = ROOT / "native/tests/fixtures"
 
@@ -44,6 +49,63 @@ def fetch(name, url, expected):
         archive.unlink()
         raise RuntimeError(f"Dependency checksum mismatch: {name}")
     return archive
+
+
+def qrcodegen():
+    """Pinned QR library sources in native/build/qrcodegen (not vendored in Git)."""
+    folder = BUILD / "qrcodegen"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, url, expected in QRCODEGEN:
+        archive = fetch(f"qrcodegen-v1.8.0-{name}", url, expected)
+        shutil.copyfile(archive, folder / name)
+    return folder
+
+
+def wifi_checks(runtime, receiver):
+    """The pairing card draws, and the phone's Kotlin client pairs with and streams to the Windows server."""
+    import struct
+    card = OUT / "pairing-card.bmp"
+    run([receiver, "--card", card], dict(os.environ), cwd=runtime)
+    data = card.read_bytes()
+    assert data[:2] == b"BM" and len(data) == 54 + 1280 * 720 * 4, len(data)
+    def pixel(x, y):
+        offset = 54 + (y * 1280 + x) * 4
+        return tuple(data[offset:offset + 3])  # B, G, R
+    assert pixel(5, 5) == (41, 23, 15), pixel(5, 5)                  # card background
+    assert pixel(100 + 10, 100 + 10) == (255, 255, 255), pixel(110, 110)  # QR quiet zone (margin 100 px at 720p)
+    dark = sum(1 for y in range(140, 560, 4) for x in range(140, 560, 4) if pixel(x, y) == (0, 0, 0))
+    assert dark > 1000, dark                                          # QR modules drawn
+    text = sum(1 for y in range(110, 160) for x in range(720, 1100) if pixel(x, y)[0] > 200)
+    assert text > 500, text                                           # title text drawn
+    print("PASS: Windows Wi-Fi pairing card (QR code and text)", flush=True)
+
+    if os.environ.get("PHONECAM_WINDOWS_INTEROP") != "1":
+        print("SKIP: Kotlin phone client against the Windows Wi-Fi server (set PHONECAM_WINDOWS_INTEROP=1; CI does)", flush=True)
+        return
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        env = dict(os.environ, PHONECAM_WIFI_STORE=str(Path(directory) / "wifi.json"))
+        server = subprocess.Popen([str(receiver), "--wifi", "12"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=runtime)
+        try:
+            line = server.stdout.readline().split()
+            assert line and line[0] == "PAIR", line
+            env["PHONECAM_WIFI_PEER"] = f"127.0.0.1 {line[1]} {line[2]} {line[3]}"
+            env["PHONECAM_WIFI_PACKETS"] = str(FIXTURES / "avc-640x360.pcam")
+            gradle = subprocess.run([str(ROOT / "gradlew.bat"), "--no-daemon", "-q", "testDebugUnitTest", "--tests", "*WifiInteropTest*", "--rerun"],
+                                    cwd=ROOT, env=env, capture_output=True, text=True, timeout=1200)
+            assert gradle.returncode == 0, gradle.stdout[-3000:] + gradle.stderr[-3000:]
+            report = (ROOT / "app/build/test-results/testDebugUnitTest/TEST-dev.phonecam.obs.WifiInteropTest.xml").read_text()
+            assert 'skipped="0"' in report, report[:2000]
+            out, err = server.communicate(timeout=60)
+        finally:
+            if server.poll() is None: server.kill()
+        print(err, flush=True)
+        assert server.returncode == 0, err
+        value = json.loads(out.strip().splitlines()[-1])
+        assert value["decodedFrames"] == 12 and (value["lastWidth"], value["lastHeight"]) == (640, 360), value
+        assert "wrong code" in err and "Paired with Test phone" in err and "Live over direct Wi-Fi" in err, err
+        assert json.loads((Path(directory) / "wifi.json").read_text())["phones"][0]["name"] == "Test phone"
+    print("PASS: Windows direct Wi-Fi with the phone's Kotlin client: wrong code refused, pairing, encrypted video", flush=True)
 
 
 def msvc_environment():
@@ -194,12 +256,19 @@ def main():
     run([OUT / "adb-test.exe"], env)
     run(strict + ["/I", ROOT / "native", ROOT / "native/rotate_test.cpp", f"/Fe:{OUT / 'rotate-test.exe'}", f"/Fo:{OUT}\\"], env)
     run([OUT / "rotate-test.exe"], env)
+    # Wi-Fi crypto with Windows CNG against the vectors the Mac and the phone use.
+    run(strict + ["/I", ROOT / "native", ROOT / "native/wifi_test.cpp", f"/Fe:{OUT / 'wifi-test.exe'}", f"/Fo:{OUT}\\", "/link", "bcrypt.lib"], env)
+    run([OUT / "wifi-test.exe"], env)
+    qr = qrcodegen()
+    qr_object = OUT / "qrcodegen.obj"  # third-party code: built without the project's warnings-as-errors
+    run(["cl", "/nologo", "/std:c++17", "/EHsc", "/O2", "/W1", "/c", qr / "qrcodegen.cpp", f"/Fo:{qr_object}"], env)
     ffmpeg_include, ffmpeg_libs = ffmpeg_sdk()
     runtime = obs_runtime(env)
     obs_headers = ["/external:I", sdk, "/external:I", BUILD / "simde"]
-    shared = [ROOT / "native/windows/receiver_win.cpp", ROOT / "native/windows/adb_win.cpp", ROOT / "native/adb_session.cpp"]
-    includes = ["/I", ROOT / "native", "/external:I", ffmpeg_include]
-    system = ["ws2_32.lib", "iphlpapi.lib"] + ffmpeg_libs
+    shared = [ROOT / "native/windows/receiver_win.cpp", ROOT / "native/windows/adb_win.cpp", ROOT / "native/adb_session.cpp",
+              ROOT / "native/wifi_server.cpp", ROOT / "native/windows/wifi_win.cpp", ROOT / "native/windows/pairing_card_win.cpp", qr_object]
+    includes = ["/I", ROOT / "native", "/external:I", ffmpeg_include, "/external:I", qr]
+    system = ["ws2_32.lib", "iphlpapi.lib", "bcrypt.lib", "dnsapi.lib", "gdi32.lib", "user32.lib"] + ffmpeg_libs
     plugin = OUT / "phonecam-obs.dll"
     run(strict + ["/O2", "/LD"] + includes + obs_headers + [ROOT / "native/windows/plugin_win.cpp"] + shared +
         [f"/Fe:{plugin}", f"/Fo:{OUT}\\", "/link", OUT / "obs.lib"] + system, env)
@@ -208,6 +277,7 @@ def main():
     fake_adb = OUT / "fake-adb.exe"
     run(strict + [ROOT / "native/windows/fake_adb.cpp", f"/Fe:{fake_adb}", f"/Fo:{OUT}\\", "/link", "ws2_32.lib"], env)
     native_tests(runtime, receiver, fake_adb)
+    wifi_checks(runtime, receiver)
     smoke = runtime / "phonecam-smoke.exe"  # next to obs.dll so its dependencies load
     run(strict + obs_headers + [ROOT / "native/windows/smoke_win.cpp", f"/Fe:{smoke}", f"/Fo:{OUT}\\", "/link", OUT / "obs.lib"], env)
     run([smoke, plugin], env, cwd=runtime)

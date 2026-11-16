@@ -1,24 +1,27 @@
 #pragma once
-// Direct Wi-Fi: the Mac listens, announces itself with Bonjour, pairs phones by QR or typed code and
-// receives encrypted PCAM v3 video from paired phones. Protocol: docs/WIFI.md.
+// Direct Wi-Fi: the computer listens, announces itself with Bonjour/mDNS, pairs phones by QR or typed code
+// and receives encrypted PCAM v3 video from paired phones. Protocol: docs/WIFI.md.
+// wifi_server.cpp is shared; wifi.mm (macOS) and windows/wifi_win.cpp provide storage, the computer's
+// name and addresses, the network announcement and the pairing card.
 #include "receiver.hpp"
 #include "wifi_crypto.hpp"
+#include "wifi_store.hpp"
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
 
 namespace phonecam::wifi {
-struct PairedPhone { std::string id, name; Bytes key; };
-struct Pairings { std::string macId; std::vector<PairedPhone> phones; };
-// ~/Library/Application Support/phonecam-obs/wifi.json, mode 600; a new Mac id is created on first use.
+// macOS: ~/Library/Application Support/phonecam-obs/wifi.json, mode 600. Windows: %APPDATA%\phonecam-obs\wifi.json.
+// PHONECAM_WIFI_STORE overrides the path (tests). A new computer id is created on first use.
 Pairings loadPairings();
 void savePairings(const Pairings &value);
 
 struct PairingWindow { std::string code, link; };
-std::string macName();
+std::string macName();                      // this computer's name, shown on the phone
 std::vector<std::string> localAddresses();  // up, non-loopback, non-link-local IPv4, at most 4
 // The pairing card shown in the OBS source: QR code, typed code and steps, as a BGRA image.
 std::vector<uint8_t> renderPairingCard(const PairingWindow &window, uint32_t width, uint32_t height);
@@ -45,8 +48,9 @@ private:
     std::chrono::steady_clock::time_point expires;
     int failures = 0;
     std::atomic<int> port{0};
-    void *bonjour = nullptr;                       // DNSServiceRef
-    void announce();
-    void handle(int fd, std::atomic<bool> &stop);
+    void *bonjour = nullptr;                       // platform announcement handle
+    void announce();                               // (re)announces with the current pairing state
+    void withdraw();                               // stops announcing
+    void handle(std::uintptr_t fd, std::atomic<bool> &stop);
 };
 }
