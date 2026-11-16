@@ -240,6 +240,80 @@ def native_tests(runtime, receiver, fake_adb):
             probe.settimeout(5)
             assert probe.connect_ex(("127.0.0.1", adb_port)) != 0, "adb server outlived the receiver"
     print("PASS: Windows automatic adb server start, pairing, forward, retry and receive", flush=True)
+    replug_checks(runtime, receiver, fake_adb)
+
+
+def messages(data):
+    """Splits a recorded stream into its protocol messages (32-byte header, length at offset 8)."""
+    out, position = [], 0
+    while position < len(data):
+        length = int.from_bytes(data[position + 8:position + 12], "big")
+        out.append(data[position:position + 32 + length]); position += 32 + length
+    return out
+
+
+def replug_checks(runtime, receiver, fake_adb):
+    """The 16 Nov 2026 laptop failure: unplugging during live dropped the link and left adb's server
+    accepting connections but answering nothing, and the plugin never recovered. Here another program's
+    adb.exe server (like the test kit's) stops answering "devices" and ignores kill-server: the receiver
+    must end that server, start its own, find the phone again with a new link and receive the next session."""
+    import socket
+    import threading
+    import time
+
+    token = "d" * 64
+    parts = messages((FIXTURES / "hevc-320x240.pcam").read_bytes())
+    folder = OUT / "replug"
+    shutil.rmtree(folder, ignore_errors=True); folder.mkdir()
+    adb = folder / "adb.exe"  # the stuck server is ended only if it is an adb.exe
+    shutil.copy(fake_adb, adb)
+    log, hang = folder / "adb.log", folder / "hang"
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0)); server.listen(4); server.settimeout(60)
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0)); adb_port = probe.getsockname()[1]
+        env = dict(os.environ, FAKE_ADB_LOG=str(log), FAKE_ADB_TOKEN=token, FAKE_ADB_PORT=str(server.getsockname()[1]),
+                   FAKE_ADB_HANG=str(hang), ANDROID_ADB_SERVER_PORT=str(adb_port))
+        other = subprocess.Popen([str(adb), "-L", f"tcp:{adb_port}", "server", "nodaemon"], env=env)
+        sessions = []
+
+        def phone():
+            for number in range(2):
+                with server.accept()[0] as client:
+                    auth = b""
+                    while len(auth) < 65:
+                        value = client.recv(65 - len(auth))
+                        if not value: break
+                        auth += value
+                    sessions.append(auth)
+                    if number == 0:
+                        client.sendall(b"".join(parts[:6]))  # configuration and 5 frames, then the cable goes
+                        hang.write_text("")
+                    else:
+                        client.sendall(b"".join(parts))
+                        try: client.recv(1)
+                        except OSError: pass
+        try:
+            for _ in range(50):
+                with socket.socket() as probe:
+                    if probe.connect_ex(("127.0.0.1", adb_port)) == 0: break
+                time.sleep(0.1)
+            worker = threading.Thread(target=phone, daemon=True); worker.start()
+            result = subprocess.run([str(receiver), "--auto", "14", str(adb)], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                    cwd=runtime, env=env, timeout=120)
+            worker.join(10)
+            if result.returncode: raise RuntimeError(f"replug: {result.stderr}{result.stdout}")
+            assert sessions == [(token + "\n").encode()] * 2, sessions
+            assert "Live ended" in result.stderr, result.stderr
+            assert "adb stopped answering. Restarting it…" in result.stderr, result.stderr
+            calls = log.read_text().splitlines()
+            assert "kill-server" in calls, calls
+            assert other.poll() is not None, "the stuck adb server was not ended"
+            assert calls.count(f"-L tcp:{adb_port} server nodaemon") == 2, calls  # the other one, then ours
+            assert calls.count("-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1") == 2, calls
+        finally:
+            if other.poll() is None: other.kill()
+    print("PASS: Windows replug: stuck adb server ended and replaced, phone found again, next session received", flush=True)
 
 
 def main():

@@ -130,6 +130,59 @@ esac
             self.assertIn("-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1", calls)
             self.assertIn(f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}", calls)
 
+    def test_replug_and_stuck_adb(self):
+        """Unplugging during live (16 Nov 2026 Windows test): the link drops mid-stream and adb stops answering.
+        The receiver must restart adb after two unanswered calls, find the phone again, create a new link and
+        receive from the next session."""
+        token = "c" * 64
+        packets = self.encoded_packets(True, width=640, height=360)
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as server:
+            server.bind(("127.0.0.1", 0)); server.listen(4); server.settimeout(40)
+            log = Path(directory) / "adb.log"
+            hang = Path(directory) / "hang"
+            fake = Path(directory) / "adb"
+            # While the hang file exists, "devices" never answers (killed by the 5 s limit).
+            fake.write_text(f"""#!/bin/sh
+echo "$@" >> '{log}'
+case "$*" in
+  devices) if [ -e '{hang}' ]; then sleep 30; fi; printf 'List of devices attached\\nFAKE1\\tdevice\\n' ;;
+  kill-server) rm -f '{hang}' ;;
+  *"content query"*) printf 'Row: 0 token={token}\\n' ;;
+  *"forward tcp:0"*) printf '{server.getsockname()[1]}\\n' ;;
+esac
+""")
+            fake.chmod(0o755)
+            sessions = []
+
+            def phone():
+                for number in range(2):
+                    with server.accept()[0] as client:
+                        auth = b""
+                        while len(auth) < 65:
+                            value = client.recv(65 - len(auth))
+                            if not value: break
+                            auth += value
+                        sessions.append(auth)
+                        if number == 0:
+                            for data in packets[:6]: client.sendall(data)  # config and 5 frames, then the cable goes
+                            hang.write_text("")
+                        else:
+                            for data in packets: client.sendall(data)
+                            try: client.recv(1)
+                            except OSError: pass
+
+            worker = threading.Thread(target=phone, daemon=True); worker.start()
+            result = subprocess.run([str(RECEIVER), "--auto", "14", str(fake)], capture_output=True, text=True, timeout=90)
+            worker.join(10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(sessions, [(token + "\n").encode()] * 2)
+            self.assertIn("Live ended", result.stderr)
+            self.assertIn("adb stopped answering. Restarting it…", result.stderr)
+            calls = log.read_text().splitlines()
+            self.assertIn("kill-server", calls)
+            self.assertEqual(sum(call == "-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1" for call in calls), 2, calls)
+            self.assertIn(f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}", calls)
+
     def test_missing_adb_reports_guidance(self):
         process = subprocess.Popen([str(RECEIVER), "--auto", "1", "/nonexistent/adb"], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
         try:

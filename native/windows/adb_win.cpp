@@ -7,10 +7,15 @@
 #include <windows.h>
 #include <iphlpapi.h>
 #include "adb.hpp"
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
+#include <cwchar>
+#include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace phonecam {
 namespace {
@@ -163,7 +168,8 @@ std::string findAdb(const std::string &configured) {
     return {};
 }
 
-AdbResult runAdb(const std::string &adb, const std::vector<std::string> &args, int timeoutMs) {
+namespace {
+AdbResult runAdbProcess(const std::string &adb, const std::vector<std::string> &args, int timeoutMs) {
     AdbResult result;
     SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
     HANDLE readPipe = nullptr, writePipe = nullptr;
@@ -212,11 +218,78 @@ AdbResult runAdb(const std::string &adb, const std::vector<std::string> &args, i
         }
         if (std::chrono::steady_clock::now() > deadline) {
             TerminateProcess(process.hProcess, 1); WaitForSingleObject(process.hProcess, 1000);
-            result.status = -1; result.output = "ADB timed out";
+            result.status = -1; result.output = "ADB timed out"; result.timedOut = true;
             break;
         }
     }
     CloseHandle(process.hThread); CloseHandle(process.hProcess); CloseHandle(readPipe);
     return result;
+}
+std::atomic<int> abandonedCalls{0};
+}
+
+// A started adb is killed at timeoutMs (runAdbProcess). Starting it can hang as well (adb's own server start
+// hung under Avast), so the call runs on a helper thread, which is left behind if it does not return.
+AdbResult runAdb(const std::string &adb, const std::vector<std::string> &args, int timeoutMs) {
+    AdbResult failed; failed.timedOut = true;
+    if (abandonedCalls >= 4) { failed.output = "adb is not starting"; return failed; }
+    struct Call { std::mutex lock; std::condition_variable done; bool finished = false, abandoned = false; AdbResult result; };
+    auto call = std::make_shared<Call>();
+    std::thread helper([call, adb, args, timeoutMs] {
+        AdbResult result = runAdbProcess(adb, args, timeoutMs);
+        std::lock_guard<std::mutex> guard(call->lock);
+        call->result = std::move(result); call->finished = true;
+        if (call->abandoned) --abandonedCalls;
+        call->done.notify_all();
+    });
+    {
+        std::unique_lock<std::mutex> guard(call->lock);
+        if (!call->done.wait_for(guard, std::chrono::milliseconds(timeoutMs + 3000), [&] { return call->finished; })) {
+            call->abandoned = true; ++abandonedCalls;
+            guard.unlock();
+            keepLoaded(); helper.detach();
+            failed.output = "adb did not start"; return failed;
+        }
+    }
+    helper.join();
+    return call->result;
+}
+
+void keepLoaded() {
+    static const char anchor = 0;
+    HMODULE self = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, reinterpret_cast<LPCWSTR>(&anchor), &self);
+}
+
+namespace {
+// Ends the process listening on the adb port if it is an adb.exe (one that no longer answers kill-server).
+void endStuckServer(int port) {
+    ULONG size = 0;
+    if (GetExtendedTcpTable(nullptr, &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0) != ERROR_INSUFFICIENT_BUFFER) return;
+    std::vector<uint8_t> memory(size);
+    auto *table = reinterpret_cast<MIB_TCPTABLE_OWNER_PID *>(memory.data());
+    if (GetExtendedTcpTable(table, &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0) != NO_ERROR) return;
+    for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+        if (ntohs(u_short(table->table[i].dwLocalPort)) != port) continue;
+        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE, FALSE, table->table[i].dwOwningPid);
+        if (!process) continue;
+        wchar_t path[MAX_PATH * 2] = {}; DWORD length = DWORD(sizeof(path) / sizeof(path[0]));
+        if (QueryFullProcessImageNameW(process, 0, path, &length)) {
+            const wchar_t *file = wcsrchr(path, L'\\');
+            if (!_wcsicmp(file ? file + 1 : path, L"adb.exe")) { TerminateProcess(process, 1); WaitForSingleObject(process, 2000); }
+        }
+        CloseHandle(process);
+    }
+}
+}
+
+void restartAdb(const std::string &adb) {
+    std::lock_guard<std::mutex> guard(serverLock);
+    const int port = serverPort();
+    if (serverRunning()) { stopServer(); return; }  // ours: prepareAdb starts it again
+    if (!listening(port)) return;
+    if (!adb.empty()) runAdb(adb, {"kill-server"}, 3000);
+    for (int waited = 0; waited < 2000 && listening(port); waited += 100) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (listening(port)) endStuckServer(port);
 }
 }

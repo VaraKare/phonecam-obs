@@ -6,6 +6,8 @@
 #include "adb.hpp"
 #include "obs_common.hpp"
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -15,18 +17,41 @@ OBS_DECLARE_MODULE()
 MODULE_EXPORT const char *obs_module_description(void) { return "Android phone camera over USB or Wi-Fi (Windows test build)"; }
 
 namespace {
+struct Source;
+struct AdbPath { std::mutex lock; std::string path; };
+// Shared with the USB connection thread, so a thread stuck in a call that never returns can be left behind
+// without touching a deleted source: OBS never waits more than a few seconds for it.
+struct Link {
+    std::atomic<bool> stop{false};
+    phonecam::Activity activity;
+    std::timed_mutex lock;
+    Source *owner = nullptr;  // null once the source no longer waits for this thread
+    std::shared_ptr<AdbPath> adb;
+    std::mutex doneLock;
+    std::condition_variable doneSignal;
+    bool done = false;
+    int64_t reportedSince = -1;  // watchdog: the stuck step already reported
+};
+int64_t steadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 struct Source {
     obs_source_t *source;
-    std::atomic<bool> stop{false};
+    std::atomic<bool> stop{false};  // Wi-Fi server and frame output
+    std::mutex linkLock;  // the video thread's watchdog reads link while OBS may destroy the source
+    std::shared_ptr<Link> link;
     std::thread worker;
     std::mutex lock, sizeLock;
-    std::string adbPath, status = "Starting…";
+    std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
+    std::string status = "Starting…";
+    bool leaked = false;
     uint32_t shownWidth = 0, shownHeight = 0;
     std::unique_ptr<phonecam::wifi::Server> wifi;
     std::thread wifiWorker;
     std::atomic<bool> card{false};
     explicit Source(obs_source_t *value) : source(value) {}
-    std::string adbSetting() { std::lock_guard<std::mutex> guard(lock); return adbPath; }
+    std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
     void setStatus(const std::string &value) {
         { std::lock_guard<std::mutex> guard(lock); status = value; }
@@ -75,13 +100,30 @@ struct Source {
         return allowed;
     }
     void start() {
-        if (worker.joinable()) return;
+        if (current()) return;
         stop = false;
         { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
-        worker = std::thread([this] {
-            phonecam::autoReceive(stop, [this] { return adbSetting(); }, [this](const std::string &value) { setStatus(value); },
-                [this](phonecam::Image image, uint64_t, uint64_t) { showFrame(image); });
-            obs_source_output_video(source, nullptr);
+        auto shared = std::make_shared<Link>();
+        shared->owner = this; shared->adb = adb;
+        shared->activity.set(phonecam::Activity::Starting);
+        { std::lock_guard<std::mutex> guard(linkLock); link = shared; }
+        worker = std::thread([shared] {
+            phonecam::autoReceive(shared->stop,
+                [shared] { std::lock_guard<std::mutex> guard(shared->adb->lock); return shared->adb->path; },
+                [shared](const std::string &value) {
+                    std::lock_guard<std::timed_mutex> guard(shared->lock);
+                    if (shared->owner) shared->owner->setStatus(value);
+                },
+                [shared](phonecam::Image image, uint64_t, uint64_t) {
+                    std::lock_guard<std::timed_mutex> guard(shared->lock);
+                    if (shared->owner) shared->owner->showFrame(image);
+                }, &shared->activity);
+            {
+                std::lock_guard<std::timed_mutex> guard(shared->lock);
+                if (shared->owner) obs_source_output_video(shared->owner->source, nullptr);
+            }
+            std::lock_guard<std::mutex> guard(shared->doneLock);
+            shared->done = true; shared->doneSignal.notify_all();
         });
         if (wifiAllowed()) {
             wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
@@ -91,12 +133,45 @@ struct Source {
             wifiWorker = std::thread([this] { wifi->run(stop); });
         }
     }
+    // Called by OBS while it draws (show/hide), so it waits at most a few seconds for the USB thread.
     void end() {
         stop = true;
-        if (worker.joinable()) worker.join();
+        std::shared_ptr<Link> shared;
+        { std::lock_guard<std::mutex> guard(linkLock); shared = std::move(link); }
+        if (shared) {
+            shared->stop = true;
+            bool finished;
+            {
+                std::unique_lock<std::mutex> guard(shared->doneLock);
+                finished = shared->doneSignal.wait_for(guard, std::chrono::seconds(6), [&] { return shared->done; });
+            }
+            // A callback still inside OBS after 2 s: keep this source's memory (destroy skips it) rather than
+            // free it under that callback.
+            if (shared->lock.try_lock_for(std::chrono::seconds(2))) { shared->owner = nullptr; shared->lock.unlock(); }
+            else leaked = true;
+            if (finished) worker.join();
+            else {
+                blog(LOG_WARNING, "[phonecam] The connection thread is still busy (%s); OBS continues without it.",
+                     phonecam::Activity::name(shared->activity.step));
+                phonecam::keepLoaded();
+                worker.detach();
+            }
+        }
         if (wifiWorker.joinable()) wifiWorker.join();
         wifi.reset(); card = false;
         obs_source_output_video(source, nullptr);
+    }
+    // Watchdog, once per frame: reports a connection step that has not finished for 15 s, once per step.
+    void watch() {
+        auto shared = current();
+        if (!shared) return;
+        const int step = shared->activity.step;
+        const int64_t since = shared->activity.sinceMs;
+        if (phonecam::Activity::waits(step) || since == shared->reportedSince || steadyMs() - since < 15000) return;
+        shared->reportedSince = since;
+        blog(LOG_WARNING, "[phonecam] No progress for 15 s while %s.", phonecam::Activity::name(step));
+        setStatus(std::string("Not responding while ") + phonecam::Activity::name(step) +
+                  ". Unplug the phone and plug it in again; if this stays, close and reopen OBS.");
     }
     ~Source() { end(); }
 };
@@ -104,8 +179,8 @@ struct Source {
 const char *name(void *) { return "PhoneCam (phone camera)"; }
 void update(void *value, obs_data_t *settings) {
     auto *self = static_cast<Source *>(value);
-    std::lock_guard<std::mutex> guard(self->lock);
-    self->adbPath = obs_data_get_string(settings, "adb_path");
+    std::lock_guard<std::mutex> guard(self->adb->lock);
+    self->adb->path = obs_data_get_string(settings, "adb_path");
 }
 void *create(obs_data_t *settings, obs_source_t *source) {
     obs_source_set_async_unbuffered(source, true);
@@ -114,7 +189,12 @@ void *create(obs_data_t *settings, obs_source_t *source) {
     return self;
 }
 void defaults(obs_data_t *settings) { obs_data_set_default_bool(settings, "fit_canvas", true); obs_data_set_default_bool(settings, "wifi_direct", true); }
-void destroy(void *value) { delete static_cast<Source *>(value); }
+void destroy(void *value) {
+    auto *self = static_cast<Source *>(value);
+    self->end();
+    if (!self->leaked) delete self;
+}
+void tick(void *value, float) { static_cast<Source *>(value)->watch(); }
 void show(void *value) { static_cast<Source *>(value)->start(); }
 void hide(void *value) { static_cast<Source *>(value)->end(); }
 obs_properties_t *properties(void *value) {
@@ -171,6 +251,7 @@ MODULE_EXPORT bool obs_module_load(void) {
     info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
     info.get_name = name; info.create = create; info.destroy = destroy; info.update = update;
     info.get_defaults = defaults; info.show = show; info.hide = hide; info.get_properties = properties;
+    info.video_tick = tick;
     info.icon_type = OBS_ICON_TYPE_CAMERA;
     obs_register_source(&info);
     phonecam::setLog(logLine);

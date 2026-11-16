@@ -243,7 +243,22 @@ void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &ou
     if (socket.fd == INVALID_SOCKET) throw std::runtime_error("Cannot allocate USB socket");
     sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(uint16_t(endpoint.port));
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (connect(socket.fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == SOCKET_ERROR) throw ConnectionRefused("No USB link to the phone");
+    // Bounded connect: a refused local port takes about 2 s on Windows, and a stuck adb must not hold this
+    // thread. A link that does not answer within 3 s counts as gone, so the phone is found again.
+    u_long nonBlocking = 1;
+    ioctlsocket(socket.fd, FIONBIO, &nonBlocking);
+    if (connect(socket.fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == SOCKET_ERROR) {
+        if (WSAGetLastError() != WSAEWOULDBLOCK) throw ConnectionRefused("No USB link to the phone");
+        fd_set writable, failed; FD_ZERO(&writable); FD_ZERO(&failed); FD_SET(socket.fd, &writable); FD_SET(socket.fd, &failed);
+        timeval wait{3, 0};
+        if (select(0, nullptr, &writable, &failed, &wait) != 1 || !FD_ISSET(socket.fd, &writable)) throw ConnectionRefused("No USB link to the phone");
+        int error = 0, length = int(sizeof(error));
+        if (getsockopt(socket.fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&error), &length) || error) throw ConnectionRefused("No USB link to the phone");
+    }
+    nonBlocking = 0;
+    ioctlsocket(socket.fd, FIONBIO, &nonBlocking);
+    DWORD sendLimit = 2000;
+    setsockopt(socket.fd, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&sendLimit), sizeof(sendLimit));
     std::string token = endpoint.token + "\n";
     if (send(socket.fd, token.data(), int(token.size()), 0) != int(token.size())) throw std::runtime_error("USB authentication write failed");
     decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { readExact(socket.fd, p, n, stop, seconds); }, output);

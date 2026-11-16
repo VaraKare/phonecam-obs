@@ -43,6 +43,9 @@ std::string findAdb(const std::string &configured) {
 }
 
 void prepareAdb(const std::string &) {}  // adb's own background start works on macOS
+// The next adb call starts a fresh server by itself on macOS.
+void restartAdb(const std::string &adb) { if (!adb.empty()) runAdb(adb, {"kill-server"}, 3000); }
+void keepLoaded() {}
 
 AdbResult runAdb(const std::string &adb, const std::vector<std::string> &args, int timeoutMs) {
     int pipeFds[2];
@@ -82,7 +85,7 @@ AdbResult runAdb(const std::string &adb, const std::vector<std::string> &args, i
         if (done < 0) break;
         if (std::chrono::steady_clock::now() > deadline) {
             kill(pid, SIGKILL); waitpid(pid, &waitStatus, 0);
-            result.status = -1; result.output = "ADB timed out";
+            result.status = -1; result.output = "ADB timed out"; result.timedOut = true;
             break;
         }
     }

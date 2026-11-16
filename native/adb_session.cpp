@@ -22,34 +22,76 @@ std::string pairWifi(const std::string &adb, const std::string &address, const s
     return "Wi-Fi pairing failed. Open \"Pair device with pairing code\" again and use the new address and code (they change each time).";
 }
 
+static int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void Activity::set(Step value) { step = value; sinceMs = nowMs(); }
+const char *Activity::name(int value) {
+    switch (value) {
+        case FindingAdb: return "finding adb";
+        case StartingAdb: return "starting adb";
+        case ListingPhones: return "listing phones (adb devices)";
+        case SearchingWifi: return "looking for phones on Wi-Fi";
+        case ReadingKey: return "reading the pairing key from the phone";
+        case Forwarding: return "creating the USB link (adb forward)";
+        case Linked: return "waiting for or receiving video";
+        case RemovingLink: return "removing the USB link";
+        case RestartingAdb: return "restarting adb";
+        case Idle: return "waiting";
+        default: return "starting";
+    }
+}
+
 void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &adbSetting,
-                 const Status &status, const Output &output) {
+                 const Status &status, const Output &output, Activity *activity) {
     std::string adb, serial, token, last;
-    int port = 0;
+    int port = 0, stalls = 0;
     auto tokenFetched = std::chrono::steady_clock::time_point{};
     auto lastWifiSearch = std::chrono::steady_clock::time_point{};
     auto say = [&](const std::string &value) { if (value != last) { last = value; status(value); } };
+    auto doing = [&](Activity::Step step) { if (activity) activity->set(step); };
+    auto wait = [&](int milliseconds) { doing(Activity::Idle); pause(stop, milliseconds); };
     auto dropForward = [&] {
+        doing(Activity::RemovingLink);
         if (port && !adb.empty() && !serial.empty()) runAdb(adb, {"-s", serial, "forward", "--remove", "tcp:" + std::to_string(port)}, 3000);
         port = 0; serial.clear(); token.clear();
+    };
+    // An adb call without an answer. Two in a row: the server is stuck (seen on Windows after unplugging),
+    // so it is ended and a fresh one started.
+    auto stalled = [&](const AdbResult &result) {
+        if (!result.timedOut) { stalls = 0; return false; }
+        if (++stalls >= 2) {
+            stalls = 0;
+            say("adb stopped answering. Restarting it…");
+            doing(Activity::RestartingAdb);
+            restartAdb(adb);
+        }
+        wait(500);
+        return true;
     };
     while (!stop) {
         try {
             if (!port) {
+                doing(Activity::FindingAdb);
                 adb = findAdb(adbSetting());
                 if (adb.empty()) {
                     say(adbSetting().empty() ? "Android platform-tools (adb) not found. Install it (see the README), or set the adb path in this source's properties."
                                              : "The adb path in this source's properties is not an executable file.");
-                    pause(stop, 3000); continue;
+                    wait(3000); continue;
                 }
+                doing(Activity::StartingAdb);
                 prepareAdb(adb);
+                doing(Activity::ListingPhones);
                 auto listed = runAdb(adb, {"devices"});
+                if (stalled(listed)) continue;
                 auto devices = parseDevices(listed.output);
                 if (devices.ready.empty()) {
                     // A phone paired for Wireless debugging announces itself on the network; connect to it.
                     // `adb connect` only succeeds for a phone this Mac has already paired with.
                     if (std::chrono::steady_clock::now() - lastWifiSearch > std::chrono::seconds(6)) {
                         lastWifiSearch = std::chrono::steady_clock::now();
+                        doing(Activity::SearchingWifi);
                         bool tried = false;
                         for (const auto &address : parseWirelessServices(runAdb(adb, {"mdns", "services"}).output)) {
                             runAdb(adb, {"connect", address}, 5000); tried = true;
@@ -59,19 +101,31 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                     say(devices.unauthorized ? "Unlock the phone, tick \"Always allow from this computer\" and tap Allow on the USB debugging prompt."
                         : devices.offline ? "The phone is offline. Reconnect the USB cable, or turn Wireless debugging off and on."
                         : "Ready. Tap Start live on a phone paired over Wi-Fi, or connect one with a USB data cable (USB debugging on).");
-                    pause(stop, 2000); continue;
+                    wait(2000); continue;
                 }
+                doing(Activity::ReadingKey);
+                bool unanswered = false;
                 for (const auto &candidate : devices.ready) {
-                    auto found = parseToken(runAdb(adb, {"-s", candidate, "shell", "content", "query", "--uri", pairingUri}).output);
+                    auto answer = runAdb(adb, {"-s", candidate, "shell", "content", "query", "--uri", pairingUri});
+                    if (answer.timedOut) { unanswered = true; continue; }
+                    auto found = parseToken(answer.output);
                     if (!found.empty()) { serial = candidate; token = found; break; }
                 }
-                if (serial.empty()) { say("Install the PhoneCam app on the phone (USB debugging connected, app not found)."); pause(stop, 3000); continue; }
+                if (serial.empty()) {
+                    if (unanswered && stalled(AdbResult{-1, {}, true})) continue;
+                    say("Install the PhoneCam app on the phone (USB debugging connected, app not found)."); wait(3000); continue;
+                }
                 tokenFetched = std::chrono::steady_clock::now();
-                port = parsePort(runAdb(adb, {"-s", serial, "forward", "tcp:0", socketName}).output);
-                if (!port) { serial.clear(); token.clear(); say("Could not create the link to the phone. Reconnect the cable or Wi-Fi."); pause(stop, 2000); continue; }
+                doing(Activity::Forwarding);
+                auto forwarded = runAdb(adb, {"-s", serial, "forward", "tcp:0", socketName});
+                if (stalled(forwarded)) { serial.clear(); token.clear(); continue; }
+                port = parsePort(forwarded.output);
+                if (!port) { serial.clear(); token.clear(); say("Could not create the link to the phone. Reconnect the cable or Wi-Fi."); wait(2000); continue; }
+                stalls = 0;
             }
             say("Ready. Tap Start live on the phone.");
             bool announced = false;
+            doing(Activity::Linked);
             receive(stop, {port, token}, [&](Image image, uint64_t sequence, uint64_t pts) {
                 if (!announced) {
                     announced = true;
@@ -81,15 +135,18 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
             });
         } catch (const ConnectionRefused &) {
             port = 0; serial.clear(); token.clear();  // ADB already removed the forward.
-            pause(stop, 300); continue;
+            wait(300); continue;
         } catch (const NotStreaming &) {
             // Re-pair now and then so a reinstalled app's new key is picked up automatically.
             if (std::chrono::steady_clock::now() - tokenFetched > std::chrono::seconds(15)) dropForward();
         } catch (const std::exception &error) {
             if (stop) break;  // Source hidden or removed: nothing to report.
             say(std::string("Live ended: ") + error.what() + ". Tap Start live on the phone to go live again.");
+            // The cable may have been unplugged: find the phone and create the link again, as at start,
+            // rather than retrying a link adb may have dropped or kept half-alive.
+            dropForward();
         }
-        pause(stop, 1000);
+        wait(1000);
     }
     dropForward();
 }

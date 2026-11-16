@@ -43,9 +43,9 @@ python3 tools/windows_kit.py serve
 | 1080p live | Rear, High, Start: picture in OBS; note the Status line (hardware or software decoding) |
 | 4K live | Rear, Best: picture in OBS; note fps and drops on the phone badge after 30 s, and copy any "PC frame timing" lines from the OBS log (Help → Log Files) |
 | Rotation | Portrait and both landscapes stay upright in OBS |
-| Mirror | Front camera; Mirror in OBS on and off |
+| Mirror | Front camera; the PhoneCam app's "Mirror in OBS" switch on and off (it is on the phone, not in OBS's source properties) |
 | Fit | The whole picture fits the canvas; **Fit to canvas now** works after moving it |
-| Stop and unplug | Stop: OBS returns to Ready. Unplug and replug: it reconnects by itself |
+| Stop and unplug | Stop: OBS returns to Ready. Unplug during live, wait 5 s, replug, tap Start live: video returns within about 15 s. Failed on 16 November 2026 (adb stopped answering); retest with the fix |
 | CPU | Task Manager: OBS CPU use during 4K (rotation runs on the CPU in this build) |
 | Wi-Fi pairing | Unplug the phone. **Pair a phone over Wi-Fi** shows the QR card; Windows Firewall asks once (allow on private networks); the phone pairs by QR and by typed code |
 | Wi-Fi live | Start live on the same Wi-Fi: "Live over direct Wi-Fi" in the Status line; note fps and drops at High after 30 s |

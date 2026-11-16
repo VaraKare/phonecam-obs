@@ -107,7 +107,7 @@ try {
         $log = Get-ChildItem $logs -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
         if (-not $log) { continue }
         $lines = (Get-Content $log.FullName -ErrorAction SilentlyContinue | Select-String -Pattern 'phonecam' | ForEach-Object { $_.Line }) -join "`n"
-        if ($lines -ne $sent) { Send 'live' $lines; $sent = $lines; Send 'phone-live' ((Adb logcat -d -t 80 -s PhoneCam:V) -join "`n") }
+        if ($lines -ne $sent) { Send 'live' $lines; $sent = $lines; Send 'phone-live' ((Adb logcat -d -s PhoneCam:V | Select-Object -Last 80) -join "`n") }
     }
     Say "4/4  OBS closed. Sending the final logs..."
     $log = Get-ChildItem $logs -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
