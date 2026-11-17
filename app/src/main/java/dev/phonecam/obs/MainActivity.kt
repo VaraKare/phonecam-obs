@@ -16,6 +16,7 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Size
 import android.view.GestureDetector
 import android.view.Gravity
@@ -63,6 +64,20 @@ class MainActivity : Activity() {
     private lateinit var badge: TextView
     private lateinit var thermal: TextView
     private var shownPhase = LiveState.Phase.STOPPED
+    /** Live timer on the badge, like a recording: counts up from the moment OBS starts receiving. */
+    private var liveSince = 0L
+    private fun elapsed(): String {
+        val seconds = ((SystemClock.elapsedRealtime() - liveSince) / 1000).coerceAtLeast(0)
+        val h = seconds / 3600; val m = seconds / 60 % 60; val s = seconds % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+    }
+    private val clock: Runnable = object : Runnable {
+        override fun run() {
+            if (shownPhase != LiveState.Phase.LIVE || destroyed) return
+            badge.text = "● LIVE  ${elapsed()}"
+            badge.postDelayed(this, 1000 - (SystemClock.elapsedRealtime() - liveSince) % 1000)
+        }
+    }
     private val heatListener = PowerManager.OnThermalStatusChangedListener { heat -> if (!destroyed) showHeat(heat) }
     private lateinit var stats: TextView
     private lateinit var panelScroll: ScrollView
@@ -275,13 +290,15 @@ class MainActivity : Activity() {
         val phase = state?.phase ?: LiveState.Phase.STOPPED
         if (phase != lastPhase) {
             // Sound and vibration only for real transitions, so a reopened screen stays quiet.
-            if (phase == LiveState.Phase.LIVE) feedback.play(Feedback.Event.LIVE, badge)
+            if (phase == LiveState.Phase.LIVE) { feedback.play(Feedback.Event.LIVE, badge); liveSince = SystemClock.elapsedRealtime() }
             else if (phase == LiveState.Phase.STOPPED && foreground && lastPhase != null && lastPhase != LiveState.Phase.STOPPED)
                 feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
             lastPhase = phase
         }
         val paired = if (phase == LiveState.Phase.STOPPED) WifiConnector(this).pairings.macs.firstOrNull()?.name else null
-        badge.text = when (phase) { LiveState.Phase.LIVE -> "● LIVE"; LiveState.Phase.WAITING -> "Waiting for OBS"; else -> "Wi-Fi ready · $paired" }
+        badge.removeCallbacks(clock)
+        if (phase == LiveState.Phase.LIVE) badge.post(clock)
+        badge.text = when (phase) { LiveState.Phase.LIVE -> "● LIVE  ${elapsed()}"; LiveState.Phase.WAITING -> "Waiting for OBS"; else -> "Wi-Fi ready · $paired" }
         badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> CHIP }, 6)
         badge.visibility = if (phase == LiveState.Phase.STOPPED && paired == null) View.GONE else View.VISIBLE
         val p = liveProfile

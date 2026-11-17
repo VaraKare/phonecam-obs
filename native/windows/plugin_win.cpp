@@ -329,9 +329,12 @@ obs_properties_t *properties(void *value) {
         if (!summary.empty()) obs_properties_add_text(p, "wifi_summary", summary.c_str(), OBS_TEXT_INFO);
     }
     obs_properties_t *options = obs_properties_create();
-    obs_properties_add_bool(options, "fit_canvas", "Fit the picture to the canvas automatically");
-    obs_properties_add_bool(options, "wifi_direct", "Allow paired phones over Wi-Fi");
-    obs_properties_add_bool(options, "keep_live", "Keep the phone live while this source is hidden (the phone stays warm and uses battery)");
+    obs_property_set_long_description(obs_properties_add_bool(options, "fit_canvas", "Fit the picture to the canvas automatically"),
+        "Scales the phone picture to fit the canvas when it first appears or its size changes (portrait, landscape, 4K). Untick it to keep your own size and position.");
+    obs_property_set_long_description(obs_properties_add_bool(options, "wifi_direct", "Allow paired phones over Wi-Fi"),
+        "Lets phones you paired before connect over your local Wi-Fi without a cable. While it is on and a phone is paired, this computer listens on port 47183 on the local network only. Untick it to close that port.");
+    obs_property_set_long_description(obs_properties_add_bool(options, "keep_live", "Keep the phone live while this source is hidden"),
+        "Normally hiding this source (eye icon or another scene) stops the phone, and you tap Start live again. Tick this to keep the phone sending while hidden, so switching back is instant. The phone keeps its camera on, gets warmer and uses more battery.");
     obs_properties_add_button2(options, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
         if (!data) return false;
         auto *self = static_cast<Source *>(data);

@@ -32,6 +32,16 @@ The owner chose not to tick "Always allow from this computer", so every replug a
 
 All of these are unproven on the laptop until the retest below.
 
-## Run 2 (retest with the fixes)
+## Run 2 (22:18–22:24, kit from run 44187960039)
 
-Pending.
+Check 9 again: the first QR pairing worked (22:20:33); the new watchdog then logged "Wi-Fi server: no progress for 10 s while saving the pairing", so the server thread was stuck inside the plugin's status callback right after "Paired with V2437". The second pairing window got no connection, and OBS showed "Not responding" on close until the owner chose "Close the program". Cleanup: "Left behind: nothing". Fixed in 17e7698: the Wi-Fi thread only stores and logs the status and queues an OBS UI task for the status line and the card. (Windows CI's intermittent interop failure turned out to be the test receiver's 120 s limit, fixed in a3bb3b7.)
+
+## Run 3 (from 22:34, kit from run 44190555302)
+
+| Check | Result | Evidence |
+|---|---|---|
+| 9. Wi-Fi pairing, forget on the phone, pair again | **Passed.** Both pairings worked and no watchdog warning appeared | Paired 22:40:37 and 22:41:02 |
+| 10. Wi-Fi live, rear 1080p | **Passed.** 3.5 minutes at 1080×1920 with hardware decoding, no "fell behind" lines; the owner saw no freeze and no drops on the phone badge (phone "Warm"). Stopped by the owner | Live 22:41:36 → Stop 22:45:05 |
+| First Start after OBS opens | Ended after 2 s (also on USB in run 1): Windows sets up the D3D11 decoder on the first picture (1.4 s) and reads nothing meanwhile; the phone gives up (750 ms USB, 3 s Wi-Fi). The second Start works | 22:41:12 first frame "decode 1430.7 ms", ended 22:41:14. Phone fix in 80513ef (4 s writes in a session's first 5 s); not yet installed on the phone |
+| 11. Wi-Fi switch off | **Passed (AUDIT-006 fixed on hardware).** After unticking, the server stopped and a connection from the Mac to port 47183 was refused | 22:50:18 "Wi-Fi: stopped listening"; `nc` refused |
+| 12. LAN noise during Wi-Fi live | **No freeze.** 50 empty connections in 33 s: 4 queued, 46 refused (backlog full); live continued and the owner saw no freeze, also after Stop and Start. When live ended, each queued empty connection set the status to "Wi-Fi live ended: connection closed": **AUDIT-005 confirmed** (status overwritten, and each queued connection holds the server up to 5 s) | 22:52:47–22:53:20; three status lines at 22:53:47 |
