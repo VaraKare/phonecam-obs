@@ -91,7 +91,10 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                 if (devices.ready.empty()) {
                     // A phone paired for Wireless debugging announces itself on the network; connect to it.
                     // `adb connect` only succeeds for a phone this Mac has already paired with.
-                    if (std::chrono::steady_clock::now() - lastWifiSearch > std::chrono::seconds(6)) {
+                    // Not while a USB phone waits for Allow or is offline: the search costs seconds per address
+                    // and delayed the cable on the 17 Nov laptop (audit/FINDINGS.md AUDIT-008).
+                    if (!devices.unauthorized && !devices.offline &&
+                        std::chrono::steady_clock::now() - lastWifiSearch > std::chrono::seconds(6)) {
                         lastWifiSearch = std::chrono::steady_clock::now();
                         doing(Activity::SearchingWifi);
                         bool tried = false;

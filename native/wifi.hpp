@@ -50,6 +50,9 @@ public:
     // The same without a running server. Starts a new file if the old one cannot be read.
     static Pairings forgetAll();
     int listeningPort() const { return port; }
+    // For a watchdog on another thread: what the server thread is doing, if it has been doing it for longer
+    // than limitMs and it is not a step that normally lasts (waiting for phones, receiving video). Else null.
+    const char *stuckLongerThan(int64_t limitMs) const;
     std::string computerId();
 private:
     Status status;
@@ -63,6 +66,10 @@ private:
     std::atomic<int> port{0};
     std::atomic<bool> ready{false};                // pairings loaded
     std::atomic<bool> announceNeeded{false};       // the server thread re-announces; no other thread touches mDNS
+    enum Step { Waiting, Opening, Announcing, Withdrawing, Connecting, Saving, Streaming };
+    std::atomic<int> step{Waiting};
+    std::atomic<int64_t> stepSince{0};
+    void doing(Step value);
     void *bonjour = nullptr;                       // platform announcement handle (server thread only)
     void announce();                               // (re)announces with the current pairing state
     void withdraw();                               // stops announcing

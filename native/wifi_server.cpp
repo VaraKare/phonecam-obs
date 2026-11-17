@@ -82,6 +82,23 @@ bool localPeer(uint32_t a) {
            (a >> 16) == 0xA9FE || (a >> 24) == 127;                                     // link-local, loopback
 }
 
+static int64_t steadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+void Server::doing(Step value) { step = value; stepSince = steadyNowMs(); }
+const char *Server::stuckLongerThan(int64_t limitMs) const {
+    const int now = step;
+    if (now == Waiting || now == Streaming || steadyNowMs() - stepSince < limitMs) return nullptr;
+    switch (now) {
+        case Opening: return "opening the network port";
+        case Announcing: return "announcing on the network (DNS-SD)";
+        case Withdrawing: return "withdrawing the network announcement (DNS-SD)";
+        case Connecting: return "talking to a phone that connected";
+        case Saving: return "saving the pairing";
+        default: return "working";
+    }
+}
+
 std::string Server::computerId() { std::lock_guard<std::mutex> guard(lock); return pairings.macId; }
 
 PairingWindow Server::openPairing() {
@@ -164,6 +181,7 @@ void Server::loop(std::atomic<bool> &stop) {
     net::Fd listener = net::invalid;
     auto closeListener = [&] {
         if (listener == net::invalid) return;
+        doing(Withdrawing);
         withdraw();
         net::closeFd(listener); listener = net::invalid; port = 0;
     };
@@ -171,6 +189,7 @@ void Server::loop(std::atomic<bool> &stop) {
     bool ignoredNoted = false;
     std::chrono::steady_clock::time_point lastIgnored;
     while (!stop) {
+        doing(Waiting);
         bool expired, wanted;
         {
             std::lock_guard<std::mutex> guard(lock);
@@ -182,6 +201,7 @@ void Server::loop(std::atomic<bool> &stop) {
         // Nothing paired and no window open: no listening port at all (audit/FINDINGS.md AUDIT-006).
         if (!wanted) { closeListener(); pauseFor(stop, 200); continue; }
         if (listener == net::invalid) {
+            doing(Opening);
             listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             if (listener == net::invalid) {
                 if (!portProblem) status("Direct Wi-Fi unavailable: cannot open a network socket.");
@@ -205,7 +225,8 @@ void Server::loop(std::atomic<bool> &stop) {
             port = ntohs(address.sin_port);
             announceNeeded = true;
         }
-        if (announceNeeded.exchange(false)) announce();
+        if (announceNeeded.exchange(false)) { doing(Announcing); announce(); }
+        doing(Waiting);
         if (net::pollRead(listener, 200) <= 0) continue;
         sockaddr_in peer{}; net::Length peerLength = net::Length(sizeof(peer));
         net::Fd fd = accept(listener, reinterpret_cast<sockaddr *>(&peer), &peerLength);
@@ -222,10 +243,13 @@ void Server::loop(std::atomic<bool> &stop) {
             continue;
         }
         net::prepareConnection(fd);
+        doing(Connecting);
         try { handle(std::uintptr_t(fd), stop); }
         catch (const NotStreaming &) {}
         catch (const std::exception &error) { if (!stop) status(std::string("Wi-Fi live ended: ") + error.what() + ". Tap Start live on the phone to go live again."); }
+        doing(Withdrawing);  // closing the connection can wait for the network
         net::closeFd(fd);
+        doing(Waiting);
     }
     closeListener();
 }
@@ -291,6 +315,7 @@ void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
         // Saved before the phone is told it is paired: if saving fails, neither side keeps a half pairing.
         std::string phoneName = cleanName(std::string(name.begin(), name.end()));
         Pairings updated;
+        doing(Saving);
         {
             std::lock_guard<std::mutex> guard(storeLock);
             try { updated = loadPairings(); } catch (const std::exception &) { std::lock_guard<std::mutex> inner(lock); updated = pairings; }
@@ -307,6 +332,7 @@ void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
         return;
     }
     writeAll(fd, Bytes{0});
+    doing(Streaming);
     RecordReader reader(fd, keys, stop);
     bool announced = false;
     decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { reader.read(p, n, seconds); },

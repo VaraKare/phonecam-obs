@@ -44,7 +44,9 @@ struct Source {
     std::thread worker;
     std::mutex lock, sizeLock;
     std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
-    std::string status = "Starting…";
+    std::string status = "Starting…", beforeWarning;
+    std::atomic<int64_t> cardUntil{0};  // the pairing card hides itself on time, even if the Wi-Fi server is busy
+    bool wifiWarned = false;            // video thread only
     bool leaked = false;
     uint32_t shownWidth = 0, shownHeight = 0;
     // Direct Wi-Fi server: started and stopped under wifiLock, from show/hide and from the "Allow paired phones
@@ -63,9 +65,25 @@ struct Source {
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
     void setStatus(const std::string &value) {
-        { std::lock_guard<std::mutex> guard(lock); status = value; }
+        { std::lock_guard<std::mutex> guard(lock); status = value; beforeWarning.clear(); }
         blog(LOG_INFO, "[phonecam] %s", value.c_str());
         obs_source_update_properties(source);
+    }
+    // A watchdog warning replaces the status line until progress resumes; then the status it replaced comes
+    // back (the connection thread does not repeat an unchanged status; audit/FINDINGS.md AUDIT-022a).
+    void warn(const std::string &value) {
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            if (beforeWarning.empty()) beforeWarning = status;
+            status = value;
+        }
+        blog(LOG_WARNING, "[phonecam] %s", value.c_str());
+        obs_source_update_properties(source);
+    }
+    void clearWarning() {
+        std::string previous;
+        { std::lock_guard<std::mutex> guard(lock); previous = beforeWarning; }
+        if (!previous.empty()) setStatus(previous);
     }
     void noteSize(uint32_t width, uint32_t height) {
         std::lock_guard<std::mutex> guard(sizeLock);
@@ -101,6 +119,7 @@ struct Source {
         frame.timestamp = os_gettime_ns(); frame.full_range = true;
         noteSize(width, height);
         card = true;
+        cardUntil = steadyMs() + 180000;  // the server's pairing window lasts 3 minutes
         obs_source_output_video(source, &frame);
         setStatus("Pairing for 3 minutes: in PhoneCam open Settings → Pair a computer and scan the QR code, or type " + window.code + ".");
     }
@@ -209,15 +228,29 @@ struct Source {
     }
     // Watchdog, once per frame: reports a connection step that has not finished for 15 s, once per step.
     void watch() {
+        if (card && steadyMs() > cardUntil) {
+            hidePairingCard();
+            setStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.");
+        }
+        watchWifi();
         auto shared = current();
         if (!shared) return;
         const int step = shared->activity.step;
         const int64_t since = shared->activity.sinceMs;
+        if (shared->reportedSince >= 0 && since != shared->reportedSince) { shared->reportedSince = -1; clearWarning(); }
         if (phonecam::Activity::waits(step) || since == shared->reportedSince || steadyMs() - since < 15000) return;
         shared->reportedSince = since;
-        blog(LOG_WARNING, "[phonecam] No progress for 15 s while %s.", phonecam::Activity::name(step));
-        setStatus(std::string("Not responding while ") + phonecam::Activity::name(step) +
-                  ". Unplug the phone and plug it in again; if this stays, close and reopen OBS.");
+        warn(std::string("Not responding for 15 s while ") + phonecam::Activity::name(step) +
+             ". Unplug the phone and plug it in again; if this stays, close and reopen OBS.");
+    }
+    // The Wi-Fi server thread stuck in one step (17 Nov laptop: it stopped accepting after a pairing).
+    // Reported once in the log, so the step can be fixed; never blocks the video thread.
+    void watchWifi() {
+        std::unique_lock<std::mutex> guard(wifiLock, std::try_to_lock);
+        if (!guard || !wifi) return;
+        const char *stuck = wifi->stuckLongerThan(10000);
+        if (stuck && !wifiWarned) { wifiWarned = true; blog(LOG_WARNING, "[phonecam] Wi-Fi server: no progress for 10 s while %s.", stuck); }
+        if (!stuck && wifiWarned) { wifiWarned = false; blog(LOG_INFO, "[phonecam] Wi-Fi server: working again."); }
     }
     ~Source() { end(); }
 };

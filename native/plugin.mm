@@ -28,6 +28,10 @@ struct Link {
     bool done = false;
 };
 
+int64_t steadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 struct Source {
     obs_source_t *source;
     std::atomic<bool> stop{false};  // Wi-Fi frames and frame output
@@ -48,6 +52,8 @@ struct Source {
     std::unique_ptr<phonecam::wifi::Server> wifi;
     std::thread wifiWorker;
     std::atomic<bool> card{false};
+    std::atomic<int64_t> cardUntil{0};  // the pairing card hides itself on time, even if the Wi-Fi server is busy
+    bool wifiWarned = false;            // video thread only
     // "Keep the phone live while this source is hidden": hide leaves USB and Wi-Fi running. start/end are
     // serialised because hide runs on OBS's video thread and the switch on the UI thread.
     std::atomic<bool> visible{false}, keepLive{false};
@@ -99,6 +105,7 @@ struct Source {
         frame.timestamp = os_gettime_ns(); frame.full_range = true;
         noteSize(width, height);
         card = true;
+        cardUntil = steadyMs() + 180000;  // the server's pairing window lasts 3 minutes
         obs_source_output_video(source, &frame);
         setStatus("Pairing for 3 minutes: in PhoneCam open Settings → Pair a computer and scan the QR code, or type " + window.code + ".");
     }
@@ -201,6 +208,18 @@ struct Source {
         wifiWanted = wanted;
         if (wanted) startWifi(); else stopWifi();
     }
+    // Once per frame on OBS's video thread; never blocks it.
+    void watch() {
+        if (card && steadyMs() > cardUntil) {
+            hidePairingCard();
+            setStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.");
+        }
+        std::unique_lock<std::mutex> guard(wifiLock, std::try_to_lock);
+        if (!guard || !wifi) return;
+        const char *stuck = wifi->stuckLongerThan(10000);
+        if (stuck && !wifiWarned) { wifiWarned = true; blog(LOG_WARNING, "[phonecam] Wi-Fi server: no progress for 10 s while %s.", stuck); }
+        if (!stuck && wifiWarned) { wifiWarned = false; blog(LOG_INFO, "[phonecam] Wi-Fi server: working again."); }
+    }
     ~Source() { end(); }
 };
 const char *name(void *) { return "PhoneCam (phone camera)"; }
@@ -225,6 +244,7 @@ void destroy(void *value) {
     self->end();
     if (!self->leaked) delete self;
 }
+void tick(void *value, float) { static_cast<Source *>(value)->watch(); }
 void show(void *value) { auto *self = static_cast<Source *>(value); self->visible = true; self->start(); }
 void hide(void *value) {
     auto *self = static_cast<Source *>(value);
@@ -297,7 +317,7 @@ MODULE_EXPORT bool obs_module_load(void) {
     info.id = "phonecam_usb_v1"; info.type = OBS_SOURCE_TYPE_INPUT;
     info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
     info.get_name = name; info.create = create; info.destroy = destroy; info.update = update;
-    info.get_defaults = defaults; info.show = show; info.hide = hide; info.get_properties = properties;
+    info.get_defaults = defaults; info.video_tick = tick; info.show = show; info.hide = hide; info.get_properties = properties;
     info.icon_type = OBS_ICON_TYPE_CAMERA;
     obs_register_source(&info);
     phonecam::setLog(logLine);
