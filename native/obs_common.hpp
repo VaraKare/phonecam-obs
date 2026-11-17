@@ -74,7 +74,13 @@ void startWifiPairing(obs_source_t *source) {
         obs_data_set_string(values, "wifi_result", result.c_str());
         obs_source_update(strong, values);
         obs_data_release(values);
-        obs_source_update_properties(strong);
+        // Properties are refreshed on the UI thread: from a worker thread this can block while the Properties
+        // window is open (seen on Windows, 17 Nov).
+        obs_queue_task(OBS_TASK_UI, [](void *param) {
+            auto *weakRef = static_cast<obs_weak_source_t *>(param);
+            if (obs_source_t *source = obs_weak_source_get_source(weakRef)) { obs_source_update_properties(source); obs_source_release(source); }
+            obs_weak_source_release(weakRef);
+        }, obs_source_get_weak_source(strong), false);
         obs_source_release(strong);
     }).detach();
 }

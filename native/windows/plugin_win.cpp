@@ -67,11 +67,12 @@ struct Source {
     explicit Source(obs_source_t *value) : source(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
-    void setStatus(const std::string &value) {
-        { std::lock_guard<std::mutex> guard(lock); status = value; beforeWarning.clear(); }
-        blog(LOG_INFO, "[phonecam] %s", value.c_str());
-        obs_source_update_properties(source);
-    }
+    // Every status change reaches the Properties window through an OBS UI task, from whichever thread.
+    // On Windows, refreshing the properties from a worker thread while the Properties window was open
+    // blocked that thread until OBS closed (17 Nov laptop: the Wi-Fi thread after "Paired with…", the USB
+    // thread after "Unlock the phone…").
+    void setStatus(const std::string &value) { postStatus(value, false); }
+    void refreshProperties() { obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false); }
     // A watchdog warning replaces the status line until progress resumes; then the status it replaced comes
     // back (the connection thread does not repeat an unchanged status; audit/FINDINGS.md AUDIT-022a).
     void warn(const std::string &value) {
@@ -81,7 +82,7 @@ struct Source {
             status = value;
         }
         blog(LOG_WARNING, "[phonecam] %s", value.c_str());
-        obs_source_update_properties(source);
+        refreshProperties();
     }
     void clearWarning() {
         std::string previous;
@@ -131,7 +132,7 @@ struct Source {
         { std::lock_guard<std::mutex> guard(lock); status = value; beforeWarning.clear(); }
         blog(LOG_INFO, "[phonecam] %s", value.c_str());
         if (hideCard) hideCardRequested = true;
-        obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false);
+        refreshProperties();
     }
     void hidePairingCard() { if (card.exchange(false)) obs_source_output_video(source, nullptr); }
     // wifiLock held.
