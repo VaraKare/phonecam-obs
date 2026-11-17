@@ -18,6 +18,16 @@ The status of each finding in [FINDINGS.md](FINDINGS.md). "Fixed in code" means 
 
 **Runs after Stage 1** (macOS 27.2): Android unit tests 44/0 failed (1 skipped by design), lint 0 errors; tool tests 29 OK; Mac build and sanitizer unit tests pass; `test_native.py` 16 OK; the same suite under ASan+UBSan and TSan, no reports. Windows CI run 43946715250 (commit 72f5c6d): all jobs green, including the new damaged-store and "no port before pairing" checks, the replug test and Kotlin ↔ Windows Wi-Fi interop.
 
+## Physical check, 17 November 2026 (Mac, vivo V2437)
+
+The app built from 72f5c6d was installed, release-signed, over the published 0.3.0-alpha.5 build, keeping app data. The version string is unchanged.
+
+| Result | What happened |
+|---|---|
+| Public Wi-Fi | Three pairing windows were opened; no connection from the phone reached the Mac. This is most likely the network's client isolation. It is not proven: the new local-network filter ignores outside addresses silently, so the two causes can't be told apart from the log. Follow-up: log ignored connections, rate-limited. |
+| Phone hotspot (Mac joined it) | Pairing succeeded, then three Wi-Fi sessions in a row, at 1080×1920 with hardware decoding: Start → Stop → Start → Stop → Start, each connecting within about 2–6 s. The user reported good quality, seamless video and a few dropped frames. |
+| AUDIT-001 | **Supported on hardware.** With no USB cable, every session is won by Wi-Fi. That is the path where the old code left the USB listener bound, and the next Start would most likely have failed with "Address already in use". Three consecutive Starts connected. The plain USB Stop-while-waiting case (TEST_AND_VALIDATION_PLAN P1) uses the same `stopListening()` and is still worth one explicit run. |
+
 ## Next (Stage 2, not started)
 
 AUDIT-002 (hide blocks the OBS video thread), 005, 010, 011, 012, 013, 014, 017, in the order given in [PRIORITIZED_REMEDIATION_ROADMAP.md](PRIORITIZED_REMEDIATION_ROADMAP.md).
