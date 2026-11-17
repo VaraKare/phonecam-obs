@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
             std::string code; for (char ch : window.code) if (ch != '-') code += ch;
             printf("PAIR %d %s %s\n", server.listeningPort(), server.computerId().c_str(), code.c_str());
             fflush(stdout);
-            auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+            auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(600);  // Gradle compiles the phone test first (over 2 min on CI)
             while (!stopped && std::chrono::steady_clock::now() < limit) std::this_thread::sleep_for(std::chrono::milliseconds(50));
             stopped = true; listener.join();
         } else {
