@@ -32,6 +32,8 @@ struct Link {
     bool done = false;
     int64_t reportedSince = -1;  // watchdog: the stuck step already reported
 };
+void refreshOnUi(void *weakSource);
+
 int64_t steadyMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -45,7 +47,8 @@ struct Source {
     std::mutex lock, sizeLock;
     std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
     std::string status = "Starting…", beforeWarning;
-    std::atomic<int64_t> cardUntil{0};  // the pairing card hides itself on time, even if the Wi-Fi server is busy
+    std::atomic<int64_t> cardUntil{0};
+    std::atomic<bool> hideCardRequested{false};  // set by the Wi-Fi thread, acted on by a UI task  // the pairing card hides itself on time, even if the Wi-Fi server is busy
     bool wifiWarned = false;            // video thread only
     bool leaked = false;
     uint32_t shownWidth = 0, shownHeight = 0;
@@ -123,14 +126,23 @@ struct Source {
         obs_source_output_video(source, &frame);
         setStatus("Pairing for 3 minutes: in PhoneCam open Settings → Pair a computer and scan the QR code, or type " + window.code + ".");
     }
+    // From any thread without waiting on OBS: the status line and the card are updated by a UI task.
+    void postStatus(const std::string &value, bool hideCard) {
+        { std::lock_guard<std::mutex> guard(lock); status = value; beforeWarning.clear(); }
+        blog(LOG_INFO, "[phonecam] %s", value.c_str());
+        if (hideCard) hideCardRequested = true;
+        obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false);
+    }
     void hidePairingCard() { if (card.exchange(false)) obs_source_output_video(source, nullptr); }
     // wifiLock held.
     void startWifi() {
         if (wifi || !showing || !wifiWanted) return;
         wifiStop = false;
+        // The Wi-Fi thread never calls into OBS beyond the log: the status line and the pairing card are
+        // updated by a UI task. On the 17 Nov laptop the thread stopped for good inside this callback right
+        // after "Paired with…", so nothing was accepted any more (phone: ECONNREFUSED).
         wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
-            setStatus(value);
-            if (value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0) hidePairingCard();
+            postStatus(value, value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0);
         }, [this](phonecam::Image image, uint64_t, uint64_t) { showFrame(image); },
         [](const std::string &value) { blog(LOG_INFO, "[phonecam] %s", value.c_str()); });
         auto *server = wifi.get();
@@ -228,10 +240,8 @@ struct Source {
     }
     // Watchdog, once per frame: reports a connection step that has not finished for 15 s, once per step.
     void watch() {
-        if (card && steadyMs() > cardUntil) {
-            hidePairingCard();
-            setStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.");
-        }
+        if (card && !hideCardRequested && steadyMs() > cardUntil)
+            postStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.", true);
         watchWifi();
         auto shared = current();
         if (!shared) return;
@@ -254,6 +264,18 @@ struct Source {
     }
     ~Source() { end(); }
 };
+
+// UI thread: applies what the Wi-Fi thread asked for. The weak reference keeps a removed source safe.
+void refreshOnUi(void *weakSource) {
+    auto *weak = static_cast<obs_weak_source_t *>(weakSource);
+    obs_source_t *strong = obs_weak_source_get_source(weak);
+    obs_weak_source_release(weak);
+    if (!strong) return;
+    if (auto *self = static_cast<Source *>(obs_obj_get_data(strong)); self && self->hideCardRequested.exchange(false))
+        self->hidePairingCard();
+    obs_source_update_properties(strong);
+    obs_source_release(strong);
+}
 
 const char *name(void *) { return "PhoneCam (phone camera)"; }
 void update(void *value, obs_data_t *settings) {
