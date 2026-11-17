@@ -30,6 +30,21 @@ The app built from 72f5c6d was installed, release-signed, over the published 0.3
 
 **Follow-up done (17 Nov):** ignored outside connections are now logged at most once a minute, without the address (`[phonecam] Ignored a Wi-Fi connection from outside the local network…`), on Mac and Windows. If a public network shows that line, the filter refused the phone; if it shows nothing, the network isolated the phone.
 
-## Next (Stage 2, not started)
+## Stage 2, partly done on 17 November 2026 (Windows laptop night)
+
+Evidence: [docs/research/WINDOWS_THIRD_LAPTOP_TEST.md](../docs/research/WINDOWS_THIRD_LAPTOP_TEST.md).
+
+| Finding | Status | What changed | Evidence |
+|---|---|---|---|
+| AUDIT-002 Hide blocks the video thread | Fixed (B for USB) | Mac gets the Windows Link hand-off; both wait at most 0.5 s; autoReceive checks stop between adb calls (293c81e) | Laptop: 7 hide/show cycles without freeze, OBS exit 3 s |
+| AUDIT-005 LAN connections overwrite status | Fixed | Non-PhoneCam connections closed after 3 s with a log note, never a status (4bb280c) | Confirmed on the laptop before the fix; CI and Mac tests with empty and junk clients |
+| AUDIT-006 B (remaining) | Fixed on hardware | Switch off closes the port (Stage 1) | Laptop check 11: `nc` refused |
+| AUDIT-008 adb mDNS connect | Partly | No Wireless-debugging search while a USB phone is unauthorized or offline (7871251) | Code path |
+| AUDIT-022a Watchdog status stays | Fixed (Windows) | The replaced status returns when progress resumes (7871251) | Code path |
+| New: worker threads blocked by properties refresh (Windows) | Fixed | All status updates go through an OBS UI task (17e7698, 0b53c03) | Laptop: pairing twice, 13-min run, 3 s exit |
+| New: DNS-SD on the accepting thread | Fixed | Announcer thread (01aa7db) | Mac TSan clean; CI |
+| New: first Start drops (decoder warm-up) | Fixed (phone) | 4 s writes in the first 5 s (80513ef) | Laptop: first Start held |
+
+## Next (Stage 2 remainder)
 
 AUDIT-002 (hide blocks the OBS video thread), 005, 010, 011, 012, 013, 014, 017, in the order given in [PRIORITIZED_REMEDIATION_ROADMAP.md](PRIORITIZED_REMEDIATION_ROADMAP.md).

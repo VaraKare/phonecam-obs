@@ -56,3 +56,27 @@ Check 9 again: the first QR pairing worked (22:20:33); the new watchdog then log
 | Phone live timer (e761846) | **Works.** The LIVE badge counted up to about 13 minutes | Owner |
 
 Phone UI: after Stop the badge said "Wi-Fi ready · <Mac>" although the laptop was used last. It showed the oldest pairing. It now shows the most recently used computer plus the number of others (" +1").
+| 18. Cleanup | **Passed.** OBS closed in about 3 s (23:45:57 → 23:46:00; it took 45–50 s or hung before the fixes). "Left behind: nothing", no firewall entries, in all four runs. The owner then revoked USB debugging authorisations on the phone and forgot the laptop's Wi-Fi pairing | cleanup 23:46:24 |
+
+## Not done on this laptop
+
+- **13** (adb blocked by antivirus) and **14** (first-run pairing store). Both need files changed before OBS starts, and the kit deletes its folder when OBS closes. CI covers the code paths (damaged store, missing adb). Left for user reports after release.
+- **15–16** (mirror and colour against the Mac): mirror passed on 16 Nov; colour comparison later on the Mac.
+- **7** (integrated GPU): skipped so that no Graphics setting is left on a borrowed PC.
+- **4K**: falls behind on this laptop (about 24 of 30 fps reach OBS; the copy from the GPU takes about 28 ms). Needs AUDIT-009 C.
+- **30–60 minute run**: 13 minutes reached; a longer run can be done on the Mac.
+
+## Release status
+
+The Windows plugin built from 0b53c03 (CI run 44196193195) is the file proven here for:
+- USB live;
+- replug;
+- hide/show;
+- Wi-Fi pairing twice;
+- Wi-Fi live;
+- the Wi-Fi switch;
+- LAN noise;
+- a 13-minute run;
+- a clean exit.
+
+The Mac plugin and the phone app changed tonight as well (hide hand-off, keep live while hidden, ⓘ help, card timer, DNS-SD thread, AUDIT-005, live timer, badge), so they need a Mac and phone check before any v0.4 release.
