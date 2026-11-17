@@ -44,6 +44,8 @@ class LiveTransport(private val token: String, private val connected: (String) -
         }
         const val NAME = "phonecam-live-v1"
         const val MAX_PAYLOAD = 4 * 1024 * 1024
+        const val WARM_UP_MS = 5_000L
+        const val WARM_UP_WRITE_MS = 4_000L
         /** v3 frame flags: bit 0 keyframe, bits 1-2 clockwise quarter turns for upright display, bit 3 mirror in OBS. */
         const val VERSION = 3
         fun flags(frame: LiveQueue.Frame) = (if (frame.key) 1 else 0) or ((frame.quarterTurns and 3) shl 1) or (if (frame.mirror) 8 else 0)
@@ -75,7 +77,12 @@ class LiveTransport(private val token: String, private val connected: (String) -
     @Volatile private var configuration: ByteArray? = null
     @Volatile private var active: Sink? = null
     /** The first connection to authenticate wins; later ones are closed. */
-    private fun claim(sink: Sink): Boolean = synchronized(this) { if (closed || active != null) false else { active = sink; true } }
+    private fun claim(sink: Sink): Boolean = synchronized(this) {
+        if (closed || active != null) false else { active = sink; warmUpUntil = SystemClock.elapsedRealtime() + WARM_UP_MS; true }
+    }
+    /** The computer sets up its decoder on the first picture (about 1.4 s on the 17 Nov Windows laptop) and reads
+     *  nothing meanwhile, so the first seconds of a session allow longer writes before calling it stalled. */
+    @Volatile private var warmUpUntil = 0L
     private val watchdog = Executors.newSingleThreadScheduledExecutor()
     val dropped: Long get() = queue.dropped
 
@@ -164,7 +171,8 @@ class LiveTransport(private val token: String, private val connected: (String) -
 
     private fun packet(sink: Sink, type: Int, flags: Int, seq: Long, pts: Long, data: ByteArray) {
         require(data.isNotEmpty() && data.size <= MAX_PAYLOAD) { "Encoded packet exceeds the 4 MiB limit" }
-        deadline = SystemClock.elapsedRealtime() + sink.writeTimeoutMs
+        val now = SystemClock.elapsedRealtime()
+        deadline = now + if (now < warmUpUntil) maxOf(sink.writeTimeoutMs, WARM_UP_WRITE_MS) else sink.writeTimeoutMs
         sink.write(header(type, flags, seq, pts, data.size), data)
         deadline = Long.MAX_VALUE
     }
