@@ -184,6 +184,7 @@ void Server::loop(std::atomic<bool> &stop) {
         doing(Withdrawing);
         withdraw();
         net::closeFd(listener); listener = net::invalid; port = 0;
+        if (note) note("Wi-Fi: stopped listening (nothing paired and no pairing window).");
     };
     bool portProblem = false;
     bool ignoredNoted = false;
@@ -224,13 +225,14 @@ void Server::loop(std::atomic<bool> &stop) {
             portProblem = false;
             port = ntohs(address.sin_port);
             announceNeeded = true;
+            if (note) note("Wi-Fi: listening on port " + std::to_string(port) + ".");
         }
         if (announceNeeded.exchange(false)) { doing(Announcing); announce(); }
         doing(Waiting);
         if (net::pollRead(listener, 200) <= 0) continue;
         sockaddr_in peer{}; net::Length peerLength = net::Length(sizeof(peer));
         net::Fd fd = accept(listener, reinterpret_cast<sockaddr *>(&peer), &peerLength);
-        if (fd == net::invalid) continue;
+        if (fd == net::invalid) { if (note) note("Wi-Fi: a connection could not be accepted."); continue; }
         if (peer.sin_family != AF_INET || !localPeer(ntohl(peer.sin_addr.s_addr))) {
             net::closeFd(fd);
             // Log at most once a minute, without the address, so a public network's refusals can be told apart
