@@ -7,17 +7,37 @@
 #include <thread>
 #include <mutex>
 #include <chrono>
+#include <condition_variable>
 
 OBS_DECLARE_MODULE()
 MODULE_EXPORT const char *obs_module_description(void) { return "Android phone camera over USB or Wi-Fi with hardware decoding"; }
 
 namespace {
+struct Source;
+struct AdbPath { std::mutex lock; std::string path; };
+// Shared with the USB connection thread. OBS calls hide on its video thread, so end() waits only briefly;
+// a thread still finishing (removing the adb forward, or stuck in a call) is left behind and can no longer
+// reach the source (audit/FINDINGS.md AUDIT-002 B, the same hand-off as on Windows).
+struct Link {
+    std::atomic<bool> stop{false};
+    std::timed_mutex lock;
+    Source *owner = nullptr;  // null once the source no longer waits for this thread
+    std::shared_ptr<AdbPath> adb;
+    std::mutex doneLock;
+    std::condition_variable doneSignal;
+    bool done = false;
+};
+
 struct Source {
     obs_source_t *source;
-    std::atomic<bool> stop{false};
+    std::atomic<bool> stop{false};  // Wi-Fi frames and frame output
+    std::mutex linkLock;
+    std::shared_ptr<Link> link;
     std::thread worker;
+    bool leaked = false;
     std::mutex lock;
-    std::string adbPath, status = "Starting…";
+    std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
+    std::string status = "Starting…";
     std::mutex sizeLock;
     uint32_t shownWidth = 0, shownHeight = 0;  // last picture size, for automatic fitting
     // Direct Wi-Fi server: started and stopped under wifiLock, from show/hide and from the "Allow paired phones
@@ -33,7 +53,7 @@ struct Source {
     std::atomic<bool> visible{false}, keepLive{false};
     std::recursive_mutex runLock;
     explicit Source(obs_source_t *value) : source(value) {}
-    std::string adbSetting() { std::lock_guard<std::mutex> guard(lock); return adbPath; }
+    std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
     void setStatus(const std::string &value) {
         { std::lock_guard<std::mutex> guard(lock); status = value; }
@@ -85,26 +105,61 @@ struct Source {
     void hidePairingCard() { if (card.exchange(false)) obs_source_output_video(source, nullptr); }
     void start() {
         std::lock_guard<std::recursive_mutex> running(runLock);
-        if (worker.joinable()) return;
+        if (current()) return;
         stop = false;
         { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
-        worker = std::thread([this] {
+        auto shared = std::make_shared<Link>();
+        shared->owner = this; shared->adb = adb;
+        { std::lock_guard<std::mutex> guard(linkLock); link = shared; }
+        worker = std::thread([shared] {
+            auto report = [shared](const std::string &value) {
+                std::lock_guard<std::timed_mutex> guard(shared->lock);
+                if (shared->owner) shared->owner->setStatus(value);
+            };
             // Nothing may escape a thread (std::terminate would close OBS; audit/FINDINGS.md AUDIT-004).
             try {
-                phonecam::autoReceive(stop, [this] { return adbSetting(); }, [this](const std::string &value) { setStatus(value); },
-                    [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
-            } catch (const std::exception &error) { setStatus(std::string("USB connection stopped: ") + error.what()); }
-            catch (...) { setStatus("USB connection stopped after an unexpected error. Hide and show this source to retry."); }
-            obs_source_output_video(source, nullptr);
+                phonecam::autoReceive(shared->stop,
+                    [shared] { std::lock_guard<std::mutex> guard(shared->adb->lock); return shared->adb->path; }, report,
+                    [shared](CVPixelBufferRef image, uint64_t, uint64_t) {
+                        std::lock_guard<std::timed_mutex> guard(shared->lock);
+                        if (shared->owner) shared->owner->showFrame(image);
+                    });
+            } catch (const std::exception &error) { try { report(std::string("USB connection stopped: ") + error.what()); } catch (...) {} }
+            catch (...) { try { report("USB connection stopped after an unexpected error. Hide and show this source to retry."); } catch (...) {} }
+            {
+                std::lock_guard<std::timed_mutex> guard(shared->lock);
+                if (shared->owner) obs_source_output_video(shared->owner->source, nullptr);
+            }
+            std::lock_guard<std::mutex> guard(shared->doneLock);
+            shared->done = true; shared->doneSignal.notify_all();
         });
         std::lock_guard<std::mutex> guard(wifiLock);
         showing = true;
         startWifi();
     }
+    // Called by OBS on its video thread (hide) and on destroy: waits at most half a second for the USB thread.
     void end() {
         std::lock_guard<std::recursive_mutex> running(runLock);
         stop = true;
-        if (worker.joinable()) worker.join();
+        std::shared_ptr<Link> shared;
+        { std::lock_guard<std::mutex> guard(linkLock); shared = std::move(link); }
+        if (shared) {
+            shared->stop = true;
+            bool finished;
+            {
+                std::unique_lock<std::mutex> guard(shared->doneLock);
+                finished = shared->doneSignal.wait_for(guard, std::chrono::milliseconds(500), [&] { return shared->done; });
+            }
+            // A callback still inside OBS after 2 s: keep this source's memory (destroy skips it) rather than
+            // free it under that callback.
+            if (shared->lock.try_lock_for(std::chrono::seconds(2))) { shared->owner = nullptr; shared->lock.unlock(); }
+            else leaked = true;
+            if (finished) worker.join();
+            else {
+                blog(LOG_INFO, "[phonecam] The connection thread finishes in the background (removing the USB link).");
+                worker.detach();  // libobs never unloads plugins, so the detached thread's code stays loaded
+            }
+        }
         {
             std::lock_guard<std::mutex> guard(wifiLock);
             showing = false;
@@ -139,7 +194,7 @@ struct Source {
         keepLive = keep;
         if (keep || visible) return;
         std::lock_guard<std::recursive_mutex> running(runLock);
-        if (worker.joinable()) end();  // switched off while hidden: stop now, as a hide would have
+        if (current()) end();  // switched off while hidden: stop now, as a hide would have
     }
     void setWifiWanted(bool wanted) {
         std::lock_guard<std::mutex> guard(wifiLock);
@@ -152,8 +207,8 @@ const char *name(void *) { return "PhoneCam (phone camera)"; }
 void update(void *value, obs_data_t *settings) {
     auto *self = static_cast<Source *>(value);
     {
-        std::lock_guard<std::mutex> guard(self->lock);
-        self->adbPath = obs_data_get_string(settings, "adb_path");
+        std::lock_guard<std::mutex> guard(self->adb->lock);
+        self->adb->path = obs_data_get_string(settings, "adb_path");
     }
     self->setWifiWanted(obs_data_get_bool(settings, "wifi_direct"));
     self->setKeepLive(obs_data_get_bool(settings, "keep_live"));
@@ -165,7 +220,11 @@ void *create(obs_data_t *settings, obs_source_t *source) {
     return self;
 }
 void defaults(obs_data_t *settings) { obs_data_set_default_bool(settings, "fit_canvas", true); obs_data_set_default_bool(settings, "wifi_direct", true); }
-void destroy(void *value) { delete static_cast<Source *>(value); }
+void destroy(void *value) {
+    auto *self = static_cast<Source *>(value);
+    self->end();
+    if (!self->leaked) delete self;
+}
 void show(void *value) { auto *self = static_cast<Source *>(value); self->visible = true; self->start(); }
 void hide(void *value) {
     auto *self = static_cast<Source *>(value);

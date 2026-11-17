@@ -173,7 +173,8 @@ struct Source {
         showing = true;
         startWifi();
     }
-    // Called by OBS while it draws (show/hide), so it waits at most a few seconds for the USB thread.
+    // Called by OBS on its video thread (hide) and on destroy: waits at most half a second for the USB thread
+    // (audit/FINDINGS.md AUDIT-002); a thread still finishing is left behind and can no longer reach the source.
     void end() {
         std::lock_guard<std::recursive_mutex> running(runLock);
         stop = true;
@@ -184,7 +185,7 @@ struct Source {
             bool finished;
             {
                 std::unique_lock<std::mutex> guard(shared->doneLock);
-                finished = shared->doneSignal.wait_for(guard, std::chrono::seconds(6), [&] { return shared->done; });
+                finished = shared->doneSignal.wait_for(guard, std::chrono::milliseconds(500), [&] { return shared->done; });
             }
             // A callback still inside OBS after 2 s: keep this source's memory (destroy skips it) rather than
             // free it under that callback.
@@ -192,7 +193,7 @@ struct Source {
             else leaked = true;
             if (finished) worker.join();
             else {
-                blog(LOG_WARNING, "[phonecam] The connection thread is still busy (%s); OBS continues without it.",
+                blog(LOG_INFO, "[phonecam] The connection thread finishes in the background (%s).",
                      phonecam::Activity::name(shared->activity.step));
                 phonecam::keepLoaded();
                 worker.detach();

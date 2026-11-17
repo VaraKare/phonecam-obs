@@ -85,6 +85,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                 prepareAdb(adb);
                 doing(Activity::ListingPhones);
                 auto listed = runAdb(adb, {"devices"});
+                if (stop) break;  // each adb call can take seconds: never start another after a hide (AUDIT-002 A)
                 if (stalled(listed)) continue;
                 auto devices = parseDevices(listed.output);
                 if (devices.ready.empty()) {
@@ -95,6 +96,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                         doing(Activity::SearchingWifi);
                         bool tried = false;
                         for (const auto &address : parseWirelessServices(runAdb(adb, {"mdns", "services"}).output)) {
+                            if (stop) break;
                             runAdb(adb, {"connect", address}, 5000); tried = true;
                         }
                         if (tried) continue;
@@ -107,11 +109,13 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                 doing(Activity::ReadingKey);
                 bool unanswered = false;
                 for (const auto &candidate : devices.ready) {
+                    if (stop) break;
                     auto answer = runAdb(adb, {"-s", candidate, "shell", "content", "query", "--uri", pairingUri});
                     if (answer.timedOut) { unanswered = true; continue; }
                     auto found = parseToken(answer.output);
                     if (!found.empty()) { serial = candidate; token = found; break; }
                 }
+                if (stop) break;
                 if (serial.empty()) {
                     if (unanswered && stalled(AdbResult{-1, {}, true})) continue;
                     say("Install the PhoneCam app on the phone (USB debugging connected, app not found)."); wait(3000); continue;
