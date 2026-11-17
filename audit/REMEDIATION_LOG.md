@@ -28,6 +28,8 @@ The app built from 72f5c6d was installed, release-signed, over the published 0.3
 | Phone hotspot (Mac joined it) | Pairing succeeded, then three Wi-Fi sessions in a row, at 1080×1920 with hardware decoding: Start → Stop → Start → Stop → Start, each connecting within about 2–6 s. The user reported good quality, seamless video and a few dropped frames. |
 | AUDIT-001 | **Supported on hardware.** With no USB cable, every session is won by Wi-Fi. That is the path where the old code left the USB listener bound, and the next Start would most likely have failed with "Address already in use". Three consecutive Starts connected. The plain USB Stop-while-waiting case (TEST_AND_VALIDATION_PLAN P1) uses the same `stopListening()` and is still worth one explicit run. |
 
+**Follow-up done (17 Nov):** ignored outside connections are now logged at most once a minute, without the address (`[phonecam] Ignored a Wi-Fi connection from outside the local network…`), on Mac and Windows. If a public network shows that line, the filter refused the phone; if it shows nothing, the network isolated the phone.
+
 ## Next (Stage 2, not started)
 
 AUDIT-002 (hide blocks the OBS video thread), 005, 010, 011, 012, 013, 014, 017, in the order given in [PRIORITIZED_REMEDIATION_ROADMAP.md](PRIORITIZED_REMEDIATION_ROADMAP.md).

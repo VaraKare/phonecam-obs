@@ -33,7 +33,9 @@ bool localPeer(uint32_t hostOrderAddress);
 class Server {
 public:
     using Status = std::function<void(const std::string &)>;
-    Server(Status status, Output output) : status(std::move(status)), output(std::move(output)) {}
+    // note: log-only lines that must not replace the status line (for example ignored outside connections).
+    Server(Status status, Output output, Status note = nullptr)
+        : status(std::move(status)), output(std::move(output)), note(std::move(note)) {}
     // Until stop: listens only while a phone is paired or a pairing window is open, one connection at a time
     // (pairing or live video). Never throws: problems are reported through status.
     void run(std::atomic<bool> &stop);
@@ -52,6 +54,7 @@ public:
 private:
     Status status;
     Output output;
+    Status note;
     std::mutex lock;
     Pairings pairings;                             // the pairings file, read once; changed only through the server
     Bytes secret;                                  // current pairing window; empty when closed

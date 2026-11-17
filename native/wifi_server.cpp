@@ -168,6 +168,8 @@ void Server::loop(std::atomic<bool> &stop) {
         net::closeFd(listener); listener = net::invalid; port = 0;
     };
     bool portProblem = false;
+    bool ignoredNoted = false;
+    std::chrono::steady_clock::time_point lastIgnored;
     while (!stop) {
         bool expired, wanted;
         {
@@ -208,7 +210,17 @@ void Server::loop(std::atomic<bool> &stop) {
         sockaddr_in peer{}; net::Length peerLength = net::Length(sizeof(peer));
         net::Fd fd = accept(listener, reinterpret_cast<sockaddr *>(&peer), &peerLength);
         if (fd == net::invalid) continue;
-        if (peer.sin_family != AF_INET || !localPeer(ntohl(peer.sin_addr.s_addr))) { net::closeFd(fd); continue; }
+        if (peer.sin_family != AF_INET || !localPeer(ntohl(peer.sin_addr.s_addr))) {
+            net::closeFd(fd);
+            // Log at most once a minute, without the address, so a public network's refusals can be told apart
+            // from client isolation (where nothing arrives at all).
+            auto now = std::chrono::steady_clock::now();
+            if (note && (!ignoredNoted || now - lastIgnored >= std::chrono::minutes(1))) {
+                ignoredNoted = true; lastIgnored = now;
+                note("Ignored a Wi-Fi connection from outside the local network. Only private, link-local and loopback addresses may connect.");
+            }
+            continue;
+        }
         net::prepareConnection(fd);
         try { handle(std::uintptr_t(fd), stop); }
         catch (const NotStreaming &) {}

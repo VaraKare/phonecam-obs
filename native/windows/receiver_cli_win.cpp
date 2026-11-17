@@ -59,7 +59,8 @@ int main(int argc, char **argv) {
                 memcpy(p, data.data() + position, n); position += n;
             }, onFrame);
         } else if (wifi) {
-            phonecam::wifi::Server server([](const std::string &value) { fprintf(stderr, "%s\n", value.c_str()); }, onFrame);
+            auto say = [](const std::string &value) { fprintf(stderr, "%s\n", value.c_str()); };
+            phonecam::wifi::Server server(say, onFrame, say);
             std::thread listener([&] { server.run(stopped); });
             // With nothing paired the server must not listen until a pairing window opens (AUDIT-006).
             for (int i = 0; i < 100 && server.computerId().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(20));

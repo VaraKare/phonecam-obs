@@ -108,7 +108,8 @@ struct Source {
         wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
             setStatus(value);
             if (value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0) hidePairingCard();
-        }, [this](phonecam::Image image, uint64_t, uint64_t) { showFrame(image); });
+        }, [this](phonecam::Image image, uint64_t, uint64_t) { showFrame(image); },
+        [](const std::string &value) { blog(LOG_INFO, "[phonecam] %s", value.c_str()); });
         auto *server = wifi.get();
         wifiWorker = std::thread([server, this] {
             try { server->run(wifiStop); }  // run() reports its own problems; this is the last line of defence

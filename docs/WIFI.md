@@ -26,7 +26,7 @@ When the plugin listens and announces:
 - only while the source is visible, **Allow paired phones over Wi-Fi** is on, and a phone is paired or a pairing window is open;
 - unticking the option closes the port at once;
 - with nothing paired, there is no open port at all;
-- connections from addresses outside the local network are closed without a reply (accepted: private 10/8, 172.16/12, 192.168/16, link-local 169.254/16, loopback).
+- connections from addresses outside the local network are closed without a reply (accepted: private 10/8, 172.16/12, 192.168/16, link-local 169.254/16, loopback). The OBS log notes this at most once a minute ("Ignored a Wi-Fi connection from outside the local network"), without the address. On a public network with client isolation nothing arrives at all, so no line appears.
 
 These come from the 16 November 2026 audit, AUDIT-006 in [the findings](../audit/FINDINGS.md).
 
