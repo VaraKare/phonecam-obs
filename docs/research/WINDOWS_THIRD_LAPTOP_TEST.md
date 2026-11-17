@@ -45,3 +45,14 @@ Check 9 again: the first QR pairing worked (22:20:33); the new watchdog then log
 | First Start after OBS opens | Ended after 2 s (also on USB in run 1): Windows sets up the D3D11 decoder on the first picture (1.4 s) and reads nothing meanwhile; the phone gives up (750 ms USB, 3 s Wi-Fi). The second Start works | 22:41:12 first frame "decode 1430.7 ms", ended 22:41:14. Phone fix in 80513ef (4 s writes in a session's first 5 s); not yet installed on the phone |
 | 11. Wi-Fi switch off | **Passed (AUDIT-006 fixed on hardware).** After unticking, the server stopped and a connection from the Mac to port 47183 was refused | 22:50:18 "Wi-Fi: stopped listening"; `nc` refused |
 | 12. LAN noise during Wi-Fi live | **No freeze.** 50 empty connections in 33 s: 4 queued, 46 refused (backlog full); live continued and the owner saw no freeze, also after Stop and Start. When live ended, each queued empty connection set the status to "Wi-Fi live ended: connection closed": **AUDIT-005 confirmed** (status overwritten, and each queued connection holds the server up to 5 s) | 22:52:47–22:53:20; three status lines at 22:53:47 |
+| 17 (first try). Long run over Wi-Fi | Stopped after 4.5 min: the USB thread hung at 22:59 after "Unlock the phone…" with the Properties window open, and later Wi-Fi sessions stalled after a few seconds. OBS memory stayed between about 60 and 140 MB | Same cause as the Wi-Fi hang: refreshing the properties from a worker thread. Fixed for every status update in 0b53c03 |
+
+## Run 4 (from 23:18, kit from run 44196193195, commit 0b53c03; phone app from e761846/80513ef installed 23:20)
+
+| Check | Result | Evidence |
+|---|---|---|
+| First Start after OBS opens | **Passed (fix 80513ef works).** The first picture took 659 ms to decode and the phone kept sending | 23:23:39 |
+| 17. Long run, USB rear 1080p | **13 minutes, no late frames on the PC.** Phone badge: 30 fps, 37 drops, timer about 13 min. Stopped by the owner. Heat chip showed Hot during the run, Warm a few seconds after Stop, then disappeared (66e4976 verified). The 30-minute target was not reached | 23:23:39 → 23:36:52 |
+| Phone live timer (e761846) | **Works.** The LIVE badge counted up to about 13 minutes | Owner |
+
+Phone UI: after Stop the badge said "Wi-Fi ready · <Mac>" although the laptop was used last. It showed the oldest pairing. It now shows the most recently used computer plus the number of others (" +1").

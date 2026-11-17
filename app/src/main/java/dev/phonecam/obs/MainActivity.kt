@@ -295,7 +295,11 @@ class MainActivity : Activity() {
                 feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
             lastPhase = phase
         }
-        val paired = if (phase == LiveState.Phase.STOPPED) WifiConnector(this).pairings.macs.firstOrNull()?.name else null
+        // The computer used most recently (pairings are kept in order of use), plus how many others are paired.
+        val paired = if (phase == LiveState.Phase.STOPPED) WifiConnector(this).pairings.macs.lastOrNull()?.let { last ->
+            val others = WifiConnector(this).pairings.macs.size - 1
+            last.name + if (others > 0) " +$others" else ""
+        } else null
         badge.removeCallbacks(clock)
         if (phase == LiveState.Phase.LIVE) badge.post(clock)
         badge.text = when (phase) { LiveState.Phase.LIVE -> "● LIVE  ${elapsed()}"; LiveState.Phase.WAITING -> "Waiting for OBS"; else -> "Wi-Fi ready · $paired" }
