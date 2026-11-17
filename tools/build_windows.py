@@ -86,6 +86,16 @@ def wifi_checks(runtime, receiver):
     with tempfile.TemporaryDirectory() as directory:
         env = dict(os.environ, PHONECAM_WIFI_STORE=str(Path(directory) / "wifi.json"))
         server = subprocess.Popen([str(receiver), "--wifi", "12"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=runtime)
+        # Drain stderr while Gradle runs: a full pipe would block the server's log writes, and with them the
+        # server thread, which then refuses or ignores the phone (a flaky failure, not the code under test).
+        import threading
+        errors = []
+        drain = threading.Thread(target=lambda: errors.extend(server.stderr), daemon=True)
+        drain.start()
+        def failure_details():
+            results = ROOT / "app/build/test-results/testDebugUnitTest/TEST-dev.phonecam.obs.WifiInteropTest.xml"
+            junit = results.read_text()[-4000:] if results.exists() else "(no JUnit report)"
+            return f"\n--- JUnit ---\n{junit}\n--- Windows server ---\n{''.join(errors)[-4000:]}"
         try:
             line = server.stdout.readline().split()
             assert line and line[0] == "PAIR", line
@@ -93,10 +103,13 @@ def wifi_checks(runtime, receiver):
             env["PHONECAM_WIFI_PACKETS"] = str(FIXTURES / "avc-640x360.pcam")
             gradle = subprocess.run([str(ROOT / "gradlew.bat"), "--no-daemon", "-q", "testDebugUnitTest", "--tests", "*WifiInteropTest*", "--rerun"],
                                     cwd=ROOT, env=env, capture_output=True, text=True, timeout=1200)
-            assert gradle.returncode == 0, gradle.stdout[-3000:] + gradle.stderr[-3000:]
+            assert gradle.returncode == 0, gradle.stdout[-3000:] + gradle.stderr[-3000:] + failure_details()
             report = (ROOT / "app/build/test-results/testDebugUnitTest/TEST-dev.phonecam.obs.WifiInteropTest.xml").read_text()
             assert 'skipped="0"' in report, report[:2000]
-            out, err = server.communicate(timeout=60)
+            server.wait(timeout=60)  # stdout carries only the PAIR line and the final JSON, so it cannot fill
+            out = server.stdout.read()
+            drain.join(timeout=10)
+            err = "".join(errors)
         finally:
             if server.poll() is None: server.kill()
         print(err, flush=True)
