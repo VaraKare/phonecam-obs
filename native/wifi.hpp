@@ -65,8 +65,9 @@ private:
     int failures = 0;
     std::atomic<int> port{0};
     std::atomic<bool> ready{false};                // pairings loaded
-    std::atomic<bool> announceNeeded{false};       // the server thread re-announces; no other thread touches mDNS
-    enum Step { Waiting, Opening, Announcing, Withdrawing, Connecting, Saving, Streaming };
+    std::atomic<bool> announceNeeded{false};       // ask the announcer thread to announce again; only it touches mDNS
+    enum Step { Waiting, Opening, Withdrawing, Connecting, Saving, Streaming };
+    std::atomic<int64_t> announceSince{0};        // the announcer thread is inside DNS-SD since (0: idle)
     std::atomic<int> step{Waiting};
     std::atomic<int64_t> stepSince{0};
     void doing(Step value);

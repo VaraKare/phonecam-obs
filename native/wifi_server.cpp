@@ -88,11 +88,12 @@ static int64_t steadyNowMs() {
 void Server::doing(Step value) { step = value; stepSince = steadyNowMs(); }
 const char *Server::stuckLongerThan(int64_t limitMs) const {
     const int now = step;
+    const int64_t announcing = announceSince;
+    if (announcing && steadyNowMs() - announcing >= limitMs) return "announcing on the network (DNS-SD)";
     if (now == Waiting || now == Streaming || steadyNowMs() - stepSince < limitMs) return nullptr;
     switch (now) {
         case Opening: return "opening the network port";
-        case Announcing: return "announcing on the network (DNS-SD)";
-        case Withdrawing: return "withdrawing the network announcement (DNS-SD)";
+        case Withdrawing: return "closing a phone's connection";
         case Connecting: return "talking to a phone that connected";
         case Saving: return "saving the pairing";
         default: return "working";
@@ -161,10 +162,30 @@ void Server::forget() {
 }
 
 void Server::run(std::atomic<bool> &stop) {
+    // DNS-SD runs on its own thread: on Windows a registration call can take many seconds, and while it ran
+    // on this thread nothing accepted phones (17 Nov laptop: ECONNREFUSED once the backlog filled, the
+    // pairing window never expired, OBS took 45 s to close). This thread only says what to announce.
+    std::atomic<bool> quiet{false};
+    std::thread announcer([this, &quiet] {
+        int shown = 0;  // the port currently announced
+        auto busy = [&](bool on) { announceSince = on ? steadyNowMs() : 0; };
+        while (!quiet) {
+            const int now = port;
+            const bool again = announceNeeded.exchange(false);
+            try {
+                if (shown && now != shown) { busy(true); withdraw(); busy(false); shown = 0; }
+                if (now && (again || !shown)) { busy(true); announce(); busy(false); shown = now; }
+            } catch (...) { busy(false); }
+            pauseFor(quiet, 50);
+        }
+        try { busy(true); withdraw(); } catch (...) {}
+        busy(false);
+    });
     try { loop(stop); }
     catch (const std::exception &error) { status(std::string("Direct Wi-Fi stopped: ") + error.what()); }
     catch (...) { status("Direct Wi-Fi stopped after an unexpected error."); }
-    try { withdraw(); } catch (...) {}
+    quiet = true;
+    announcer.join();
     ready = false;
 }
 
@@ -181,8 +202,6 @@ void Server::loop(std::atomic<bool> &stop) {
     net::Fd listener = net::invalid;
     auto closeListener = [&] {
         if (listener == net::invalid) return;
-        doing(Withdrawing);
-        withdraw();
         net::closeFd(listener); listener = net::invalid; port = 0;
         if (note) note("Wi-Fi: stopped listening (nothing paired and no pairing window).");
     };
@@ -227,8 +246,6 @@ void Server::loop(std::atomic<bool> &stop) {
             announceNeeded = true;
             if (note) note("Wi-Fi: listening on port " + std::to_string(port) + ".");
         }
-        if (announceNeeded.exchange(false)) { doing(Announcing); announce(); }
-        doing(Waiting);
         if (net::pollRead(listener, 200) <= 0) continue;
         sockaddr_in peer{}; net::Length peerLength = net::Length(sizeof(peer));
         net::Fd fd = accept(listener, reinterpret_cast<sockaddr *>(&peer), &peerLength);
