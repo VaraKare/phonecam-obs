@@ -62,6 +62,8 @@ class MainActivity : Activity() {
     private lateinit var placeholder: TextView
     private lateinit var badge: TextView
     private lateinit var thermal: TextView
+    private var shownPhase = LiveState.Phase.STOPPED
+    private val heatListener = PowerManager.OnThermalStatusChangedListener { heat -> if (!destroyed) showHeat(heat) }
     private lateinit var stats: TextView
     private lateinit var panelScroll: ScrollView
     private lateinit var cameraRow: LinearLayout
@@ -262,6 +264,13 @@ class MainActivity : Activity() {
         if (live == null) arrange()
     }
 
+    /** The heat chip follows Android's thermal status, also after Stop (it used to freeze on "Hot" once live ended). */
+    private fun showHeat(heat: Int) {
+        thermal.text = when { heat >= PowerManager.THERMAL_STATUS_SEVERE -> "Hot — consider stopping"; heat >= PowerManager.THERMAL_STATUS_MODERATE -> "Warm"; else -> "Cool" }
+        thermal.background = rounded(if (heat >= PowerManager.THERMAL_STATUS_SEVERE) RED else if (heat >= PowerManager.THERMAL_STATUS_MODERATE) AMBER else CHIP, 6)
+        thermal.visibility = if (shownPhase == LiveState.Phase.LIVE || heat >= PowerManager.THERMAL_STATUS_MODERATE) View.VISIBLE else View.GONE
+    }
+
     private fun showState(state: LiveState?) {
         val phase = state?.phase ?: LiveState.Phase.STOPPED
         if (phase != lastPhase) {
@@ -279,10 +288,8 @@ class MainActivity : Activity() {
         stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
         if (state != null && p != null) stats.text = "${Quality.describe(p).substringBefore(" ·")} · ${"%.0f".format(state.fps)} fps · ${state.drops} drops" +
             if (state.bitrate in 1 until state.requestedBitrate) "\nLink busy: ${state.bitrate / 1_000_000} of ${state.requestedBitrate / 1_000_000} Mb/s" else ""
-        val heat = runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
-        thermal.text = when { heat >= PowerManager.THERMAL_STATUS_SEVERE -> "Hot — consider stopping"; heat >= PowerManager.THERMAL_STATUS_MODERATE -> "Warm"; else -> "Cool" }
-        thermal.background = rounded(if (heat >= PowerManager.THERMAL_STATUS_SEVERE) RED else if (heat >= PowerManager.THERMAL_STATUS_MODERATE) AMBER else CHIP, 6)
-        thermal.visibility = if (phase == LiveState.Phase.LIVE || heat >= PowerManager.THERMAL_STATUS_MODERATE) View.VISIBLE else View.GONE
+        shownPhase = phase
+        showHeat(runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0))
         stageControls.visibility = if (phase == LiveState.Phase.LIVE) View.VISIBLE else View.GONE
         val previewing = phase != LiveState.Phase.STOPPED && showPreview
         placeholder.visibility = if (phase == LiveState.Phase.LIVE && previewing) View.GONE else View.VISIBLE
@@ -565,6 +572,7 @@ class MainActivity : Activity() {
     }
     override fun onResume() {
         super.onResume(); foreground = true
+        runCatching { getSystemService(PowerManager::class.java).addThermalStatusListener(heatListener) }  // also reports the current status
         if (orientation.canDetectOrientation()) orientation.enable()
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { if (options.isEmpty()) scan() }
         else message.text = "PhoneCam turns this phone into a camera for OBS. Allow camera access to begin."
@@ -577,6 +585,7 @@ class MainActivity : Activity() {
     }
     override fun onPause() {
         foreground = false; orientation.disable()
+        runCatching { getSystemService(PowerManager::class.java).removeThermalStatusListener(heatListener) }
         live?.stop("App left the screen, so live stopped. Keep PhoneCam open while streaming.")
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onPause()

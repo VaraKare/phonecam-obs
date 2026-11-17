@@ -55,6 +55,10 @@ struct Source {
     std::unique_ptr<phonecam::wifi::Server> wifi;
     std::thread wifiWorker;
     std::atomic<bool> card{false};
+    // "Keep the phone live while this source is hidden": hide leaves USB and Wi-Fi running. start/end are
+    // serialised because hide runs on OBS's video thread and the switch on the UI thread.
+    std::atomic<bool> visible{false}, keepLive{false};
+    std::recursive_mutex runLock;
     explicit Source(obs_source_t *value) : source(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
@@ -123,12 +127,19 @@ struct Source {
         wifi.reset();
         hidePairingCard();
     }
+    void setKeepLive(bool keep) {
+        keepLive = keep;
+        if (keep || visible) return;
+        std::lock_guard<std::recursive_mutex> running(runLock);
+        if (bool(current())) end();  // switched off while hidden: stop now, as a hide would have
+    }
     void setWifiWanted(bool wanted) {
         std::lock_guard<std::mutex> guard(wifiLock);
         wifiWanted = wanted;
         if (wanted) startWifi(); else stopWifi();
     }
     void start() {
+        std::lock_guard<std::recursive_mutex> running(runLock);
         if (current()) return;
         stop = false;
         { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
@@ -164,6 +175,7 @@ struct Source {
     }
     // Called by OBS while it draws (show/hide), so it waits at most a few seconds for the USB thread.
     void end() {
+        std::lock_guard<std::recursive_mutex> running(runLock);
         stop = true;
         std::shared_ptr<Link> shared;
         { std::lock_guard<std::mutex> guard(linkLock); shared = std::move(link); }
@@ -217,6 +229,7 @@ void update(void *value, obs_data_t *settings) {
         self->adb->path = obs_data_get_string(settings, "adb_path");
     }
     self->setWifiWanted(obs_data_get_bool(settings, "wifi_direct"));
+    self->setKeepLive(obs_data_get_bool(settings, "keep_live"));
 }
 void *create(obs_data_t *settings, obs_source_t *source) {
     obs_source_set_async_unbuffered(source, true);
@@ -231,8 +244,12 @@ void destroy(void *value) {
     if (!self->leaked) delete self;
 }
 void tick(void *value, float) { static_cast<Source *>(value)->watch(); }
-void show(void *value) { static_cast<Source *>(value)->start(); }
-void hide(void *value) { static_cast<Source *>(value)->end(); }
+void show(void *value) { auto *self = static_cast<Source *>(value); self->visible = true; self->start(); }
+void hide(void *value) {
+    auto *self = static_cast<Source *>(value);
+    self->visible = false;
+    if (!self->keepLive) self->end();
+}
 obs_properties_t *properties(void *value) {
     obs_properties_t *p = obs_properties_create();
     std::string status = value ? static_cast<Source *>(value)->currentStatus() : "Not running";
@@ -258,6 +275,7 @@ obs_properties_t *properties(void *value) {
     obs_properties_t *options = obs_properties_create();
     obs_properties_add_bool(options, "fit_canvas", "Fit the picture to the canvas automatically");
     obs_properties_add_bool(options, "wifi_direct", "Allow paired phones over Wi-Fi");
+    obs_properties_add_bool(options, "keep_live", "Keep the phone live while this source is hidden (the phone stays warm and uses battery)");
     obs_properties_add_button2(options, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
         if (!data) return false;
         auto *self = static_cast<Source *>(data);
