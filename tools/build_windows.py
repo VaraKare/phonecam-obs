@@ -99,6 +99,9 @@ def wifi_checks(runtime, receiver):
         try:
             line = server.stdout.readline().split()
             assert line and line[0] == "PAIR", line
+            import socket  # strangers first: nothing, then junk (AUDIT-005)
+            with socket.create_connection(("127.0.0.1", int(line[1])), timeout=5): pass
+            with socket.create_connection(("127.0.0.1", int(line[1])), timeout=5) as junk: junk.sendall(b"GET / HTTP/1.0\r\n\r\n" * 8)
             env["PHONECAM_WIFI_PEER"] = f"127.0.0.1 {line[1]} {line[2]} {line[3]}"
             env["PHONECAM_WIFI_PACKETS"] = str(FIXTURES / "avc-640x360.pcam")
             gradle = subprocess.run([str(ROOT / "gradlew.bat"), "--no-daemon", "-q", "testDebugUnitTest", "--tests", "*WifiInteropTest*", "--rerun"],
@@ -118,6 +121,8 @@ def wifi_checks(runtime, receiver):
         assert value["decodedFrames"] == 12 and (value["lastWidth"], value["lastHeight"]) == (640, 360), value
         assert "wrong code" in err and "Paired with Test phone" in err and "Live over direct Wi-Fi" in err, err
         assert "Listening before pairing: 0" in err, err  # nothing paired yet: no open port (AUDIT-006)
+        assert err.count("Ignored a Wi-Fi connection that was not a PhoneCam phone") == 1, err
+        assert "Wi-Fi live ended" not in err, err  # strangers never touch the status line (AUDIT-005)
         assert json.loads((Path(directory) / "wifi.json").read_text())["phones"][0]["name"] == "Test phone"
     print("PASS: Windows direct Wi-Fi with the phone's Kotlin client: wrong code refused, pairing, encrypted video", flush=True)
     damaged_store_check(receiver, runtime)

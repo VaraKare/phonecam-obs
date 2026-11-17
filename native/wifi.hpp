@@ -70,6 +70,7 @@ private:
     std::atomic<int64_t> announceSince{0};        // the announcer thread is inside DNS-SD since (0: idle)
     std::atomic<int> step{Waiting};
     std::atomic<int64_t> stepSince{0};
+    int64_t strangerNoted = 0;                     // server thread only: last "not a phone" log line
     void doing(Step value);
     void *bonjour = nullptr;                       // platform announcement handle (server thread only)
     void announce();                               // (re)announces with the current pairing state

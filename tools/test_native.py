@@ -203,6 +203,10 @@ esac
             try:
                 line = receiver.stdout.readline().split()
                 self.assertEqual(line[0], "PAIR", line)
+                # Strangers first: one connection that sends nothing, one that sends junk (AUDIT-005).
+                import socket
+                with socket.create_connection(("127.0.0.1", int(line[1])), timeout=5): pass
+                with socket.create_connection(("127.0.0.1", int(line[1])), timeout=5) as junk: junk.sendall(b"GET / HTTP/1.0\r\n\r\n" * 8)
                 env["PHONECAM_WIFI_PEER"] = f"127.0.0.1 {line[1]} {line[2]} {line[3]}"
                 env["PHONECAM_WIFI_PACKETS"] = str(stream)
                 gradle = subprocess.run(["./gradlew", "-q", "testDebugUnitTest", "--tests", "*WifiInteropTest*", "--rerun"],
@@ -220,6 +224,8 @@ esac
             self.assertIn("wrong code", err)
             self.assertIn("Paired with Test phone", err)
             self.assertIn("Listening before pairing: 0", err)  # nothing paired yet: no open port (AUDIT-006)
+            self.assertEqual(err.count("Ignored a Wi-Fi connection that was not a PhoneCam phone"), 1, err)  # once a minute
+            self.assertNotIn("Wi-Fi live ended", err, err)  # strangers never touch the status line (AUDIT-005)
             self.assertEqual(json.loads((Path(directory) / "wifi.json").read_text())["phones"][0]["name"], "Test phone")
 
     def test_damaged_pairings_file_is_kept_and_reported(self):

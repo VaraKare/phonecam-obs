@@ -276,8 +276,18 @@ void Server::loop(std::atomic<bool> &stop) {
 void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
     const auto fd = net::Fd(socketHandle);
     Bytes hello(clientHelloBytes);
-    readAll(fd, hello.data(), hello.size(), stop, 5);
-    if (std::memcmp(hello.data(), "PCW1", 4) || (hello[4] != 1 && hello[4] != 2)) return;  // not a PhoneCam phone
+    // Anything on the network can connect. Until it sends a PhoneCam greeting it is not a phone: it never
+    // changes the status line and holds the server for at most 3 s (audit/FINDINGS.md AUDIT-005).
+    auto stranger = [&] {
+        const int64_t now = steadyNowMs();
+        if (note && (!strangerNoted || now - strangerNoted >= 60000)) {
+            strangerNoted = now;
+            note("Ignored a Wi-Fi connection that was not a PhoneCam phone.");
+        }
+    };
+    try { readAll(fd, hello.data(), hello.size(), stop, 3); }
+    catch (const std::exception &) { if (stop) throw; stranger(); return; }
+    if (std::memcmp(hello.data(), "PCW1", 4) || (hello[4] != 1 && hello[4] != 2)) { stranger(); return; }
     bool pairing = hello[4] == 2;
     std::string macId = hexString(hello.data() + 5, 8), phoneId = hexString(hello.data() + 13, 8);
     auto refuse = [&](uint8_t code) { writeAll(fd, Bytes{'P', 'C', 'W', '1', code}); };
