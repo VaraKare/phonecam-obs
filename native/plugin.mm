@@ -28,6 +28,8 @@ struct Link {
     bool done = false;
 };
 
+void refreshOnUi(void *weakSource);
+
 int64_t steadyMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -52,7 +54,8 @@ struct Source {
     std::unique_ptr<phonecam::wifi::Server> wifi;
     std::thread wifiWorker;
     std::atomic<bool> card{false};
-    std::atomic<int64_t> cardUntil{0};  // the pairing card hides itself on time, even if the Wi-Fi server is busy
+    std::atomic<int64_t> cardUntil{0};
+    std::atomic<bool> hideCardRequested{false};  // acted on by the UI task  // the pairing card hides itself on time, even if the Wi-Fi server is busy
     bool wifiWarned = false;            // video thread only
     // "Keep the phone live while this source is hidden": hide leaves USB and Wi-Fi running. start/end are
     // serialised because hide runs on OBS's video thread and the switch on the UI thread.
@@ -61,10 +64,14 @@ struct Source {
     explicit Source(obs_source_t *value) : source(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
-    void setStatus(const std::string &value) {
+    // Any thread, without waiting on OBS: the Properties window is refreshed by an OBS UI task. Refreshing it
+    // directly re-enters properties(), which takes wifiLock; from the Pair button (wifiLock held) that
+    // deadlocked OBS (18 Nov Mac, sampled), and from worker threads it blocked them on Windows (17 Nov).
+    void setStatus(const std::string &value, bool hideCard = false) {
         { std::lock_guard<std::mutex> guard(lock); status = value; }
         blog(LOG_INFO, "[phonecam] %s", value.c_str());
-        obs_source_update_properties(source);
+        if (hideCard) hideCardRequested = true;
+        obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false);
     }
     // One picture path for every connection: hardware-decoded NV12 from USB or Wi-Fi.
     void showFrame(CVPixelBufferRef image) {
@@ -180,8 +187,7 @@ struct Source {
         if (wifi || !showing || !wifiWanted) return;
         wifiStop = false;
         wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
-            setStatus(value);
-            if (value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0) hidePairingCard();
+            setStatus(value, value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0);
         }, [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); },
         [](const std::string &value) { blog(LOG_INFO, "[phonecam] %s", value.c_str()); });
         auto *server = wifi.get();
@@ -210,10 +216,8 @@ struct Source {
     }
     // Once per frame on OBS's video thread; never blocks it.
     void watch() {
-        if (card && steadyMs() > cardUntil) {
-            hidePairingCard();
-            setStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.");
-        }
+        if (card && !hideCardRequested && steadyMs() > cardUntil)
+            setStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.", true);
         std::unique_lock<std::mutex> guard(wifiLock, std::try_to_lock);
         if (!guard || !wifi) return;
         const char *stuck = wifi->stuckLongerThan(10000);
@@ -222,6 +226,18 @@ struct Source {
     }
     ~Source() { end(); }
 };
+// UI thread: applies what other threads asked for. The weak reference keeps a removed source safe.
+void refreshOnUi(void *weakSource) {
+    auto *weak = static_cast<obs_weak_source_t *>(weakSource);
+    obs_source_t *strong = obs_weak_source_get_source(weak);
+    obs_weak_source_release(weak);
+    if (!strong) return;
+    if (auto *self = static_cast<Source *>(obs_obj_get_data(strong)); self && self->hideCardRequested.exchange(false))
+        self->hidePairingCard();
+    obs_source_update_properties(strong);
+    obs_source_release(strong);
+}
+
 const char *name(void *) { return "PhoneCam (phone camera)"; }
 void update(void *value, obs_data_t *settings) {
     auto *self = static_cast<Source *>(value);

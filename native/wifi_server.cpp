@@ -200,10 +200,10 @@ void Server::loop(std::atomic<bool> &stop) {
     { std::lock_guard<std::mutex> guard(lock); pairings = std::move(loaded); }
     ready = true;
     net::Fd listener = net::invalid;
-    auto closeListener = [&] {
+    auto closeListener = [&](const char *why) {
         if (listener == net::invalid) return;
         net::closeFd(listener); listener = net::invalid; port = 0;
-        if (note) note("Wi-Fi: stopped listening (nothing paired and no pairing window).");
+        if (note) note(std::string("Wi-Fi: stopped listening (") + why + ").");
     };
     bool portProblem = false;
     bool ignoredNoted = false;
@@ -219,7 +219,7 @@ void Server::loop(std::atomic<bool> &stop) {
         }
         if (expired) { announceNeeded = true; status("Pairing window closed. Click Pair a phone over Wi-Fi to try again."); }
         // Nothing paired and no window open: no listening port at all (audit/FINDINGS.md AUDIT-006).
-        if (!wanted) { closeListener(); pauseFor(stop, 200); continue; }
+        if (!wanted) { closeListener("nothing paired and no pairing window"); pauseFor(stop, 200); continue; }
         if (listener == net::invalid) {
             doing(Opening);
             listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -270,7 +270,7 @@ void Server::loop(std::atomic<bool> &stop) {
         net::closeFd(fd);
         doing(Waiting);
     }
-    closeListener();
+    closeListener("source hidden, Wi-Fi switched off or OBS closing");
 }
 
 void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {

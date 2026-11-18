@@ -10,7 +10,8 @@ Notes from the 17 November 2026 Windows laptop session. Nothing here is built ye
 4. **One clear status line.** Show where the video goes ("Live to OBS on <computer> over USB / Wi-Fi") and the next step when waiting. Today this is split between the badge, the stats chip and messages.
 5. **Heat chip.** Fixed in code (66e4976): it now follows Android's thermal status after Stop. The phone still runs the older build, so check it after the next install. Later: when the phone stays "Hot" for a minute, suggest a lower quality.
 6. **Battery and charging hint** next to the heat chip during long sessions.
-7. **Settings.** Paired computers with "Forget" per computer, the app version, and a link to the help page.
+7. **Settings: one "Paired computers" row** (owner, 18 Nov). Today each pairing is listed one after the other in Settings. Instead, show one row with the count ("Paired computers · 2"). Tapping it opens a list; tapping a computer offers "Forget" (with confirmation) or Cancel. Also in Settings: the app version and a link to the help page.
+8. **Less cluttered main screen** (owner, 18 Nov: "still feels clustered"). Group the controls (camera, quality, extras) and hide rarely used ones behind Settings. To design together with item 4.
 
 ## OBS source (Properties)
 
@@ -31,7 +32,7 @@ Notes from the 17 November 2026 Windows laptop session. Nothing here is built ye
 
 The owner asked for it on 17 Nov: an ⓘ next to settings whose purpose isn't obvious, opening a short explanation of what it does and when to use it. Not on self-explanatory controls.
 
-**OBS:** `obs_property_set_long_description` shows OBS's own ⓘ icon with a tooltip, so no custom UI is needed. Candidates:
+**OBS:** `obs_property_set_long_description` adds the help text. On the Mac (OBS 33.0.1) it appeared as text in the Properties, with no ⓘ icon (owner, 18 Nov). Check how it shows on Windows, and keep the texts short. Candidates:
 - "Keep the phone live while this source is hidden": heat and battery cost, and when it helps (switching scenes often).
 - "Allow paired phones over Wi-Fi": what listens on the network, and that turning it off closes the port.
 - "Fit the picture to the canvas automatically".
