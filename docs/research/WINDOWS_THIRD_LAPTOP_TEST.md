@@ -80,3 +80,19 @@ The Windows plugin built from 0b53c03 (CI run 44196193195) is the file proven he
 - a clean exit.
 
 The Mac plugin and the phone app changed tonight as well (hide hand-off, keep live while hidden, ⓘ help, card timer, DNS-SD thread, AUDIT-005, live timer, badge), so they need a Mac and phone check before any v0.4 release.
+
+## Mac check of the same night's changes (18 November 2026, 00:02–00:40)
+
+M1 Mac, OBS 33.0.1, the phone on the app from dd80efd (release-signed, installed 00:02).
+
+| Check | Result | Evidence |
+|---|---|---|
+| USB live, first Start | **Passed.** Picture good, no drops; the live timer counted | Live 00:10:34, landscape and portrait |
+| Hide and show (keep live off) | **Passed.** Wi-Fi stopped 0.2 s after hide and listened again 0.03 s after show | 00:15:05–00:15:11 |
+| Keep live while hidden | **Passed.** With the box ticked, hiding and showing left the phone live | 00:16:49–00:16:54 |
+| Help text (long descriptions) | Shown in Properties as text; no ⓘ icon on the Mac | Owner |
+| Wi-Fi pairing | **Failed twice, then passed.** Clicking "Pair a phone over Wi-Fi" hung OBS (beachball). `sample` showed a self-deadlock: the button held wifiLock, setting the status refreshed the Properties synchronously, and properties() waited for wifiLock. Queuing a UI task was not enough, because OBS runs UI tasks at once on the UI thread (second sample). Fixed in 07b6c52: the status is set after the lock is released, and properties() only try-locks. Then the pairing at 00:34:08 worked, OBS stayed responsive, and live ran with keep-live hide/show | Samples kept outside Git; log 00:34:04–00:35:24 |
+| Live after pairing | Went over adb Wireless debugging ("Live over Wi-Fi"), because the phone still had Wireless debugging on. Direct Wi-Fi on the Mac passed on 17 Nov | 00:34:37 |
+| Quit OBS | **Passed.** Closed within a second | Owner |
+
+The Windows plugin also changed in 07b6c52 (same lock rule). That build has passed CI only; the laptop proved 0b53c03.
