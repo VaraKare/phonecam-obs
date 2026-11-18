@@ -98,12 +98,21 @@ struct Source {
         shownWidth = width; shownHeight = height;
         obs_queue_task(OBS_TASK_UI, fitToCanvas, obs_source_get_weak_source(source), false);
     }
+    // The status is set after wifiLock is released: setting it refreshes the Properties, which reads wifiLock.
     void showPairingCard() {
-        std::lock_guard<std::mutex> guard(wifiLock);
-        if (!wifi) { setStatus("Direct Wi-Fi is off. Turn on \"Allow paired phones over Wi-Fi\" first, and keep this source visible."); return; }
+        std::string message;
+        {
+            std::lock_guard<std::mutex> guard(wifiLock);
+            message = openPairingCard();
+        }
+        setStatus(message);
+    }
+    // wifiLock held. Returns the status line to show.
+    std::string openPairingCard() {
+        if (!wifi) { return std::string("Direct Wi-Fi is off. Turn on \"Allow paired phones over Wi-Fi\" first, and keep this source visible."); }
         phonecam::wifi::PairingWindow window;
         try { window = wifi->openPairing(); }
-        catch (const std::exception &error) { setStatus(error.what()); return; }
+        catch (const std::exception &error) { return error.what(); }
         const uint32_t width = 1280, height = 720;
         auto pixels = phonecam::wifi::renderPairingCard(window, width, height);
         struct obs_source_frame frame{};
@@ -114,7 +123,7 @@ struct Source {
         card = true;
         cardUntil = steadyMs() + 180000;  // the server's pairing window lasts 3 minutes
         obs_source_output_video(source, &frame);
-        setStatus("Pairing for 3 minutes: in PhoneCam open Settings → Pair a computer and scan the QR code, or type " + window.code + ".");
+        return "Pairing for 3 minutes: in PhoneCam open Settings → Pair a computer and scan the QR code, or type " + window.code + ".";
     }
     void hidePairingCard() { if (card.exchange(false)) obs_source_output_video(source, nullptr); }
     void start() {
@@ -284,8 +293,9 @@ obs_properties_t *properties(void *value) {
         auto *self = static_cast<Source *>(value);
         std::string summary;
         {
-            std::lock_guard<std::mutex> guard(self->wifiLock);
-            try { if (self->wifi) summary = self->wifi->summary(); } catch (...) {}
+            // Never wait here: OBS calls properties() synchronously from our own callbacks (18 Nov Mac deadlock).
+            std::unique_lock<std::mutex> guard(self->wifiLock, std::try_to_lock);
+            try { if (guard && self->wifi) summary = self->wifi->summary(); } catch (...) {}
         }
         if (!summary.empty()) obs_properties_add_text(p, "wifi_summary", summary.c_str(), OBS_TEXT_INFO);
     }
@@ -301,8 +311,10 @@ obs_properties_t *properties(void *value) {
         if (!data) return false;
         auto *self = static_cast<Source *>(data);
         try {
-            std::lock_guard<std::mutex> guard(self->wifiLock);
-            if (self->wifi) self->wifi->forget(); else phonecam::wifi::Server::forgetAll();
+            {
+                std::lock_guard<std::mutex> guard(self->wifiLock);
+                if (self->wifi) self->wifi->forget(); else phonecam::wifi::Server::forgetAll();
+            }
             self->setStatus("Forgot all paired phones. Pair again to use Wi-Fi.");
         }
         catch (const std::exception &error) { self->setStatus(error.what()); }
