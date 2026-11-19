@@ -45,6 +45,11 @@ Evidence: [docs/research/WINDOWS_THIRD_LAPTOP_TEST.md](../docs/research/WINDOWS_
 | New: DNS-SD on the accepting thread | Fixed | Announcer thread (01aa7db) | Mac TSan clean; CI |
 | New: first Start drops (decoder warm-up) | Fixed (phone) | 4 s writes in the first 5 s (80513ef) | Laptop: first Start held |
 
+## AUDIT-015 follow-up (19 November 2026)
+
+- **Released Mac plugin (v0.3.0-alpha.5):** its debug map held the build path, including the Mac's user name. Replaced on GitHub with the same binary run through `strip -S` and re-signed ad hoc. The machine code (`otool -t`) and the section layout are byte-identical, libobs loads it, and the user name and debug entries are gone. `SHA256SUMS.txt` was updated and the release notes say so. The local unstripped original is kept outside Git.
+- **Git history:** checked again on all branches. The 11 Nov rewrite had already replaced the real values with stand-ins (`/Users/owner/`, made-up `192.168.1.x` addresses). There is no real user name, home address or personal e-mail. History is **not** rewritten again (owner's decision, 19 Nov): it would break existing clones for little gain.
+
 ## Next (Stage 2 remainder)
 
 AUDIT-002 (hide blocks the OBS video thread), 005, 010, 011, 012, 013, 014, 017, in the order given in [PRIORITIZED_REMEDIATION_ROADMAP.md](PRIORITIZED_REMEDIATION_ROADMAP.md).
