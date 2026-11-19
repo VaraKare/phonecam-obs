@@ -9,12 +9,14 @@ For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.m
   - **Windows laptop, plugin from 0b53c03 (17 Nov):** USB live, replug, hide/show, Wi-Fi pairing twice, Wi-Fi live, LAN noise, a 13-minute run and a clean exit. See [WINDOWS_THIRD_LAPTOP_TEST.md](research/WINDOWS_THIRD_LAPTOP_TEST.md).
   - **Mac (18–19 Nov):** USB live, keep live while hidden, Wi-Fi pairing after the deadlock fix (07b6c52), quick exit, and the design v1 phone screens. Switching camera or quality during live restarts in about 3 s.
 - **Built and tested by CI only:** later Windows plugin changes (the lock rule from 07b6c52 and the design v1 Properties). The Windows laptop has been returned.
-- **Design v1 (812432a):** see [UX_PLAN.md](UX_PLAN.md).
+- **Design v1 (812432a):** see [UX_PLAN.md](UX_PLAN.md). **Not tested yet** beyond switching during live on the Mac. Recording, Paired computers, friendly errors, the OBS sections and Wi-Fi are all still to test (list below).
+- **v0.4 prepared, not released:** version 0.4.0-alpha.1, with draft notes in [releases/v0.4.0-alpha.1.md](releases/v0.4.0-alpha.1.md). Candidate files are built locally into `dist/0.4.0-alpha.1/` (outside Git) by `python3 tools/release.py`. Tomorrow's tests use those exact files.
+- **Rule for tomorrow (owner, 19 Nov):** test, and when something fails, fix it following this plan without deviating. Rebuild, retest the failed check, then continue.
 - **Product direction (owner, 19 Nov):** a niche product, the best phone camera for OBS. No 3D. The earning ideas wait until there are users.
 
 ## Tomorrow's plan (owner's order)
 
-1. **Test design v1 on the Mac and phone, one check at a time:**
+1. **Test design v1 on the Mac and phone, one check at a time,** with the release candidate files: install `PhoneCam-0.4.0-alpha.1.apk` on the phone and the plugin from the zip into OBS.
    1. Record in OBS for 20 s with one camera switch, then play the file. The picture should freeze for about 3 s, with no black frames and no stop.
    2. Change quality while recording (1080p to 4K and back). The picture stays fitted.
    3. Phone Settings → Paired computers: the count, the list, and Forget on one computer.
