@@ -66,6 +66,11 @@ class MainActivity : Activity() {
     private var shownPhase = LiveState.Phase.STOPPED
     /** Live timer on the badge, like a recording: counts up from the moment OBS starts receiving. */
     private var liveSince = 0L
+    private var liveRoute = ""
+    /** A camera or quality change while live: the session stops and starts again; the timer keeps counting. */
+    private var switching = false
+    private var keepTimer = false
+    private fun liveBadge() = "● Live  ${elapsed()}" + if (liveRoute.isNotEmpty()) " · $liveRoute" else ""
     private fun elapsed(): String {
         val seconds = ((SystemClock.elapsedRealtime() - liveSince) / 1000).coerceAtLeast(0)
         val h = seconds / 3600; val m = seconds / 60 % 60; val s = seconds % 60
@@ -74,15 +79,16 @@ class MainActivity : Activity() {
     private val clock: Runnable = object : Runnable {
         override fun run() {
             if (shownPhase != LiveState.Phase.LIVE || destroyed) return
-            badge.text = "● LIVE  ${elapsed()}"
+            badge.text = liveBadge()
             badge.postDelayed(this, 1000 - (SystemClock.elapsedRealtime() - liveSince) % 1000)
         }
     }
     private val heatListener = PowerManager.OnThermalStatusChangedListener { heat -> if (!destroyed) showHeat(heat) }
     private lateinit var stats: TextView
     private lateinit var panelScroll: ScrollView
-    private lateinit var cameraRow: LinearLayout
-    private lateinit var qualityValue: TextView
+    private lateinit var switchButton: ImageButton
+    private lateinit var qualityChip: TextView
+    private lateinit var mirrorChip: TextView
     private lateinit var detail: TextView
     private lateinit var startButton: Button
     private lateinit var settingsButton: ImageButton
@@ -158,39 +164,39 @@ class MainActivity : Activity() {
         buildStageControls()
         attachGestures()
 
-        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(16), dp(20), dp(16)) }
-        // Row 1: Rear | Front segmented switch, settings icon.
-        cameraRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        settingsButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_tune); background = null; contentDescription = "Settings"
-            setColorFilter(MUTED); setOnClickListener { openSettings() }
+        // Below (or beside) the preview: the quality and mirror chips, then switch camera, Start/Stop and
+        // Settings in one row, then one line of messages. Camera and quality also work while live (restart).
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14)) }
+        fun pill(click: () -> Unit) = TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER; setPadding(dp(14), dp(8), dp(14), dp(8)); minHeight = dp(40)
+            isClickable = true; isFocusable = true; setOnClickListener { click() }
         }
+        qualityChip = pill { chooseQuality() }
+        mirrorChip = pill { toggleMirror() }
         panel.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            addView(cameraRow, LinearLayout.LayoutParams(0, dp(40), 1f))
-            addView(settingsButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            addView(qualityChip); addView(mirrorChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
         })
-        // Row 2: Quality, tap for the short list.
-        qualityValue = TextView(this).apply { setTextColor(MUTED); textSize = 15f }
-        detail = TextView(this).apply { setTextColor(0xFF6E6E6E.toInt()); textSize = 12f; setPadding(0, dp(2), 0, 0) }
-        panel.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(0, dp(14), 0, dp(14))
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                addView(TextView(context).apply { text = "Quality"; setTextColor(Color.WHITE); textSize = 16f }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(qualityValue)
-            })
-            addView(detail)
-            setOnClickListener { chooseQuality() }
-            contentDescription = "Quality"
-        })
-        panel.addView(View(this).apply { setBackgroundColor(0xFF232323.toInt()) }, LinearLayout.LayoutParams(-1, 1))
+        detail = TextView(this).apply { setTextColor(0xFF7A7A7A.toInt()); textSize = 12f; gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) }
+        panel.addView(detail)
+        fun round(icon: Int, description: String, click: () -> Unit) = ImageButton(this).apply {
+            setImageResource(icon); contentDescription = description; setColorFilter(Color.WHITE)
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(1), 0xFF3A3A3A.toInt()) }
+            setOnClickListener { click() }
+        }
+        switchButton = round(R.drawable.ic_switch_camera, "Switch camera") { switchCamera() }
+        settingsButton = round(R.drawable.ic_tune, "Settings") { openSettings() }
         startButton = Button(this).apply {
             textSize = 17f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD; stateListAnimator = null
             setOnClickListener { onStartPressed() }
         }
-        panel.addView(startButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)).apply { topMargin = dp(16) })
-        message = TextView(this).apply { setTextColor(MUTED); textSize = 13f; setPadding(0, dp(10), 0, 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(14), 0, 0)
+            addView(switchButton, LinearLayout.LayoutParams(dp(52), dp(52)))
+            addView(startButton, LinearLayout.LayoutParams(0, dp(54), 1f).apply { marginStart = dp(12); marginEnd = dp(12) })
+            addView(settingsButton, LinearLayout.LayoutParams(dp(52), dp(52)))
+        })
+        message = TextView(this).apply { setTextColor(MUTED); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         panel.addView(message)
         panelScroll = ScrollView(this).apply { setBackgroundColor(PANEL); addView(panel) }
 
@@ -246,32 +252,31 @@ class MainActivity : Activity() {
         val permitted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         val cameras = Quality.cameras(options)
         if (cameras.isNotEmpty() && cameras.none { it.first == cameraId }) cameraId = cameras.first().first
-        cameraRow.removeAllViews()
-        cameraRow.background = GradientDrawable().apply { setStroke(dp(1), 0xFF333333.toInt()); cornerRadius = dp(10).toFloat() }
-        cameraRow.setPadding(dp(3), dp(3), dp(3), dp(3))
-        for ((id, name) in cameras) {
-            val on = id == cameraId
-            cameraRow.addView(TextView(this).apply {
-                text = name; gravity = Gravity.CENTER; textSize = 15f
-                setTextColor(if (on) Color.BLACK else MUTED); typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                background = if (on) rounded(Color.WHITE, 8) else null; isEnabled = live == null
-                contentDescription = "$name camera${if (on) ", selected" else ""}"
-                setOnClickListener { if (live == null && cameraId != id) { cameraId = id; feedback.play(Feedback.Event.TICK, this); refresh() } }
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        }
+        val name = cameras.firstOrNull { it.first == cameraId }?.second
+        val next = cameras.indexOfFirst { it.first == cameraId }.let { if (cameras.size > 1) cameras[(it + 1) % cameras.size].second else null }
+        switchButton.isEnabled = next != null && !switching
+        switchButton.alpha = if (switchButton.isEnabled) 1f else 0.4f
+        switchButton.contentDescription = if (next != null) "Switch to the $next camera" else "Only one camera"
         val profile = selected()
-        qualityValue.text = "${choice.label.substringBefore(" (")}  ›"
+        qualityChip.text = "${choice.label.substringBefore(" (")} · ${profile?.let { Quality.short(it) } ?: "not available"}  ▾"
+        qualityChip.background = rounded(0xFF1E1E1E.toInt(), 20)
+        qualityChip.contentDescription = "Quality: ${choice.label}. Tap to change"
+        val mirror = cameraId?.let { prefs.getBoolean("ctl.$it.mirror", false) } ?: false
+        mirrorChip.text = if (mirror) "Mirror on" else "Mirror off"
+        mirrorChip.background = rounded(if (mirror) BLUE else 0xFF1E1E1E.toInt(), 20)
+        mirrorChip.contentDescription = "Mirror the picture in OBS, ${if (mirror) "on" else "off"}"
         detail.text = when {
             options.isEmpty() -> ""
-            profile == null -> "Not available on this camera. Choose another quality."
-            else -> Quality.describe(profile) + if (highQuality && profile.highQuality) " · HQ processing" else ""
+            profile == null -> "$name camera: this quality isn't available. Choose another."
+            else -> "$name camera · ${Quality.describe(profile).substringAfter(" · ")}" + if (highQuality && profile.highQuality) " · sharpening" else ""
         }
-        settingsButton.isEnabled = live == null
+        settingsButton.isEnabled = live == null; settingsButton.alpha = if (live == null) 1f else 0.4f
         fun button(label: String, fill: Int, text: Int, enabled: Boolean) {
-            startButton.text = label; startButton.background = rounded(fill, 12); startButton.setTextColor(text); startButton.isEnabled = enabled
+            startButton.text = label; startButton.background = rounded(fill, 27); startButton.setTextColor(text); startButton.isEnabled = enabled
         }
         when {
-            live != null -> button("Stop live", RED, Color.WHITE, true)
+            switching -> button("Switching…", GREY, Color.WHITE, false)
+            live != null -> button("Stop", RED, Color.WHITE, true)
             !permitted -> button("Allow camera access", Color.WHITE, Color.BLACK, true)
             scanning || options.isEmpty() -> button(if (scanning) "Checking camera…" else "Check camera", GREY, Color.WHITE, !scanning)
             else -> button("Start live", if (profile != null) Color.WHITE else GREY, if (profile != null) Color.BLACK else MUTED, profile != null)
@@ -290,8 +295,10 @@ class MainActivity : Activity() {
         val phase = state?.phase ?: LiveState.Phase.STOPPED
         if (phase != lastPhase) {
             // Sound and vibration only for real transitions, so a reopened screen stays quiet.
-            if (phase == LiveState.Phase.LIVE) { feedback.play(Feedback.Event.LIVE, badge); liveSince = SystemClock.elapsedRealtime() }
-            else if (phase == LiveState.Phase.STOPPED && foreground && lastPhase != null && lastPhase != LiveState.Phase.STOPPED)
+            if (phase == LiveState.Phase.LIVE) {
+                if (keepTimer) keepTimer = false else { feedback.play(Feedback.Event.LIVE, badge); liveSince = SystemClock.elapsedRealtime() }
+            }
+            else if (phase == LiveState.Phase.STOPPED && !switching && foreground && lastPhase != null && lastPhase != LiveState.Phase.STOPPED)
                 feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
             lastPhase = phase
         }
@@ -302,12 +309,13 @@ class MainActivity : Activity() {
         } else null
         badge.removeCallbacks(clock)
         if (phase == LiveState.Phase.LIVE) badge.post(clock)
-        badge.text = when (phase) { LiveState.Phase.LIVE -> "● LIVE  ${elapsed()}"; LiveState.Phase.WAITING -> "Waiting for OBS"; else -> "Wi-Fi ready · $paired" }
+        if (phase == LiveState.Phase.LIVE && state != null && state.route.isNotEmpty()) liveRoute = state.route
+        badge.text = when (phase) { LiveState.Phase.LIVE -> liveBadge(); LiveState.Phase.WAITING -> if (keepTimer) "Switching…" else "Waiting for OBS"; else -> "Wi-Fi ready · $paired" }
         badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> CHIP }, 6)
         badge.visibility = if (phase == LiveState.Phase.STOPPED && paired == null) View.GONE else View.VISIBLE
         val p = liveProfile
         stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
-        if (state != null && p != null) stats.text = "${Quality.describe(p).substringBefore(" ·")} · ${"%.0f".format(state.fps)} fps · ${state.drops} drops" +
+        if (state != null && p != null) stats.text = "${Quality.short(p).substringBefore(" ")} · ${"%.0f".format(state.fps)} fps · ${state.drops} dropped" +
             if (state.bitrate in 1 until state.requestedBitrate) "\nLink busy: ${state.bitrate / 1_000_000} of ${state.requestedBitrate / 1_000_000} Mb/s" else ""
         shownPhase = phase
         showHeat(runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0))
@@ -385,11 +393,17 @@ class MainActivity : Activity() {
             showState(state)
             message.text = state.message
             if (state.phase == LiveState.Phase.STOPPED) {
-                if (state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
+                if (!switching && state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
                     message.text = "${state.message}\nIf this keeps happening, choose Quality: High."
                 live = null; liveProfile = null; sliding = null; focusMark.visibility = View.GONE
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 preview.visibility = View.INVISIBLE
+                if (switching) {
+                    // Restart with the new camera or quality; OBS keeps its source and reconnects.
+                    switching = false; keepTimer = true
+                    message.text = "Switching…"
+                    badge.postDelayed({ if (!destroyed) { startLive(); if (live == null) keepTimer = false } }, 300)
+                }
                 refresh()
             }
         }.also { it.start() }
@@ -476,9 +490,6 @@ class MainActivity : Activity() {
                 else message.text = "Tap the preview to focus and expose for that point. Pinch to zoom."
             }
         }
-        add(if (controls.mirror) "Mirror in OBS: on" else "Mirror in OBS: off", "Mirror the picture in OBS, ${if (controls.mirror) "on" else "off"}", controls.mirror) {
-            updateControls(controls.copy(mirror = !controls.mirror))
-        }
         sliderRow.visibility = if (sliding != null) View.VISIBLE else View.GONE
         when (sliding) {
             "zoom" -> { slider.max = 100; slider.progress = zoomProgress(controls.zoom, a.maxZoom); sliderLabel.text = "Zoom"; slider.contentDescription = "Zoom" }
@@ -539,7 +550,7 @@ class MainActivity : Activity() {
                 Thread {
                     val result = runCatching { WifiConnector(this).pair(code) }
                     runOnUiThread {
-                        message.text = result.fold({ "Paired with $it. Tap Start live with the phone and Mac on the same Wi-Fi." }, { it.message ?: "Pairing failed." })
+                        message.text = result.fold({ "Paired with $it. Tap Start live with the phone and computer on the same Wi-Fi." }, { Errors.friendly(it) })
                         feedback.play(if (result.isSuccess) Feedback.Event.SUCCESS else Feedback.Event.ERROR, message)
                     }
                 }.start()
@@ -562,12 +573,55 @@ class MainActivity : Activity() {
     }
 
     private fun chooseQuality() {
-        if (live != null || options.isEmpty()) return
+        if (options.isEmpty() || switching) return
+        val id = cameraId ?: return
         val choices = qualityChoices()
+        val labels = choices.map { q -> q.label.substringBefore(" (") + (Quality.pick(options, id, q, customKey)?.let { "  ·  " + Quality.short(it) } ?: "  ·  not on this camera") }
         AlertDialog.Builder(this).setTitle("Quality")
-            .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), choices.indexOf(choice)) { dialog, index ->
-                choice = choices[index]; dialog.dismiss(); refresh()
-            }.setNegativeButton("Cancel", null).show()
+            .setSingleChoiceItems(labels.toTypedArray(), choices.indexOf(choice)) { dialog, index ->
+                dialog.dismiss()
+                if (choices[index] == choice) return@setSingleChoiceItems
+                choice = choices[index]; refresh()
+                if (live != null) restartLive()
+            }
+            .setNeutralButton("What's the difference?") { _, _ ->
+                AlertDialog.Builder(this).setTitle("Qualities").setMessage(
+                    "Best: the sharpest picture this camera offers, often 4K. Needs a fast computer; USB is smoothest.\n\n" +
+                    "High: 1080p at a high bitrate. The best choice for most streams.\n\n" +
+                    "Balanced: 1080p at a lower bitrate, for busy Wi-Fi.\n\n" +
+                    "Smooth: 60 frames a second, for motion. Experimental on some phones.\n\n" +
+                    (if (live != null) "While live, changing quality restarts the picture for about 2 seconds." else "You can change quality while live; the picture restarts for about 2 seconds."))
+                    .setPositiveButton("OK", null).show()
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    /** Next camera (rear, front, …). While live, the session restarts with it. */
+    private fun switchCamera() {
+        if (switching) return
+        val cameras = Quality.cameras(options)
+        if (cameras.size < 2) return
+        val index = cameras.indexOfFirst { it.first == cameraId }
+        cameraId = cameras[(index + 1) % cameras.size].first
+        feedback.play(Feedback.Event.TICK, switchButton)
+        refresh()
+        if (live != null) restartLive()
+    }
+
+    /** Mirror in OBS, remembered per camera; applied at once while live. */
+    private fun toggleMirror() {
+        val id = cameraId ?: return
+        val on = !prefs.getBoolean("ctl.$id.mirror", false)
+        if (live != null && liveProfile?.cameraId == id) updateControls(controls.copy(mirror = on))
+        else prefs.edit().putBoolean("ctl.$id.mirror", on).apply()
+        refresh()
+    }
+
+    private fun restartLive() {
+        val session = live ?: return
+        if (selected() == null) { message.text = "This quality isn't available on this camera."; return }
+        switching = true; message.text = "Switching…"; refresh()
+        session.stop("Switching camera or quality")
     }
 
     private fun chooseCustom() {

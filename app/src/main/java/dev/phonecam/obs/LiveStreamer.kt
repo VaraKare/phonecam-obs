@@ -87,7 +87,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             }
             val message = note ?: if (bitrate.starved) "The connection is too slow even at ${bitrate.current / 1_000_000} Mb/s. Choose a lower quality, move closer to the Wi-Fi router, or use the USB cable."
                 else "Sending to OBS over $route. Nothing is saved on the phone."
-            post(LiveState(LiveState.Phase.LIVE, message, stats.fps, sequence, dropped, rotation, bitrate.current, profile.bitrate))
+            post(LiveState(LiveState.Phase.LIVE, message, stats.fps, sequence, dropped, rotation, bitrate.current, profile.bitrate, route))
             handler.postDelayed(this, 1_000)
         }
     }
@@ -303,6 +303,8 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
 data class LiveState(val phase: Phase, val message: String, val fps: Double = 0.0, val frames: Long = 0,
                      val drops: Long = 0, val rotation: Int = 0,
                      /** Current encoder bitrate target and the user's choice; they differ only while the link is busy. */
-                     val bitrate: Int = 0, val requestedBitrate: Int = 0) {
+                     val bitrate: Int = 0, val requestedBitrate: Int = 0,
+                     /** "USB" or "Wi-Fi" while live. */
+                     val route: String = "") {
     enum class Phase { WAITING, LIVE, STOPPED }
 }

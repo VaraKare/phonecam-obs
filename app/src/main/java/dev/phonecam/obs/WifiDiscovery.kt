@@ -83,7 +83,7 @@ class WifiConnector(private val context: Context) {
                             problem = null
                             return session
                         } catch (e: WifiClient.Refused) { problem = e.message }
-                        catch (e: Exception) { problem = "Can't reach ${mac.name} at $host. Put the phone and Mac on the same Wi-Fi (some routers isolate devices, for example guest networks), or use the phone's hotspot." }
+                        catch (e: Exception) { problem = Errors.friendly(e, mac.name) }
                     }
                 }
                 Thread.sleep(1000)
@@ -105,11 +105,13 @@ class WifiConnector(private val context: Context) {
         // The QR addresses may be from another interface; look for the Mac on this network.
         val found = findPairing(8_000).filter { it.id == link.macId }
         for (mac in found) {
-            val key = WifiClient.pair(WifiClient.connect(mac.host, mac.port, 3000), mac.id, pairings.phoneId, link.secret, phoneName())
-            pairings.remember(PairedMac(mac.id, link.name, key, mac.port, listOf(mac.host)))
-            return link.name
+            try {
+                val key = WifiClient.pair(WifiClient.connect(mac.host, mac.port, 3000), mac.id, pairings.phoneId, link.secret, phoneName())
+                pairings.remember(PairedMac(mac.id, link.name, key, mac.port, listOf(mac.host)))
+                return link.name
+            } catch (e: WifiClient.Refused) { throw e } catch (e: Exception) { last = e }
         }
-        throw java.io.IOException("Can't reach ${link.name} (${link.addresses.joinToString().ifEmpty { "no address" }}). Put the phone and Mac on the same Wi-Fi, or join the Mac to the phone's hotspot.", last)
+        throw java.io.IOException(Errors.friendly(last, link.name), last)
     }
 
     /** Pairs with whichever nearby OBS source shows this typed code. */
@@ -124,7 +126,8 @@ class WifiConnector(private val context: Context) {
                 return mac.name
             } catch (e: Exception) { last = e }
         }
-        throw last ?: java.io.IOException("Pairing failed")
+        if (last is WifiClient.Refused) throw last
+        throw java.io.IOException(Errors.friendly(last), last)
     }
 
     private fun findPairing(waitMs: Long): List<WifiDiscovery.Found> {

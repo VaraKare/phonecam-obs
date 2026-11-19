@@ -318,17 +318,11 @@ void hide(void *value) {
 }
 obs_properties_t *properties(void *value) {
     obs_properties_t *p = obs_properties_create();
-    std::string status = value ? static_cast<Source *>(value)->currentStatus() : "Not running";
-    obs_properties_add_text(p, "status", ("Status: " + status).c_str(), OBS_TEXT_INFO);
-    obs_properties_add_text(p, "help", "Connect the phone by USB, or pair it once over Wi-Fi. Keep this source visible, then tap Start live on the phone.", OBS_TEXT_INFO);
-    obs_properties_add_button2(p, "wifi_qr", "Pair a phone over Wi-Fi", [](obs_properties_t *, obs_property_t *, void *data) {
-        if (data) { try { static_cast<Source *>(data)->showPairingCard(); } catch (...) {} }
-        return true;
-    }, value);
-    obs_properties_add_button2(p, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
-        if (data) fit(static_cast<Source *>(data)->source, true);
-        return false;
-    }, value);
+    addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running");
+
+    obs_properties_t *connection = obs_properties_create();
+    obs_property_set_long_description(obs_properties_add_bool(connection, "wifi_direct", "Allow paired phones over Wi-Fi"),
+        "Lets phones you paired before connect over your local Wi-Fi without a cable. While it is on and a phone is paired, this computer listens on port 47183 on the local network only. Untick it to close that port.");
     if (value) {
         auto *self = static_cast<Source *>(value);
         std::string summary;
@@ -337,16 +331,13 @@ obs_properties_t *properties(void *value) {
             std::unique_lock<std::mutex> guard(self->wifiLock, std::try_to_lock);
             try { if (guard && self->wifi) summary = self->wifi->summary(); } catch (...) {}
         }
-        if (!summary.empty()) obs_properties_add_text(p, "wifi_summary", summary.c_str(), OBS_TEXT_INFO);
+        if (!summary.empty()) obs_properties_add_text(connection, "wifi_summary", summary.c_str(), OBS_TEXT_INFO);
     }
-    obs_properties_t *options = obs_properties_create();
-    obs_property_set_long_description(obs_properties_add_bool(options, "fit_canvas", "Fit the picture to the canvas automatically"),
-        "Scales the phone picture to fit the canvas when it first appears or its size changes (portrait, landscape, 4K). Untick it to keep your own size and position.");
-    obs_property_set_long_description(obs_properties_add_bool(options, "wifi_direct", "Allow paired phones over Wi-Fi"),
-        "Lets phones you paired before connect over your local Wi-Fi without a cable. While it is on and a phone is paired, this computer listens on port 47183 on the local network only. Untick it to close that port.");
-    obs_property_set_long_description(obs_properties_add_bool(options, "keep_live", "Keep the phone live while this source is hidden"),
-        "Normally hiding this source (eye icon or another scene) stops the phone, and you tap Start live again. Tick this to keep the phone sending while hidden, so switching back is instant. The phone keeps its camera on, gets warmer and uses more battery.");
-    obs_properties_add_button2(options, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
+    obs_properties_add_button2(connection, "wifi_qr", "Pair a phone over Wi-Fi", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (data) { try { static_cast<Source *>(data)->showPairingCard(); } catch (...) {} }
+        return true;
+    }, value);
+    obs_properties_add_button2(connection, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
         if (!data) return false;
         auto *self = static_cast<Source *>(data);
         try {
@@ -360,7 +351,18 @@ obs_properties_t *properties(void *value) {
         catch (...) { self->setStatus("Could not forget the paired phones."); }
         return true;
     }, value);
-    obs_properties_add_group(p, "options", "Options", OBS_GROUP_NORMAL, options);
+    obs_properties_add_group(p, "connection", "Connection", OBS_GROUP_NORMAL, connection);
+
+    obs_properties_t *picture = obs_properties_create();
+    obs_property_set_long_description(obs_properties_add_bool(picture, "fit_canvas", "Fit the picture to the canvas automatically"),
+        "Scales the phone picture to fit the canvas when it first appears or its size changes (portrait, landscape, 4K). Untick it to keep your own size and position.");
+    obs_properties_add_button2(picture, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (data) fit(static_cast<Source *>(data)->source, true);
+        return false;
+    }, value);
+    obs_property_set_long_description(obs_properties_add_bool(picture, "keep_live", "Keep the phone live while this source is hidden"),
+        "Normally hiding this source (eye icon or another scene) stops the phone, and you tap Start live again. Tick this to keep the phone sending while hidden, so switching back is instant. The phone keeps its camera on, gets warmer and uses more battery.");
+    obs_properties_add_group(p, "picture", "Picture", OBS_GROUP_NORMAL, picture);
     obs_properties_t *advanced = obs_properties_create();
     obs_properties_add_text(advanced, "adb_path", "adb.exe path (found automatically)", OBS_TEXT_DEFAULT);
     obs_properties_add_text(advanced, "adb_help", "Wireless debugging: only needed if this PC was never allowed over USB.", OBS_TEXT_INFO);

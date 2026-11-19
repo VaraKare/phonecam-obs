@@ -1,6 +1,17 @@
 # UI and UX plan (phone app and OBS source)
 
-Notes from the 17 November 2026 Windows laptop session. Nothing here is built yet unless it says so. Order within each list is rough priority.
+Notes from the 17 November 2026 Windows laptop session. Nothing here is built yet unless it says so.
+
+**Design v1 built (19 November 2026, owner approved the mockups):**
+- **Phone:**
+  - main screen with a quality chip, a mirror chip, and a switch-camera button beside a round Start/Stop;
+  - switching camera or quality while live restarts the session, and the timer keeps counting;
+  - live badge with timer and route ("● Live 05:23 · USB");
+  - Settings → "Paired computers · N", each with Forget;
+  - friendly network errors;
+  - quality sheet with "What's the difference?";
+  - QR scanner closes itself after 3 minutes.
+- **OBS:** a status box (yellow when something needs you), then Connection, Picture and Advanced sections. Order within each list is rough priority.
 
 ## Phone app
 

@@ -188,7 +188,16 @@ class ScanActivity : Activity() {
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) open() else hint.text = "Camera access is needed to scan. You can type the code instead."
     }
     override fun onPause() { super.onPause(); closeCamera() }
-    override fun onResume() { super.onResume(); open() }
+    // Pairing codes last 3 minutes, so a scanner left open longer (app in the background) closes itself.
+    private val openedAt = android.os.SystemClock.elapsedRealtime()
+    override fun onResume() {
+        super.onResume()
+        if (!done && android.os.SystemClock.elapsedRealtime() - openedAt > 3 * 60_000L) {
+            setResult(RESULT_OK, intent.putExtra("message", "The scanner was open longer than a pairing code lasts. In OBS, click Pair a phone over Wi-Fi, then scan again."))
+            finish(); return
+        }
+        open()
+    }
     override fun onDestroy() { super.onDestroy(); closeCamera(); thread.quitSafely(); feedback.release() }
 
     @SuppressLint("MissingPermission")
@@ -274,7 +283,7 @@ class ScanActivity : Activity() {
                     overlay.postDelayed({ finish() }, 1400)
                 }.onFailure { e ->
                     overlay.state = ScanOverlay.State.FAILED
-                    title.text = "Couldn't pair"; hint.text = e.message ?: "Pairing failed."
+                    title.text = "Couldn't pair"; hint.text = Errors.friendly(e, link.name)
                     feedback.play(Feedback.Event.ERROR, overlay)
                     retryButton.visibility = View.VISIBLE
                 }

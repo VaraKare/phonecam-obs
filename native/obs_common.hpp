@@ -85,4 +85,17 @@ void startWifiPairing(obs_source_t *source) {
     }).detach();
 }
 void logLine(const char *line) { blog(LOG_INFO, "[phonecam] %s", line); }
+// The status box at the top of the source's Properties: yellow when something needs the user, with help on hover.
+bool needsAttention(const std::string &status) {
+    for (const char *word : {"Not responding", "not found", "stopped", "failed", "unavailable", "ould not", "Unlock the phone",
+                             "offline", "Install the PhoneCam app", "Direct Wi-Fi is off", "not an executable", "not ready", "too many"})
+        if (status.find(word) != std::string::npos) return true;
+    return false;
+}
+void addStatus(obs_properties_t *props, const std::string &status) {
+    obs_property_t *line = obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
+    obs_property_text_set_info_type(line, needsAttention(status) ? OBS_TEXT_INFO_WARNING : OBS_TEXT_INFO_NORMAL);
+    obs_property_set_long_description(line, "Connect the phone by USB, or pair it once over Wi-Fi. Keep this source visible "
+        "(or tick Keep the phone live while hidden), then tap Start live on the phone.");
+}
 }
