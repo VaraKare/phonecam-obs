@@ -48,6 +48,10 @@ class NativeIntegration(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             self.assertEqual(authorized, [True])
             if success:
+                # GitHub's macOS machines are virtual and may lack the hardware video decoder the Mac plugin
+                # requires (software decoding is disabled on purpose). Only CI sets this; locally it fails.
+                if result.returncode and os.environ.get("PHONECAM_ALLOW_NO_HW") and "Hardware" in result.stderr and "decod" in result.stderr:
+                    self.skipTest("no hardware video decoder on this machine (virtual CI machine)")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 value = json.loads(result.stdout)
                 self.assertEqual(value["decodedFrames"], expected)
