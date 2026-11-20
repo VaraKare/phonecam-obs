@@ -120,7 +120,14 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                 }
                 if (stop) break;
                 if (serial.empty()) {
-                    if (unanswered && stalled(AdbResult{-1, {}, true})) continue;
+                    if (unanswered) {
+                        // One device that doesn't answer (a locked second phone, a stale Wireless-debugging entry, a
+                        // hung emulator) is not adb's fault. Restarting adb would end Android Studio's or scrcpy's
+                        // sessions too (AUDIT-012), so only a server-level call that also times out counts as a stall.
+                        if (stalled(runAdb(adb, {"devices"}))) continue;
+                        say("The phone isn't answering over USB. Unlock it, or unplug the cable and plug it back in.");
+                        wait(2000); continue;
+                    }
                     // A USB link that is resetting also fails the query (20 Nov); only blame the app when it is really missing.
                     bool installed = !devices.ready.empty() && !stop &&
                         runAdb(adb, {"-s", devices.ready.front(), "shell", "pm", "path", "dev.phonecam.obs"}).output.find("package:") != std::string::npos;

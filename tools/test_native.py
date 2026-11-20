@@ -183,6 +183,29 @@ esac
             self.assertEqual(sum(call == "-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1" for call in calls), 2, calls)
             self.assertIn(f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}", calls)
 
+    def test_one_unanswering_device_does_not_restart_adb(self):
+        """AUDIT-012: a device whose shell calls hang (locked second phone, stale Wireless-debugging entry) is
+        skipped. adb answers 'devices' normally, so it must not be restarted: that would end other tools' sessions."""
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "adb.log"
+            fake = Path(directory) / "adb"
+            fake.write_text(f"""#!/bin/sh
+echo "$@" >> '{log}'
+case "$*" in
+  devices) printf 'List of devices attached\\nSTUCK\\tdevice\\nOTHER\\tdevice\\n' ;;
+  "-s STUCK"*) sleep 30 ;;
+esac
+""")
+            fake.chmod(0o755)
+            process = subprocess.Popen([str(RECEIVER), "--auto", "1", str(fake)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            time.sleep(14)
+            process.terminate()
+            _, stderr = process.communicate(timeout=20)
+            calls = log.read_text().splitlines()
+            self.assertGreaterEqual(sum(call.startswith("-s STUCK shell content query") for call in calls), 2, calls)
+            self.assertNotIn("kill-server", calls)
+            self.assertIn("The phone isn't answering over USB", stderr)
+
     def test_missing_adb_reports_guidance(self):
         process = subprocess.Popen([str(RECEIVER), "--auto", "1", "/nonexistent/adb"], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
         try:
