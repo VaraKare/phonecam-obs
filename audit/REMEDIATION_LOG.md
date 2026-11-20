@@ -50,6 +50,16 @@ Evidence: [docs/research/WINDOWS_THIRD_LAPTOP_TEST.md](../docs/research/WINDOWS_
 - **Released Mac plugin (v0.3.0-alpha.5):** its debug map held the build path, including the Mac's user name. Replaced on GitHub with the same binary run through `strip -S` and re-signed ad hoc. The machine code (`otool -t`) and the section layout are byte-identical, libobs loads it, and the user name and debug entries are gone. `SHA256SUMS.txt` was updated and the release notes say so. The local unstripped original is kept outside Git.
 - **Git history:** checked again on all branches. The 11 Nov rewrite had already replaced the real values with stand-ins (`/Users/owner/`, made-up `192.168.1.x` addresses). There is no real user name, home address or personal e-mail. History is **not** rewritten again (owner's decision, 19 Nov): it would break existing clones for little gain.
 
+## Stage 2, 20 November 2026 (after v0.4.0-alpha.1)
+
+| Finding | Status | What changed | Evidence | Still needs |
+|---|---|---|---|---|
+| AUDIT-010 A Windows adb server start | Fixed in code | Process creation has a 5 s bound on a helper thread (an abandoned start has its process ended); the server lock is timed (2 s), and the port wait checks `stop` (b82ce8b) | Windows CI build and existing fake-adb tests | Hang test with a blocking fake `server nodaemon` (not written) |
+| AUDIT-012 A adb restart from one device | Fixed | A device that doesn't answer is skipped with "The phone isn't answering over USB…"; only a server-level call that also times out counts as a stall (508d1d7). The old code did not actually restart adb here (the healthy `devices` call reset the count) but looped with no status | New test with a hanging second device: no `kill-server`, status shown; fails on the old code | — |
+| AUDIT-013 A End reason overwritten | Fixed | Properties keep "Last session ended: …" until the next live (a959611) | Builds; Mac check pending | Hardware look |
+| AUDIT-014 A+B Config changes end live | Fixed | `configChanges` covers dark mode, keyboard, font scale, density, locale; a stop reason that arrives after the screen is gone shows on the next screen (a959611) | Android build, lint | Phone check (switch dark mode while live) |
+| New: switching restarts the whole connection | Fixed | Camera or quality changes keep the connection; the receivers rebuild the decoder; older plugins fall back to a full restart (4e8e8c0) | New mid-stream switch test (Mac, Windows CI fixture); phone + Mac 20 Nov: 5 switches on one connection, no "Live ended" | Exact timing (the phone did not keep its log lines) |
+
 ## Next (Stage 2 remainder)
 
-AUDIT-002 (hide blocks the OBS video thread), 005, 010, 011, 012, 013, 014, 017, in the order given in [PRIORITIZED_REMEDIATION_ROADMAP.md](PRIORITIZED_REMEDIATION_ROADMAP.md).
+AUDIT-011 (several sources or phones), AUDIT-017 (macOS CI), then the Wi-Fi part of AUDIT-002 and AUDIT-008.

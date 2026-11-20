@@ -14,6 +14,16 @@ For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.m
 - **Rule for tomorrow (owner, 19 Nov):** test, and when something fails, fix it following this plan without deviating. Rebuild, retest the failed check, then continue.
 - **Product direction (owner, 19 Nov):** a niche product, the best phone camera for OBS. No 3D. The earning ideas wait until there are users.
 
+## 20 November, after the v0.4 release
+
+- **Faster switching (4e8e8c0):** camera and quality changes keep the connection to OBS. On the phone and Mac, 5 switches stayed on one connection. Version 0.4.1-alpha.1 is installed on both. With the v0.4 Windows plugin, the phone falls back to the old full restart.
+- **Audit fixes:** 010, 012, 013 and 014 are done; see [audit/REMEDIATION_LOG.md](../audit/REMEDIATION_LOG.md).
+- **Next:**
+  1. A quick hardware look: the "Last session ended" line in OBS, and dark mode while live on the phone.
+  2. AUDIT-011 and AUDIT-017.
+  3. Then the Wi-Fi part of AUDIT-002 and AUDIT-008.
+  4. Then the product plan.
+
 ## 20 November: where testing stopped
 
 - **All 6 design v1 checks passed** with the candidate files (results in [releases/v0.4.0-alpha.1.md](releases/v0.4.0-alpha.1.md)). Fixes found on the way are in 71025e1: icon, OBS layout, short help, no address shown, no restart for an unchanged quality, no "install the app" during a USB reset.
