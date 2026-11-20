@@ -130,6 +130,59 @@ esac
             self.assertIn("-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1", calls)
             self.assertIn(f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}", calls)
 
+    def test_replug_and_stuck_adb(self):
+        """Unplugging during live (16 Nov 2026 Windows test): the link drops mid-stream and adb stops answering.
+        The receiver must restart adb after two unanswered calls, find the phone again, create a new link and
+        receive from the next session."""
+        token = "c" * 64
+        packets = self.encoded_packets(True, width=640, height=360)
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as server:
+            server.bind(("127.0.0.1", 0)); server.listen(4); server.settimeout(40)
+            log = Path(directory) / "adb.log"
+            hang = Path(directory) / "hang"
+            fake = Path(directory) / "adb"
+            # While the hang file exists, "devices" never answers (killed by the 5 s limit).
+            fake.write_text(f"""#!/bin/sh
+echo "$@" >> '{log}'
+case "$*" in
+  devices) if [ -e '{hang}' ]; then sleep 30; fi; printf 'List of devices attached\\nFAKE1\\tdevice\\n' ;;
+  kill-server) rm -f '{hang}' ;;
+  *"content query"*) printf 'Row: 0 token={token}\\n' ;;
+  *"forward tcp:0"*) printf '{server.getsockname()[1]}\\n' ;;
+esac
+""")
+            fake.chmod(0o755)
+            sessions = []
+
+            def phone():
+                for number in range(2):
+                    with server.accept()[0] as client:
+                        auth = b""
+                        while len(auth) < 65:
+                            value = client.recv(65 - len(auth))
+                            if not value: break
+                            auth += value
+                        sessions.append(auth)
+                        if number == 0:
+                            for data in packets[:6]: client.sendall(data)  # config and 5 frames, then the cable goes
+                            hang.write_text("")
+                        else:
+                            for data in packets: client.sendall(data)
+                            try: client.recv(1)
+                            except OSError: pass
+
+            worker = threading.Thread(target=phone, daemon=True); worker.start()
+            result = subprocess.run([str(RECEIVER), "--auto", "14", str(fake)], capture_output=True, text=True, timeout=90)
+            worker.join(10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(sessions, [(token + "\n").encode()] * 2)
+            self.assertIn("Live ended", result.stderr)
+            self.assertIn("adb stopped answering. Restarting it…", result.stderr)
+            calls = log.read_text().splitlines()
+            self.assertIn("kill-server", calls)
+            self.assertEqual(sum(call == "-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1" for call in calls), 2, calls)
+            self.assertIn(f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}", calls)
+
     def test_missing_adb_reports_guidance(self):
         process = subprocess.Popen([str(RECEIVER), "--auto", "1", "/nonexistent/adb"], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
         try:
@@ -150,6 +203,10 @@ esac
             try:
                 line = receiver.stdout.readline().split()
                 self.assertEqual(line[0], "PAIR", line)
+                # Strangers first: one connection that sends nothing, one that sends junk (AUDIT-005).
+                import socket
+                with socket.create_connection(("127.0.0.1", int(line[1])), timeout=5): pass
+                with socket.create_connection(("127.0.0.1", int(line[1])), timeout=5) as junk: junk.sendall(b"GET / HTTP/1.0\r\n\r\n" * 8)
                 env["PHONECAM_WIFI_PEER"] = f"127.0.0.1 {line[1]} {line[2]} {line[3]}"
                 env["PHONECAM_WIFI_PACKETS"] = str(stream)
                 gradle = subprocess.run(["./gradlew", "-q", "testDebugUnitTest", "--tests", "*WifiInteropTest*", "--rerun"],
@@ -166,7 +223,22 @@ esac
             self.assertEqual((value["lastWidth"], value["lastHeight"]), (640, 480))
             self.assertIn("wrong code", err)
             self.assertIn("Paired with Test phone", err)
+            self.assertIn("Listening before pairing: 0", err)  # nothing paired yet: no open port (AUDIT-006)
+            self.assertEqual(err.count("Ignored a Wi-Fi connection that was not a PhoneCam phone"), 1, err)  # once a minute
+            self.assertNotIn("Wi-Fi live ended", err, err)  # strangers never touch the status line (AUDIT-005)
             self.assertEqual(json.loads((Path(directory) / "wifi.json").read_text())["phones"][0]["name"], "Test phone")
+
+    def test_damaged_pairings_file_is_kept_and_reported(self):
+        """A pairings file that cannot be read is reported and left as it is, never replaced (pairings kept)
+        and never a crash (AUDIT-004, AUDIT-021e)."""
+        with tempfile.TemporaryDirectory() as directory:
+            store = Path(directory) / "wifi.json"
+            store.write_bytes(b"{not json")
+            env = dict(os.environ, PHONECAM_WIFI_STORE=str(store))
+            result = subprocess.run([str(RECEIVER), "--wifi", "1"], capture_output=True, text=True, env=env, timeout=60)
+            self.assertEqual(result.returncode, 1, result.stderr)  # an orderly failure, not an abort signal
+            self.assertIn("could not be read", result.stderr)
+            self.assertEqual(store.read_bytes(), b"{not json")
 
     def test_avc_hardware_decode(self): self.exchange(self.encoded_packets(width=1920, height=1080), 12)
     def test_hevc_hardware_decode(self): self.exchange(self.encoded_packets(True, width=1920, height=1080), 12)

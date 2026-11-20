@@ -12,7 +12,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "native/build"
-PLUGIN_VERSION = "0.3.0-alpha.5"
+PLUGIN_VERSION = "0.4.0-alpha.1"
 OBS_ARCHIVES = {
     "33.0.0": "55c6767b209a00f1859b315bf977df907b19890d132723731e00fd589f6860c0",
     "33.0.1": "9174ee0e3677c92d0d060bdce4c5d44dfee9fd3afddfb6333f098fd029b8de2b",
@@ -81,13 +81,17 @@ def main():
     shutil.copyfile(ROOT / "NOTICE", bundle / "Contents/Resources/NOTICE.txt")
     shutil.copyfile(BUILD / "simde/COPYING", bundle / "Contents/Resources/COPYING-SIMDe.txt")
     run(common + headers + ["-bundle", ROOT / "native/plugin.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", ROOT / "native/adb_session.cpp",
-                                    ROOT / "native/wifi.mm", ROOT / "native/pairing_card.mm", "-o", executable] + apple + libobs)
+                                    ROOT / "native/wifi.mm", ROOT / "native/wifi_server.cpp", ROOT / "native/pairing_card.mm", "-o", executable] + apple + libobs)
     info = {"CFBundleExecutable": "phonecam-usb", "CFBundleIdentifier": "dev.phonecam.obs.usb",
             "CFBundleName": "phonecam-usb", "CFBundlePackageType": "BNDL", "CFBundleShortVersionString": PLUGIN_VERSION,
             "CFBundleVersion": "3", "LSMinimumSystemVersion": "13.0"}
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+    # Debug symbols name the build folder (the builder's home path) and temporary object files: never ship them
+    # (audit/FINDINGS.md AUDIT-015). Stripped before signing, so the signature covers the final binary.
+    run(["xcrun", "strip", "-S", executable])
+    if b"/Users/" in executable.read_bytes(): raise RuntimeError("Build paths left in the plugin binary")
     run(["codesign", "--force", "--sign", "-", bundle])
-    run(common + [ROOT / "native/receiver_cli.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", ROOT / "native/adb_session.cpp", ROOT / "native/wifi.mm",
+    run(common + [ROOT / "native/receiver_cli.mm", ROOT / "native/receiver.mm", ROOT / "native/adb.mm", ROOT / "native/adb_session.cpp", ROOT / "native/wifi.mm", ROOT / "native/wifi_server.cpp",
                   ROOT / "native/pairing_card.mm", "-o", BUILD / "phonecam-receive"] + apple)
     run(common + headers + [ROOT / "native/smoke.mm", "-o", BUILD / "obs-smoke"] + libobs)
     run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
@@ -96,6 +100,9 @@ def main():
     run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
          "-I", ROOT / "native", ROOT / "native/adb_test.cpp", "-o", BUILD / "adb-test"])
     run([BUILD / "adb-test"])
+    run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
+         "-I", ROOT / "native", ROOT / "native/rotate_test.cpp", "-o", BUILD / "rotate-test"])
+    run([BUILD / "rotate-test"])
     run(["xcrun", "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
          "-I", ROOT / "native", ROOT / "native/wifi_test.cpp", "-o", BUILD / "wifi-test", "-framework", "Security", "-framework", "CoreFoundation"])
     run([BUILD / "wifi-test"])

@@ -62,7 +62,9 @@ void startWifiPairing(obs_source_t *source) {
     obs_data_release(settings);
     obs_weak_source_t *weak = obs_source_get_weak_source(source);
     std::thread([weak, adbPath, address, code] {
-        std::string result = phonecam::pairWifi(phonecam::findAdb(adbPath), address, code);
+        std::string result;
+        try { result = phonecam::pairWifi(phonecam::findAdb(adbPath), address, code); }  // nothing may escape a thread
+        catch (...) { result = "Wi-Fi pairing could not run adb. Check the adb path and try again."; }
         blog(LOG_INFO, "[phonecam] %s", result.c_str());
         obs_source_t *strong = obs_weak_source_get_source(weak);
         obs_weak_source_release(weak);
@@ -72,9 +74,27 @@ void startWifiPairing(obs_source_t *source) {
         obs_data_set_string(values, "wifi_result", result.c_str());
         obs_source_update(strong, values);
         obs_data_release(values);
-        obs_source_update_properties(strong);
+        // Properties are refreshed on the UI thread: from a worker thread this can block while the Properties
+        // window is open (seen on Windows, 17 Nov).
+        obs_queue_task(OBS_TASK_UI, [](void *param) {
+            auto *weakRef = static_cast<obs_weak_source_t *>(param);
+            if (obs_source_t *source = obs_weak_source_get_source(weakRef)) { obs_source_update_properties(source); obs_source_release(source); }
+            obs_weak_source_release(weakRef);
+        }, obs_source_get_weak_source(strong), false);
         obs_source_release(strong);
     }).detach();
 }
 void logLine(const char *line) { blog(LOG_INFO, "[phonecam] %s", line); }
+// The status box at the top of the source's Properties: yellow when something needs the user, with help on hover.
+bool needsAttention(const std::string &status) {
+    for (const char *word : {"Not responding", "not found", "stopped", "failed", "unavailable", "ould not", "Unlock the phone",
+                             "offline", "Install the PhoneCam app", "Direct Wi-Fi is off", "not an executable", "not ready", "too many"})
+        if (status.find(word) != std::string::npos) return true;
+    return false;
+}
+void addStatus(obs_properties_t *props, const std::string &status) {
+    obs_property_t *line = obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
+    obs_property_text_set_info_type(line, needsAttention(status) ? OBS_TEXT_INFO_WARNING : OBS_TEXT_INFO_NORMAL);
+    // No long description: OBS would show it beside the status and squeeze both (20 Nov). Each status says the next step.
+}
 }

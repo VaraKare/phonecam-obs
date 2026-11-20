@@ -22,6 +22,20 @@ The user approved the Android network permission for this on 11 November 2026, a
 
 The Mac is the listener: the plugin accepts connections on TCP port 47183 (or a free port if that is taken) and announces itself with Bonjour as `_phonecam._tcp` with TXT `v=1`, `id=<Mac id>` and `pair=1` while a pairing window is open. The phone connects out, to the Bonjour address or to the addresses it learned from the QR code.
 
+When the plugin listens and announces:
+- only while the source is visible, **Allow paired phones over Wi-Fi** is on, and a phone is paired or a pairing window is open;
+- unticking the option closes the port at once;
+- with nothing paired, there is no open port at all;
+- connections from addresses outside the local network are closed without a reply (accepted: private 10/8, 172.16/12, 192.168/16, link-local 169.254/16, loopback). The OBS log notes this at most once a minute ("Ignored a Wi-Fi connection from outside the local network"), without the address. On a public network with client isolation nothing arrives at all, so no line appears.
+
+These come from the 16 November 2026 audit, AUDIT-006 in [the findings](../audit/FINDINGS.md).
+
+The pairings file is read once when the server starts and changed only through the server:
+- A file that exists but cannot be read is reported and left untouched, never replaced. **Forget paired phones** starts a new one.
+- A new pairing is saved before the phone is told it succeeded.
+
+Windows (test build, [Windows plan](WINDOWS.md) W4) runs the same server code with the same protocol. It announces through Windows' own DNS-SD (`DnsServiceRegister`, Windows 10 1809 or later), uses Windows CNG for the cryptography, and lists addresses of adapters with a default gateway first, so virtual adapters (Hyper-V, WSL) come last in the QR code. The first time the source listens, Windows Defender Firewall asks whether OBS may accept connections: allow it on **private** networks. Below, "Mac" means the computer running OBS.
+
 ### Pairing secret
 
 The Mac creates 10 random bytes (80 bits) for each pairing window. They are shown as 16 characters from the alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (typed codes ignore case, spaces and dashes, and read I/L as 1 and O as 0), and inside the QR code:
@@ -30,7 +44,7 @@ The Mac creates 10 random bytes (80 bits) for each pairing window. They are show
 phonecam://pair?v=1&id=<16 hex Mac id>&c=<16-character code>&p=<port>&a=<IPv4>,<IPv4>&n=<URL-encoded Mac name>
 ```
 
-Both sides turn it into a key: `K = SHA-256("PhoneCam pairing code v1" || 10 bytes)`. The window closes after 3 minutes, after one successful pairing, or after 20 failed attempts.
+Both sides turn it into a key: `K = SHA-256("PhoneCam pairing code v1" || 10 bytes)`. The window closes after 3 minutes, after one successful pairing, or after 20 failed attempts (wrong code or cancelled); the announcement and the QR card are withdrawn then too.
 
 ### Handshake
 
@@ -38,7 +52,7 @@ All numbers are big-endian. P-256 public keys are 65-byte uncompressed points. H
 
 1. Phone → Mac, **ClientHello** (118 bytes): `"PCW1"`, mode (1 session, 2 pairing), Mac id (8), phone id (8), phone ephemeral public key (65), phone nonce (32).
 2. Mac → phone, **ServerHello** (134 bytes): `"PCW1"`, status (0 OK; 1 unknown phone; 2 no pairing window; 3 busy), Mac ephemeral public key (65), Mac nonce (32), `tagM` (32). For a status other than 0, only the first 5 bytes are sent and the connection closes.
-3. Phone → Mac, **ClientFinish**: `tagP` (32), name length (1), phone name (UTF-8, at most 64 bytes, pairing only).
+3. Phone → Mac, **ClientFinish**: `tagP` (32), name length (1), phone name (UTF-8, at most 64 bytes, pairing only). The name is **not** covered by the tags. The Mac keeps only valid, printable UTF-8 from it and treats it as a label, never as proof of identity. Binding it into the handshake needs a protocol version bump (AUDIT-003 B).
 4. Mac → phone: one byte, 0 accepted.
 
 With `K` the pairing key (pairing mode) or the stored long-term key (session mode):
@@ -71,4 +85,5 @@ Record numbers start at 0 and count up, so a dropped, repeated, reordered or alt
 ### Stored data
 
 - Mac: `~/Library/Application Support/phonecam-obs/wifi.json` (mode 600): the Mac id and, for each paired phone, its id, name and long-term key. **Forget paired phones** in the source properties clears them.
+- Windows: `%APPDATA%\phonecam-obs\wifi.json`, the same contents, in the user's own profile.
 - Phone: app-private storage, excluded from backups: the phone id and, for each paired Mac, its id, name, long-term key, port and last addresses. **Forget paired Macs** in Settings clears them.

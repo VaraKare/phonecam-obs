@@ -7,29 +7,71 @@
 #include <thread>
 #include <mutex>
 #include <chrono>
+#include <condition_variable>
 
 OBS_DECLARE_MODULE()
 MODULE_EXPORT const char *obs_module_description(void) { return "Android phone camera over USB or Wi-Fi with hardware decoding"; }
 
 namespace {
+struct Source;
+struct AdbPath { std::mutex lock; std::string path; };
+// Shared with the USB connection thread. OBS calls hide on its video thread, so end() waits only briefly;
+// a thread still finishing (removing the adb forward, or stuck in a call) is left behind and can no longer
+// reach the source (audit/FINDINGS.md AUDIT-002 B, the same hand-off as on Windows).
+struct Link {
+    std::atomic<bool> stop{false};
+    std::timed_mutex lock;
+    Source *owner = nullptr;  // null once the source no longer waits for this thread
+    std::shared_ptr<AdbPath> adb;
+    std::mutex doneLock;
+    std::condition_variable doneSignal;
+    bool done = false;
+};
+
+void refreshOnUi(void *weakSource);
+
+int64_t steadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 struct Source {
     obs_source_t *source;
-    std::atomic<bool> stop{false};
+    std::atomic<bool> stop{false};  // Wi-Fi frames and frame output
+    std::mutex linkLock;
+    std::shared_ptr<Link> link;
     std::thread worker;
+    bool leaked = false;
     std::mutex lock;
-    std::string adbPath, status = "Starting…";
+    std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
+    std::string status = "Starting…";
     std::mutex sizeLock;
     uint32_t shownWidth = 0, shownHeight = 0;  // last picture size, for automatic fitting
+    // Direct Wi-Fi server: started and stopped under wifiLock, from show/hide and from the "Allow paired phones
+    // over Wi-Fi" switch (applied at once, audit/FINDINGS.md AUDIT-006). The UI thread reads it under the same lock.
+    std::mutex wifiLock;
+    bool showing = false, wifiWanted = true;
+    std::atomic<bool> wifiStop{false};
     std::unique_ptr<phonecam::wifi::Server> wifi;
     std::thread wifiWorker;
     std::atomic<bool> card{false};
+    std::atomic<int64_t> cardUntil{0};
+    std::atomic<bool> hideCardRequested{false};  // acted on by the UI task  // the pairing card hides itself on time, even if the Wi-Fi server is busy
+    bool wifiWarned = false;            // video thread only
+    // "Keep the phone live while this source is hidden": hide leaves USB and Wi-Fi running. start/end are
+    // serialised because hide runs on OBS's video thread and the switch on the UI thread.
+    std::atomic<bool> visible{false}, keepLive{false};
+    std::recursive_mutex runLock;
     explicit Source(obs_source_t *value) : source(value) {}
-    std::string adbSetting() { std::lock_guard<std::mutex> guard(lock); return adbPath; }
+    std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
-    void setStatus(const std::string &value) {
+    // Any thread, without waiting on OBS: the Properties window is refreshed by an OBS UI task. Refreshing it
+    // directly re-enters properties(), which takes wifiLock; from the Pair button (wifiLock held) that
+    // deadlocked OBS (18 Nov Mac, sampled), and from worker threads it blocked them on Windows (17 Nov).
+    void setStatus(const std::string &value, bool hideCard = false) {
         { std::lock_guard<std::mutex> guard(lock); status = value; }
         blog(LOG_INFO, "[phonecam] %s", value.c_str());
-        obs_source_update_properties(source);
+        if (hideCard) hideCardRequested = true;
+        obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false);
     }
     // One picture path for every connection: hardware-decoded NV12 from USB or Wi-Fi.
     void showFrame(CVPixelBufferRef image) {
@@ -56,9 +98,21 @@ struct Source {
         shownWidth = width; shownHeight = height;
         obs_queue_task(OBS_TASK_UI, fitToCanvas, obs_source_get_weak_source(source), false);
     }
+    // The status is set after wifiLock is released: setting it refreshes the Properties, which reads wifiLock.
     void showPairingCard() {
-        if (!wifi) { setStatus("Direct Wi-Fi is off. Turn on \"Allow direct Wi-Fi\" first, and keep this source visible."); return; }
-        auto window = wifi->openPairing();
+        std::string message;
+        {
+            std::lock_guard<std::mutex> guard(wifiLock);
+            message = openPairingCard();
+        }
+        setStatus(message);
+    }
+    // wifiLock held. Returns the status line to show.
+    std::string openPairingCard() {
+        if (!wifi) { return std::string("Direct Wi-Fi is off. Turn on \"Allow paired phones over Wi-Fi\" first, and keep this source visible."); }
+        phonecam::wifi::PairingWindow window;
+        try { window = wifi->openPairing(); }
+        catch (const std::exception &error) { return error.what(); }
         const uint32_t width = 1280, height = 720;
         auto pixels = phonecam::wifi::renderPairingCard(window, width, height);
         struct obs_source_frame frame{};
@@ -67,47 +121,141 @@ struct Source {
         frame.timestamp = os_gettime_ns(); frame.full_range = true;
         noteSize(width, height);
         card = true;
+        cardUntil = steadyMs() + 180000;  // the server's pairing window lasts 3 minutes
         obs_source_output_video(source, &frame);
-        setStatus("Pairing for 3 minutes: in PhoneCam open Settings → Pair a computer and scan the QR code, or type " + window.code + ".");
+        return "Pairing for 3 minutes: in PhoneCam open Settings → Pair a computer and scan the QR code, or type " + window.code + ".";
     }
     void hidePairingCard() { if (card.exchange(false)) obs_source_output_video(source, nullptr); }
     void start() {
-        if (worker.joinable()) return;
+        std::lock_guard<std::recursive_mutex> running(runLock);
+        if (current()) return;
         stop = false;
         { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
-        worker = std::thread([this] {
-            phonecam::autoReceive(stop, [this] { return adbSetting(); }, [this](const std::string &value) { setStatus(value); },
-                [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
-            obs_source_output_video(source, nullptr);
+        auto shared = std::make_shared<Link>();
+        shared->owner = this; shared->adb = adb;
+        { std::lock_guard<std::mutex> guard(linkLock); link = shared; }
+        worker = std::thread([shared] {
+            auto report = [shared](const std::string &value) {
+                std::lock_guard<std::timed_mutex> guard(shared->lock);
+                if (shared->owner) shared->owner->setStatus(value);
+            };
+            // Nothing may escape a thread (std::terminate would close OBS; audit/FINDINGS.md AUDIT-004).
+            try {
+                phonecam::autoReceive(shared->stop,
+                    [shared] { std::lock_guard<std::mutex> guard(shared->adb->lock); return shared->adb->path; }, report,
+                    [shared](CVPixelBufferRef image, uint64_t, uint64_t) {
+                        std::lock_guard<std::timed_mutex> guard(shared->lock);
+                        if (shared->owner) shared->owner->showFrame(image);
+                    });
+            } catch (const std::exception &error) { try { report(std::string("USB connection stopped: ") + error.what()); } catch (...) {} }
+            catch (...) { try { report("USB connection stopped after an unexpected error. Hide and show this source to retry."); } catch (...) {} }
+            {
+                std::lock_guard<std::timed_mutex> guard(shared->lock);
+                if (shared->owner) obs_source_output_video(shared->owner->source, nullptr);
+            }
+            std::lock_guard<std::mutex> guard(shared->doneLock);
+            shared->done = true; shared->doneSignal.notify_all();
         });
-        if (wifiAllowed()) {
-            wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
-                setStatus(value);
-                if (value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0) hidePairingCard();
-            }, [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); });
-            wifiWorker = std::thread([this] { wifi->run(stop); });
-        }
+        std::lock_guard<std::mutex> guard(wifiLock);
+        showing = true;
+        startWifi();
     }
+    // Called by OBS on its video thread (hide) and on destroy: waits at most half a second for the USB thread.
     void end() {
+        std::lock_guard<std::recursive_mutex> running(runLock);
         stop = true;
-        if (worker.joinable()) worker.join();
-        if (wifiWorker.joinable()) wifiWorker.join();
-        wifi.reset(); card = false;
+        std::shared_ptr<Link> shared;
+        { std::lock_guard<std::mutex> guard(linkLock); shared = std::move(link); }
+        if (shared) {
+            shared->stop = true;
+            bool finished;
+            {
+                std::unique_lock<std::mutex> guard(shared->doneLock);
+                finished = shared->doneSignal.wait_for(guard, std::chrono::milliseconds(500), [&] { return shared->done; });
+            }
+            // A callback still inside OBS after 2 s: keep this source's memory (destroy skips it) rather than
+            // free it under that callback.
+            if (shared->lock.try_lock_for(std::chrono::seconds(2))) { shared->owner = nullptr; shared->lock.unlock(); }
+            else leaked = true;
+            if (finished) worker.join();
+            else {
+                blog(LOG_INFO, "[phonecam] The connection thread finishes in the background (removing the USB link).");
+                worker.detach();  // libobs never unloads plugins, so the detached thread's code stays loaded
+            }
+        }
+        {
+            std::lock_guard<std::mutex> guard(wifiLock);
+            showing = false;
+            stopWifi();
+        }
+        card = false;
         obs_source_output_video(source, nullptr);
     }
-    bool wifiAllowed() {
-        obs_data_t *settings = obs_source_get_settings(source);
-        bool allowed = obs_data_get_bool(settings, "wifi_direct");
-        obs_data_release(settings);
-        return allowed;
+    // wifiLock held.
+    void startWifi() {
+        if (wifi || !showing || !wifiWanted) return;
+        wifiStop = false;
+        wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
+            setStatus(value, value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0);
+        }, [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); },
+        [](const std::string &value) { blog(LOG_INFO, "[phonecam] %s", value.c_str()); });
+        auto *server = wifi.get();
+        wifiWorker = std::thread([server, this] {
+            try { server->run(wifiStop); }  // run() reports its own problems; this is the last line of defence
+            catch (...) { setStatus("Direct Wi-Fi stopped after an unexpected error."); }
+        });
+    }
+    // wifiLock held.
+    void stopWifi() {
+        wifiStop = true;
+        if (wifiWorker.joinable()) wifiWorker.join();
+        wifi.reset();
+        hidePairingCard();
+    }
+    void setKeepLive(bool keep) {
+        keepLive = keep;
+        if (keep || visible) return;
+        std::lock_guard<std::recursive_mutex> running(runLock);
+        if (current()) end();  // switched off while hidden: stop now, as a hide would have
+    }
+    void setWifiWanted(bool wanted) {
+        std::lock_guard<std::mutex> guard(wifiLock);
+        wifiWanted = wanted;
+        if (wanted) startWifi(); else stopWifi();
+    }
+    // Once per frame on OBS's video thread; never blocks it.
+    void watch() {
+        if (card && !hideCardRequested && steadyMs() > cardUntil)
+            setStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.", true);
+        std::unique_lock<std::mutex> guard(wifiLock, std::try_to_lock);
+        if (!guard || !wifi) return;
+        const char *stuck = wifi->stuckLongerThan(10000);
+        if (stuck && !wifiWarned) { wifiWarned = true; blog(LOG_WARNING, "[phonecam] Wi-Fi server: no progress for 10 s while %s.", stuck); }
+        if (!stuck && wifiWarned) { wifiWarned = false; blog(LOG_INFO, "[phonecam] Wi-Fi server: working again."); }
     }
     ~Source() { end(); }
 };
+// UI thread: applies what other threads asked for. The weak reference keeps a removed source safe.
+void refreshOnUi(void *weakSource) {
+    auto *weak = static_cast<obs_weak_source_t *>(weakSource);
+    obs_source_t *strong = obs_weak_source_get_source(weak);
+    obs_weak_source_release(weak);
+    if (!strong) return;
+    if (auto *self = static_cast<Source *>(obs_obj_get_data(strong)); self && self->hideCardRequested.exchange(false))
+        self->hidePairingCard();
+    obs_source_update_properties(strong);
+    obs_source_release(strong);
+}
+
 const char *name(void *) { return "PhoneCam (phone camera)"; }
 void update(void *value, obs_data_t *settings) {
     auto *self = static_cast<Source *>(value);
-    std::lock_guard<std::mutex> guard(self->lock);
-    self->adbPath = obs_data_get_string(settings, "adb_path");
+    {
+        std::lock_guard<std::mutex> guard(self->adb->lock);
+        self->adb->path = obs_data_get_string(settings, "adb_path");
+    }
+    self->setWifiWanted(obs_data_get_bool(settings, "wifi_direct"));
+    self->setKeepLive(obs_data_get_bool(settings, "keep_live"));
 }
 void *create(obs_data_t *settings, obs_source_t *source) {
     obs_source_set_async_unbuffered(source, true);
@@ -116,37 +264,65 @@ void *create(obs_data_t *settings, obs_source_t *source) {
     return self;
 }
 void defaults(obs_data_t *settings) { obs_data_set_default_bool(settings, "fit_canvas", true); obs_data_set_default_bool(settings, "wifi_direct", true); }
-void destroy(void *value) { delete static_cast<Source *>(value); }
-void show(void *value) { static_cast<Source *>(value)->start(); }
-void hide(void *value) { static_cast<Source *>(value)->end(); }
+void destroy(void *value) {
+    auto *self = static_cast<Source *>(value);
+    self->end();
+    if (!self->leaked) delete self;
+}
+void tick(void *value, float) { static_cast<Source *>(value)->watch(); }
+void show(void *value) { auto *self = static_cast<Source *>(value); self->visible = true; self->start(); }
+void hide(void *value) {
+    auto *self = static_cast<Source *>(value);
+    self->visible = false;
+    if (!self->keepLive) self->end();
+}
 obs_properties_t *properties(void *value) {
     auto *p = obs_properties_create();
-    std::string status = value ? static_cast<Source *>(value)->currentStatus() : "Not running";
-    obs_properties_add_text(p, "status", ("Status: " + status).c_str(), OBS_TEXT_INFO);
-    obs_properties_add_text(p, "help", "Connect the phone by USB, or pair it once over Wi-Fi. Keep this source visible, then tap Start live on the phone.", OBS_TEXT_INFO);
-    obs_properties_add_button2(p, "wifi_qr", "Pair a phone over Wi-Fi", [](obs_properties_t *, obs_property_t *, void *data) {
-        if (data) static_cast<Source *>(data)->showPairingCard();
+    addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running");
+
+    obs_properties_t *connection = obs_properties_create();
+    obs_property_set_long_description(obs_properties_add_bool(connection, "wifi_direct", "Allow paired phones over Wi-Fi"),
+        "Lets phones you paired before connect over Wi-Fi, without a cable.\nWhile ticked, this computer listens for them on the local network only.\nUntick it to stop listening.");
+    if (value) {
+        auto *self = static_cast<Source *>(value);
+        std::string summary;
+        {
+            // Never wait here: OBS calls properties() synchronously from our own callbacks (18 Nov Mac deadlock).
+            std::unique_lock<std::mutex> guard(self->wifiLock, std::try_to_lock);
+            try { if (guard && self->wifi) summary = self->wifi->summary(); } catch (...) {}
+        }
+        if (!summary.empty()) obs_properties_add_text(connection, "wifi_summary", summary.c_str(), OBS_TEXT_INFO);
+    }
+    obs_properties_add_button2(connection, "wifi_qr", "Pair a phone over Wi-Fi", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (data) { try { static_cast<Source *>(data)->showPairingCard(); } catch (...) {} }
         return true;
     }, value);
-    obs_properties_add_button2(p, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
+    obs_properties_add_button2(connection, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
+        if (!data) return false;
+        auto *self = static_cast<Source *>(data);
+        try {
+            {
+                std::lock_guard<std::mutex> guard(self->wifiLock);
+                if (self->wifi) self->wifi->forget(); else phonecam::wifi::Server::forgetAll();
+            }
+            self->setStatus("Forgot all paired phones. Pair again to use Wi-Fi.");
+        }
+        catch (const std::exception &error) { self->setStatus(error.what()); }
+        catch (...) { self->setStatus("Could not forget the paired phones."); }
+        return true;
+    }, value);
+    obs_properties_add_group(p, "connection", "Connection", OBS_GROUP_NORMAL, connection);
+
+    obs_properties_t *picture = obs_properties_create();
+    obs_property_set_long_description(obs_properties_add_bool(picture, "fit_canvas", "Fit the picture to the canvas automatically"),
+        "Fits the phone picture to the canvas when it appears or changes size\n(portrait, landscape, 4K). Untick it to keep your own size and position.");
+    obs_properties_add_button2(picture, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
         if (data) fit(static_cast<Source *>(data)->source, true);  // properties callbacks run on the UI thread
         return false;
     }, value);
-    if (value) {
-        auto *self = static_cast<Source *>(value);
-        if (self->wifi) obs_properties_add_text(p, "wifi_summary", self->wifi->summary().c_str(), OBS_TEXT_INFO);
-    }
-
-    obs_properties_t *options = obs_properties_create();
-    obs_properties_add_bool(options, "fit_canvas", "Fit the picture to the canvas automatically");
-    obs_properties_add_bool(options, "wifi_direct", "Allow paired phones over Wi-Fi");
-    obs_properties_add_button2(options, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
-        if (!data) return false;
-        try { phonecam::wifi::Server::forgetAll(); static_cast<Source *>(data)->setStatus("Forgot all paired phones. Pair again to use Wi-Fi."); }
-        catch (const std::exception &error) { static_cast<Source *>(data)->setStatus(error.what()); }
-        return true;
-    }, value);
-    obs_properties_add_group(p, "options", "Options", OBS_GROUP_NORMAL, options);
+    obs_property_set_long_description(obs_properties_add_bool(picture, "keep_live", "Keep the phone live while this source is hidden"),
+        "Normally, hiding this source stops the phone and you tap Start live again.\nTick this to keep it sending while hidden, so switching back is instant.\nThe phone gets warmer and uses more battery.");
+    obs_properties_add_group(p, "picture", "Picture", OBS_GROUP_NORMAL, picture);
 
     obs_properties_t *advanced = obs_properties_create();
     obs_properties_add_text(advanced, "adb_path", "adb path (found automatically)", OBS_TEXT_DEFAULT);
@@ -173,7 +349,7 @@ MODULE_EXPORT bool obs_module_load(void) {
     info.id = "phonecam_usb_v1"; info.type = OBS_SOURCE_TYPE_INPUT;
     info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
     info.get_name = name; info.create = create; info.destroy = destroy; info.update = update;
-    info.get_defaults = defaults; info.show = show; info.hide = hide; info.get_properties = properties;
+    info.get_defaults = defaults; info.video_tick = tick; info.show = show; info.hide = hide; info.get_properties = properties;
     info.icon_type = OBS_ICON_TYPE_CAMERA;
     obs_register_source(&info);
     phonecam::setLog(logLine);

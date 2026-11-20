@@ -1,9 +1,8 @@
 #pragma once
 // Direct Wi-Fi security (docs/WIFI.md): pairing codes, P-256 ECDH, HKDF/HMAC-SHA-256 handshake tags and
-// AES-256-CTR + HMAC records. Apple CommonCrypto and Security only; header-only so tests link it directly.
-#include <CommonCrypto/CommonCrypto.h>
-#include <CommonCrypto/CommonRandom.h>
-#include <Security/Security.h>
+// AES-256-CTR + HMAC records. Header-only so tests link it directly. The platform header supplies
+// randomBytes, sha256, hmac, aesCtr and the Ephemeral P-256 key: CommonCrypto/Security on macOS,
+// Windows CNG (BCrypt) on Windows. Everything else here is shared, with one set of test vectors.
 #include <cstdint>
 #include <iterator>
 #include <cstring>
@@ -26,20 +25,16 @@ template <class... Parts> Bytes join(const Parts &...parts) {
 }
 inline void putU64(Bytes &out, uint64_t v) { for (int i = 7; i >= 0; --i) out.push_back(uint8_t(v >> (8 * i))); }
 inline void putU32(Bytes &out, uint32_t v) { for (int i = 3; i >= 0; --i) out.push_back(uint8_t(v >> (8 * i))); }
+}
 
-inline Bytes randomBytes(size_t n) {
-    Bytes out(n);
-    if (CCRandomGenerateBytes(out.data(), n) != kCCSuccess) throw std::runtime_error("No secure random numbers");
-    return out;
-}
-inline Bytes sha256(const Bytes &data) {
-    Bytes out(CC_SHA256_DIGEST_LENGTH); CC_SHA256(data.data(), CC_LONG(data.size()), out.data()); return out;
-}
-inline Bytes hmac(const Bytes &key, const Bytes &data) {
-    Bytes out(CC_SHA256_DIGEST_LENGTH);
-    CCHmac(kCCHmacAlgSHA256, key.data(), key.size(), data.data(), data.size(), out.data());
-    return out;
-}
+#ifdef _WIN32
+#include "wifi_crypto_win.hpp"
+#else
+#include "wifi_crypto_apple.hpp"
+#endif
+
+namespace phonecam::wifi {
+
 // RFC 5869 HKDF-Expand with SHA-256.
 inline Bytes hkdfExpand(const Bytes &prk, const Bytes &info, size_t length) {
     Bytes out, block;
@@ -94,53 +89,6 @@ inline std::string formatCode(const std::string &code) {
 }
 inline Bytes codeKey(const Bytes &secret) { return sha256(join(bytes("PhoneCam pairing code v1"), secret)); }
 
-// Ephemeral P-256 key; public() is the 65-byte uncompressed point, shared() the 32-byte ECDH x coordinate.
-class Ephemeral {
-    SecKeyRef key = nullptr;
-public:
-    Ephemeral() {
-        int bits = 256;
-        CFNumberRef size = CFNumberCreate(nullptr, kCFNumberIntType, &bits);
-        const void *keys[] = {kSecAttrKeyType, kSecAttrKeySizeInBits};
-        const void *values[] = {kSecAttrKeyTypeECSECPrimeRandom, size};
-        CFDictionaryRef attributes = CFDictionaryCreate(nullptr, keys, values, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-        key = SecKeyCreateRandomKey(attributes, nullptr);
-        CFRelease(attributes); CFRelease(size);
-        if (!key) throw std::runtime_error("Could not create a session key");
-    }
-    ~Ephemeral() { if (key) CFRelease(key); }
-    Ephemeral(const Ephemeral &) = delete; Ephemeral &operator=(const Ephemeral &) = delete;
-    Bytes publicKey() const {
-        SecKeyRef pub = SecKeyCopyPublicKey(key);
-        CFDataRef data = pub ? SecKeyCopyExternalRepresentation(pub, nullptr) : nullptr;
-        if (pub) CFRelease(pub);
-        if (!data) throw std::runtime_error("Could not export the session key");
-        Bytes out(CFDataGetBytePtr(data), CFDataGetBytePtr(data) + CFDataGetLength(data));
-        CFRelease(data);
-        if (out.size() != publicKeyBytes || out[0] != 4) throw std::runtime_error("Unexpected session key format");
-        return out;
-    }
-    // Throws for an invalid peer point (not on the curve), so a bad key ends the handshake.
-    Bytes shared(const Bytes &peer) const {
-        if (peer.size() != publicKeyBytes || peer[0] != 4) throw std::runtime_error("Invalid peer session key");
-        CFDataRef data = CFDataCreate(nullptr, peer.data(), CFIndex(peer.size()));
-        const void *keys[] = {kSecAttrKeyType, kSecAttrKeyClass};
-        const void *values[] = {kSecAttrKeyTypeECSECPrimeRandom, kSecAttrKeyClassPublic};
-        CFDictionaryRef attributes = CFDictionaryCreate(nullptr, keys, values, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-        SecKeyRef peerKey = SecKeyCreateWithData(data, attributes, nullptr);
-        CFRelease(attributes); CFRelease(data);
-        if (!peerKey) throw std::runtime_error("Invalid peer session key");
-        CFDictionaryRef parameters = CFDictionaryCreate(nullptr, nullptr, nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-        CFDataRef secret = SecKeyCopyKeyExchangeResult(key, kSecKeyAlgorithmECDHKeyExchangeStandard, peerKey, parameters, nullptr);
-        CFRelease(parameters); CFRelease(peerKey);
-        if (!secret) throw std::runtime_error("Session key exchange failed");
-        Bytes out(CFDataGetBytePtr(secret), CFDataGetBytePtr(secret) + CFDataGetLength(secret));
-        CFRelease(secret);
-        if (out.size() != 32) throw std::runtime_error("Unexpected shared secret size");
-        return out;
-    }
-};
-
 struct SessionKeys { Bytes encryption, authentication, longTerm; };
 // Handshake values from docs/WIFI.md. t1 = ClientHello || ServerHello without tagM.
 struct Handshake {
@@ -157,18 +105,6 @@ struct Handshake {
     }
 };
 
-inline Bytes aesCtr(const Bytes &key, uint64_t record, const uint8_t *data, size_t size) {
-    uint8_t iv[16] = {};
-    for (int i = 0; i < 8; ++i) iv[i] = uint8_t(record >> (56 - 8 * i));
-    CCCryptorRef cryptor = nullptr;
-    if (CCCryptorCreateWithMode(kCCEncrypt, kCCModeCTR, kCCAlgorithmAES, ccNoPadding, iv, key.data(), key.size(),
-                                nullptr, 0, 0, kCCModeOptionCTR_BE, &cryptor) != kCCSuccess) throw std::runtime_error("AES setup failed");
-    Bytes out(size); size_t moved = 0;
-    CCCryptorStatus status = CCCryptorUpdate(cryptor, data, size, out.data(), out.size(), &moved);
-    CCCryptorRelease(cryptor);
-    if (status != kCCSuccess || moved != size) throw std::runtime_error("AES failed");
-    return out;
-}
 inline Bytes recordTag(const Bytes &authKey, uint64_t record, const Bytes &ciphertext) {
     Bytes input; putU64(input, record); putU32(input, uint32_t(ciphertext.size()));
     input.insert(input.end(), ciphertext.begin(), ciphertext.end());

@@ -30,14 +30,8 @@ class SettingsActivity : Activity() {
         ui.title("Settings")
 
         ui.section("Connection")
-        val wifi = WifiConnector(this)
-        wifi.pairings.macs.forEach { mac ->
-            ui.row(mac.name, "Paired over Wi-Fi", chevron = false) {
-                AlertDialog.Builder(this).setTitle("Forget ${mac.name}?")
-                    .setMessage("This phone stops connecting to it over Wi-Fi until you pair again.")
-                    .setNegativeButton("Cancel", null).setPositiveButton("Forget") { _, _ -> wifi.pairings.forget(mac.id); build() }.show()
-            }
-        }
+        val count = WifiConnector(this).pairings.macs.size
+        ui.row("Paired computers", if (count == 0) "None yet" else "For direct Wi-Fi", value = count.toString()) { showPaired() }
         ui.row("Pair a computer", "Scan the QR code shown in OBS") { finishWith(SCAN) }
         ui.row("Type a pairing code", "If scanning doesn't work") { finishWith(TYPE_CODE) }
 
@@ -62,6 +56,28 @@ class SettingsActivity : Activity() {
             text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}"
             setTextColor(Ui.MUTED); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, ui.dp(28), 0, 0)
         })
+    }
+
+    /** The paired computers, most recently used first; tapping one offers to forget it. */
+    private fun showPaired() {
+        val pairings = WifiConnector(this).pairings
+        val macs = pairings.macs.reversed()
+        if (macs.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("No paired computers")
+                .setMessage("Pair once to use direct Wi-Fi. In OBS, open the PhoneCam source's Properties and click Pair a phone over Wi-Fi.")
+                .setNegativeButton("Close", null).setPositiveButton("Pair a computer") { _, _ -> finishWith(SCAN) }.show()
+            return
+        }
+        val names = macs.mapIndexed { i, mac -> mac.name + if (i == 0) "  ·  last used" else "" }
+        AlertDialog.Builder(this).setTitle("Paired computers")
+            .setItems(names.toTypedArray()) { _, index ->
+                val mac = macs[index]
+                AlertDialog.Builder(this).setTitle("Forget ${mac.name}?")
+                    .setMessage("This phone stops connecting to it over Wi-Fi until you pair again. USB is not affected.")
+                    .setNegativeButton("Cancel") { _, _ -> showPaired() }
+                    .setPositiveButton("Forget") { _, _ -> pairings.forget(mac.id); build(); showPaired() }.show()
+            }
+            .setNegativeButton("Close", null).show()
     }
 
     private fun toggle(title: String, subtitle: String?, key: String) =

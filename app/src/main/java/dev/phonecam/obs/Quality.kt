@@ -47,6 +47,12 @@ enum class Quality(val label: String) {
             }
         }
 
+        /** Size and frame rate only, for the quality chip: "1080p 30 fps". */
+        fun short(p: Profile): String {
+            val size = when (p.width) { 3840 -> "4K"; 1920 -> "1080p"; 1280 -> "720p"; else -> "${p.width}×${p.height}" }
+            return "$size ${p.fps} fps"
+        }
+
         fun describe(p: Profile): String {
             val size = when (p.width) { 3840 -> "4K"; 1920 -> "1080p"; 1280 -> "720p"; else -> "${p.width}×${p.height}" }
             return "$size · ${if (p.mime == "video/avc") "H.264" else "H.265"} · ${p.bitrate / 1_000_000} Mb/s" +

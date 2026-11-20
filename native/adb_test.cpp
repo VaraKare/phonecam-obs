@@ -1,8 +1,7 @@
-#include "adb.hpp"
+#include "adb_parse.hpp"
 #include <cassert>
 #include <cstdio>
 // Header-only parsing checks under sanitizers; runAdb/autoReceive are covered by tools/test_native.py.
-namespace phonecam { AdbResult runAdb(const std::string &, const std::vector<std::string> &, int) { return {}; } }
 int main() {
     using namespace phonecam;
     auto d = parseDevices("* daemon not running; starting now at tcp:5037\n* daemon started successfully\nList of devices attached\nABC123\tdevice\n192.168.1.4:5555\tdevice\nXYZ\tunauthorized\nQQ\toffline\n\n");
