@@ -58,8 +58,10 @@ Evidence: [docs/research/WINDOWS_THIRD_LAPTOP_TEST.md](../docs/research/WINDOWS_
 | AUDIT-012 A adb restart from one device | Fixed | A device that doesn't answer is skipped with "The phone isn't answering over USB…"; only a server-level call that also times out counts as a stall (508d1d7). The old code did not actually restart adb here (the healthy `devices` call reset the count) but looped with no status | New test with a hanging second device: no `kill-server`, status shown; fails on the old code | — |
 | AUDIT-013 A End reason overwritten | Fixed | Properties keep "Last session ended: …" until the next live (a959611) | Builds; Mac check pending | Hardware look |
 | AUDIT-014 A+B Config changes end live | Fixed | `configChanges` covers dark mode, keyboard, font scale, density, locale; a stop reason that arrives after the screen is gone shows on the next screen (a959611) | Android build, lint | Phone check (switch dark mode while live) |
+| AUDIT-011 A Several sources | Fixed (A) | One PhoneCam source at a time uses the phone (USB and Wi-Fi); others say "Another PhoneCam source is using the phone…" in yellow and take over when it is hidden or removed (ae36df3) | Builds (Mac, Windows CI). A libobs test could not drive show/hide without a video thread | OBS check with two sources. Two phones still go to the first found (B/C with multi-camera) |
+| AUDIT-017 No macOS CI | Fixed | `mac-plugin` job on macos-14: official OBS 33.0.1 (SHA-256 checked), `build_native.py` (sanitizer tests, plugin, OBS load) and `test_native.py`. Decode tests skip only if the VM has no hardware decoder (aa356e4) | First CI run | — |
 | New: switching restarts the whole connection | Fixed | Camera or quality changes keep the connection; the receivers rebuild the decoder; older plugins fall back to a full restart (4e8e8c0) | New mid-stream switch test (Mac, Windows CI fixture); phone + Mac 20 Nov: 5 switches on one connection, no "Live ended" | Exact timing (the phone did not keep its log lines) |
 
 ## Next (Stage 2 remainder)
 
-AUDIT-011 (several sources or phones), AUDIT-017 (macOS CI), then the Wi-Fi part of AUDIT-002 and AUDIT-008.
+The Wi-Fi part of AUDIT-002 and AUDIT-008; then AUDIT-010's hang test and two-source/two-phone handling (AUDIT-011 B/C) with multi-camera.

@@ -17,10 +17,10 @@ For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.m
 ## 20 November, after the v0.4 release
 
 - **Faster switching (4e8e8c0):** camera and quality changes keep the connection to OBS. On the phone and Mac, 5 switches stayed on one connection. Version 0.4.1-alpha.1 is installed on both. With the v0.4 Windows plugin, the phone falls back to the old full restart.
-- **Audit fixes:** 010, 012, 013 and 014 are done; see [audit/REMEDIATION_LOG.md](../audit/REMEDIATION_LOG.md).
+- **Audit fixes:** 010, 011, 012, 013, 014 and 017 are done. There is now a macOS CI job.; see [audit/REMEDIATION_LOG.md](../audit/REMEDIATION_LOG.md).
 - **Next:**
-  1. A quick hardware look: the "Last session ended" line in OBS, and dark mode while live on the phone.
-  2. AUDIT-011 and AUDIT-017.
+  1. A quick hardware look: the "Last session ended" line in OBS, dark mode while live on the phone, and two PhoneCam sources (the second should say another source is using the phone).
+  2. Release v0.4.1 (faster switching, audit fixes) after that look, with the owner's yes.
   3. Then the Wi-Fi part of AUDIT-002 and AUDIT-008.
   4. Then the product plan.
 
