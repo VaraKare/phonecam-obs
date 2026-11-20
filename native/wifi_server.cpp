@@ -135,10 +135,8 @@ std::string Server::summary() {
     { std::lock_guard<std::mutex> guard(lock); for (const auto &p : pairings.phones) names.push_back(p.name); }
     if (!ready) return "Wi-Fi: not available";
     std::string text;
-    if (port) {
-        auto addresses = localAddresses();
-        text = "Wi-Fi: ready" + (addresses.empty() ? std::string() : " on " + addresses[0]);
-    } else text = "Wi-Fi: listens only while pairing or once a phone is paired";
+    if (port) text = "Wi-Fi: ready";
+    else text = "Wi-Fi: listens only while pairing or once a phone is paired";
     text += names.empty() ? " · No paired phones yet" : " · Paired: ";
     for (size_t i = 0; i < names.size(); ++i) text += (i ? ", " : "") + names[i];
     return text;

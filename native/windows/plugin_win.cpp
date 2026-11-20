@@ -322,7 +322,7 @@ obs_properties_t *properties(void *value) {
 
     obs_properties_t *connection = obs_properties_create();
     obs_property_set_long_description(obs_properties_add_bool(connection, "wifi_direct", "Allow paired phones over Wi-Fi"),
-        "Lets phones you paired before connect over your local Wi-Fi without a cable. While it is on and a phone is paired, this computer listens on port 47183 on the local network only. Untick it to close that port.");
+        "Lets phones you paired before connect over Wi-Fi, without a cable.\nWhile ticked, this computer listens for them on the local network only.\nUntick it to stop listening.");
     if (value) {
         auto *self = static_cast<Source *>(value);
         std::string summary;
@@ -355,13 +355,13 @@ obs_properties_t *properties(void *value) {
 
     obs_properties_t *picture = obs_properties_create();
     obs_property_set_long_description(obs_properties_add_bool(picture, "fit_canvas", "Fit the picture to the canvas automatically"),
-        "Scales the phone picture to fit the canvas when it first appears or its size changes (portrait, landscape, 4K). Untick it to keep your own size and position.");
+        "Fits the phone picture to the canvas when it appears or changes size\n(portrait, landscape, 4K). Untick it to keep your own size and position.");
     obs_properties_add_button2(picture, "fit_now", "Fit to canvas now", [](obs_properties_t *, obs_property_t *, void *data) {
         if (data) fit(static_cast<Source *>(data)->source, true);
         return false;
     }, value);
     obs_property_set_long_description(obs_properties_add_bool(picture, "keep_live", "Keep the phone live while this source is hidden"),
-        "Normally hiding this source (eye icon or another scene) stops the phone, and you tap Start live again. Tick this to keep the phone sending while hidden, so switching back is instant. The phone keeps its camera on, gets warmer and uses more battery.");
+        "Normally, hiding this source stops the phone and you tap Start live again.\nTick this to keep it sending while hidden, so switching back is instant.\nThe phone gets warmer and uses more battery.");
     obs_properties_add_group(p, "picture", "Picture", OBS_GROUP_NORMAL, picture);
     obs_properties_t *advanced = obs_properties_create();
     obs_properties_add_text(advanced, "adb_path", "adb.exe path (found automatically)", OBS_TEXT_DEFAULT);

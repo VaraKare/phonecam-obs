@@ -121,7 +121,12 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                 if (stop) break;
                 if (serial.empty()) {
                     if (unanswered && stalled(AdbResult{-1, {}, true})) continue;
-                    say("Install the PhoneCam app on the phone (USB debugging connected, app not found)."); wait(3000); continue;
+                    // A USB link that is resetting also fails the query (20 Nov); only blame the app when it is really missing.
+                    bool installed = !devices.ready.empty() && !stop &&
+                        runAdb(adb, {"-s", devices.ready.front(), "shell", "pm", "path", "dev.phonecam.obs"}).output.find("package:") != std::string::npos;
+                    say(installed ? "Reconnecting to the phone over USB…"
+                                  : "Install the PhoneCam app on the phone (USB debugging connected, app not found).");
+                    wait(3000); continue;
                 }
                 tokenFetched = std::chrono::steady_clock::now();
                 doing(Activity::Forwarding);

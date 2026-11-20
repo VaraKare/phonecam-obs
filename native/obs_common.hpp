@@ -95,7 +95,6 @@ bool needsAttention(const std::string &status) {
 void addStatus(obs_properties_t *props, const std::string &status) {
     obs_property_t *line = obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
     obs_property_text_set_info_type(line, needsAttention(status) ? OBS_TEXT_INFO_WARNING : OBS_TEXT_INFO_NORMAL);
-    obs_property_set_long_description(line, "Connect the phone by USB, or pair it once over Wi-Fi. Keep this source visible "
-        "(or tick Keep the phone live while hidden), then tap Start live on the phone.");
+    // No long description: OBS would show it beside the status and squeeze both (20 Nov). Each status says the next step.
 }
 }

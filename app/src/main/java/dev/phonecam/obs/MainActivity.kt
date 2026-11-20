@@ -582,7 +582,8 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 if (choices[index] == choice) return@setSingleChoiceItems
                 choice = choices[index]; refresh()
-                if (live != null) restartLive()
+                // Restart only when the picture would change: on some cameras two qualities give the same settings.
+                if (live != null && selected() != liveProfile) restartLive()
             }
             .setNeutralButton("What's the difference?") { _, _ ->
                 AlertDialog.Builder(this).setTitle("Qualities").setMessage(

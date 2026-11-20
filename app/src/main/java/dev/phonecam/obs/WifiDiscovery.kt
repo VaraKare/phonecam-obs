@@ -117,7 +117,7 @@ class WifiConnector(private val context: Context) {
     /** Pairs with whichever nearby OBS source shows this typed code. */
     fun pair(code: ByteArray): String {
         val candidates = findPairing(8_000)
-        if (candidates.isEmpty()) throw java.io.IOException("No OBS source with an open pairing window found on this Wi-Fi. In OBS click Pair a phone over Wi-Fi, check both devices are on the same network, or scan the QR code instead.")
+        if (candidates.isEmpty()) throw java.io.IOException("OBS isn't waiting for a phone on this Wi-Fi. In OBS, click Pair a phone over Wi-Fi first, then type or scan the code it shows. The phone and computer must be on the same Wi-Fi.")
         var last: Exception? = null
         for (mac in candidates) {
             try {
