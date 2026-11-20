@@ -390,6 +390,7 @@ class MainActivity : Activity() {
         renderControls()
         live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
             if (destroyed) return@LiveStreamer
+            if (switching && state.phase == LiveState.Phase.LIVE && !state.switching && state.frames > 0) { switching = false; refresh() }
             showState(state)
             message.text = state.message
             if (state.phase == LiveState.Phase.STOPPED) {
@@ -618,11 +619,25 @@ class MainActivity : Activity() {
         refresh()
     }
 
+    /**
+     * Switches on the open connection (about a second). If OBS runs an older plugin it ends the connection;
+     * the session then stops while [switching] is set, and the STOPPED handler restarts it the old way.
+     */
     private fun restartLive() {
         val session = live ?: return
-        if (selected() == null) { message.text = "This quality isn't available on this camera."; return }
-        switching = true; message.text = "Switching…"; refresh()
-        session.stop("Switching camera or quality")
+        val profile = selected() ?: run { message.text = "This quality isn't available on this camera."; return }
+        switching = true; message.text = "Switching…"
+        if (showPreview) {
+            val size = previewSize(profile)
+            if (size == null) { refresh(); session.stop("Switching camera or quality"); return }  // the full restart explains it
+            preview.holder.setFixedSize(size.width, size.height)
+        }
+        liveProfile = profile
+        val able = Abilities.from(getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId))
+        abilities = able
+        controls = loadControls(profile.cameraId); sliding = null
+        renderControls(); refresh()
+        session.switchTo(profile, highQuality && profile.highQuality, able, controls)
     }
 
     private fun chooseCustom() {

@@ -41,8 +41,12 @@ void decodeMessages(std::atomic<bool> &stop, const Reader &read, Decoder &decode
         Header h = header(bytes);
         std::vector<uint8_t> body(h.length); read(body.data(), body.size(), 3);
         if (h.type == 1) {
-            if (configured) throw std::runtime_error("Unexpected reconfiguration; restart live capture");
-            decoder.configure(body); configured = true;
+            // A second configuration means the phone switched camera or quality on the same connection
+            // (0.4.1 and later). The decoder starts over; frame order and timing restart with the new camera.
+            if (configured && log) log("The phone switched camera or quality; restarting the decoder.");
+            decoder.configure(body);
+            if (configured) { seen = false; waitingForKey = true; warmedUp = false; }
+            configured = true;
         } else {
             if (!configured || (seen && (h.sequence <= lastSequence || h.pts <= lastPts))) throw std::runtime_error("Invalid frame order/timing");
             if (seen && h.sequence != lastSequence + 1) waitingForKey = true;

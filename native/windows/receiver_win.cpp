@@ -193,7 +193,9 @@ public:
         if (device) av_buffer_unref(&device);
     }
     void configure(const std::vector<uint8_t> &data) {
-        if (context || data.size() < 20) throw std::runtime_error("Unexpected codec configuration");
+        // A second configuration (phone switched camera or quality) reopens the decoder below; open() frees the old one.
+        if (data.size() < 20) throw std::runtime_error("Unexpected codec configuration");
+        delivered = false;
         codec = be32(data.data()); width = be32(data.data() + 4); height = be32(data.data() + 8);
         if ((codec != 1 && codec != 2) || width < 128 || height < 128 || width > 4096 || height > 4096 || width % 2 || height % 2)
             throw std::runtime_error("Unsupported codec/size; use a declared SDR profile");

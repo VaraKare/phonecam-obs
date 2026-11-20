@@ -232,6 +232,8 @@ def native_tests(runtime, receiver, fake_adb):
     assert (hevc["lastWidth"], hevc["lastHeight"]) == (320, 240), hevc
     portrait = decode("hevc-640x360-portrait.pcam")
     assert (portrait["lastWidth"], portrait["lastHeight"]) == (360, 640), portrait
+    switched = decode("switch-avc-640x360-to-hevc-320x240.pcam", 24)
+    assert (switched["lastWidth"], switched["lastHeight"]) == (320, 240), switched
     print("PASS: Windows decodes H.264 and H.265, rotates and mirrors like the Mac", flush=True)
 
     token = "b" * 64

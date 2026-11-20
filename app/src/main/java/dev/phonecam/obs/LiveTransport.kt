@@ -140,10 +140,11 @@ class LiveTransport(private val token: String, private val connected: (String) -
     private fun pump(sink: Sink) {
         deadline = Long.MAX_VALUE
         connected(sink.route)
-        var configured = false
+        var sent = 0
         while (!closed) {
-            if (!configured) configuration?.let { packet(sink, 1, 0, 0, 0, it); configured = true }
-            val frame = if (configured) queue.poll() else null
+            val config = configuration; val version = configVersion
+            if (config != null && version != sent) { packet(sink, 1, 0, 0, 0, config); sent = version }
+            val frame = if (config != null && sent == version) queue.poll() else null
             if (frame != null) packet(sink, 2, flags(frame), frame.sequence, frame.ptsUs, frame.bytes)
             else synchronized(signal) { if (!closed) signal.wait(10) }
         }
@@ -162,10 +163,17 @@ class LiveTransport(private val token: String, private val connected: (String) -
         MessageDigest.isEqual(auth, "$token\n".toByteArray(Charsets.US_ASCII))
     }.getOrDefault(false)
 
+    @Volatile private var configVersion = 0
+    /** Sent before the next frame. A later call (camera or quality switch) is sent again on the same connection;
+     *  plugins from 0.4.1 rebuild their decoder, older ones end the connection and the phone restarts instead. */
     fun configure(value: ByteArray) {
         require(value.size <= 65536) { "Encoder configuration too large" }
-        check(configuration == null) { "Encoder changed format; restart the stream" }
-        configuration = value
+        synchronized(signal) { configuration = value; configVersion++; signal.notifyAll() }
+    }
+    /** Camera or quality switch: drop the old encoder's settings and queued frames, keep the connection. */
+    fun restart() {
+        synchronized(signal) { configuration = null; queue.clear() }
+        warmUpUntil = SystemClock.elapsedRealtime() + WARM_UP_MS  // the computer sets up a new decoder
     }
     fun offer(frame: LiveQueue.Frame): Boolean = queue.offer(frame)
 

@@ -271,6 +271,18 @@ esac
         # Landscape, then portrait, then the opposite landscape, as the phone is turned live.
         _, value = self.exchange(self.encoded_packets(width=1920, height=1080, turns=lambda seq: 0 if seq < 4 else 1 if seq < 8 else 2), 12)
         self.assertEqual((value["lastWidth"], value["lastHeight"], value["sizeChanges"]), (1920, 1080, 2))
+    def switched_packets(self, first=dict(width=1920, height=1080), second=dict(hevc=True, width=1280, height=720)):
+        """H.264, then the phone switches to H.265 at another size on the same connection (0.4.1): a second
+        configuration, sequence numbers that continue, and timestamps that restart (another camera's clock)."""
+        before = self.encoded_packets(**first)
+        after = []
+        for data in self.encoded_packets(**second):
+            magic, version, kind, length, flags, seq, pts = struct.unpack(">4sHHIIQQ", data[:32])
+            after.append(struct.pack(">4sHHIIQQ", magic, version, kind, length, flags, seq + 12 if kind == 2 else 0, pts) + data[32:])
+        return before + after
+    def test_switch_camera_or_quality_mid_stream(self):
+        _, value = self.exchange(self.switched_packets(), 24)
+        self.assertEqual((value["lastWidth"], value["lastHeight"]), (1280, 720))
     def test_keyflag_mismatch_rejected(self):
         packets = self.encoded_packets()
         # A dependent P-frame falsely claims to be a keyframe.
