@@ -69,7 +69,8 @@ bool listening(int port) {
     return false;
 }
 
-std::mutex serverLock;
+// Timed: a worker never queues for long behind another one whose adb start is hanging (AUDIT-010).
+std::timed_mutex serverLock;
 HANDLE serverProcess = nullptr;
 // Closing OBS closes this job handle, which ends the adb server we started.
 HANDLE serverJob() {
@@ -84,10 +85,10 @@ HANDLE serverJob() {
 }
 // Starts `adb -L tcp:PORT server nodaemon` with no window and all output discarded. noMdns adds
 // ADB_MDNS=0 (network discovery off) for this process only.
-bool startServer(const std::string &adb, int port, bool noMdns) {
+HANDLE startServer(const std::string &adb, int port, bool noMdns) {
     SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
     HANDLE nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
-    if (nul == INVALID_HANDLE_VALUE) return false;
+    if (nul == INVALID_HANDLE_VALUE) return nullptr;
     std::wstring command = quote(wide(adb)) + L" -L tcp:" + std::to_wstring(port) + L" server nodaemon";
     std::vector<wchar_t> environmentBlock;
     if (noMdns) {
@@ -118,12 +119,33 @@ bool startServer(const std::string &adb, int port, bool noMdns) {
         noMdns ? environmentBlock.data() : nullptr, nullptr, &startup.StartupInfo, &process);
     if (listed) DeleteProcThreadAttributeList(attributes);
     CloseHandle(nul);
-    if (!started) return false;
+    if (!started) return nullptr;
     if (HANDLE job = serverJob()) AssignProcessToJobObject(job, process.hProcess);
     ResumeThread(process.hThread);
     CloseHandle(process.hThread);
-    serverProcess = process.hProcess;
-    return true;
+    return process.hProcess;
+}
+// Creating the process itself hung under Avast (15 Nov), so it runs on a helper thread with a 5 s bound,
+// like runAdb. A start that returns after being abandoned has its process ended (AUDIT-010).
+HANDLE startServerBounded(const std::string &adb, int port, bool noMdns) {
+    struct Start { std::mutex lock; std::condition_variable done; bool finished = false, abandoned = false; HANDLE process = nullptr; };
+    auto call = std::make_shared<Start>();
+    std::thread helper([call, adb, port, noMdns] {
+        HANDLE process = startServer(adb, port, noMdns);
+        std::lock_guard<std::mutex> guard(call->lock);
+        if (call->abandoned) { if (process) { TerminateProcess(process, 1); CloseHandle(process); } return; }
+        call->process = process; call->finished = true; call->done.notify_all();
+    });
+    std::unique_lock<std::mutex> guard(call->lock);
+    if (!call->done.wait_for(guard, std::chrono::seconds(5), [&] { return call->finished; })) {
+        call->abandoned = true;
+        guard.unlock();
+        keepLoaded(); helper.detach();
+        return nullptr;
+    }
+    guard.unlock();
+    helper.join();
+    return call->process;
 }
 bool serverRunning() { return serverProcess && WaitForSingleObject(serverProcess, 0) == WAIT_TIMEOUT; }
 void stopServer() {
@@ -133,15 +155,19 @@ void stopServer() {
 }
 }
 
-void prepareAdb(const std::string &adb) {
-    std::lock_guard<std::mutex> guard(serverLock);
+void prepareAdb(const std::string &adb, const std::atomic<bool> *stop) {
+    // Another worker is starting the server: let adb's own (time-limited) calls try instead of waiting here.
+    std::unique_lock<std::timed_mutex> guard(serverLock, std::chrono::seconds(2));
+    if (!guard) return;
     const int port = serverPort();
     if (listening(port)) return;
     if (serverRunning()) stopServer();  // ours, but not answering: start again
     // Network discovery is only needed for Wireless debugging; drop it if adb won't start with it.
     for (bool noMdns : {false, true}) {
-        if (!startServer(adb, port, noMdns)) return;  // adb's own start will be tried (and timed out) instead
+        serverProcess = startServerBounded(adb, port, noMdns);
+        if (!serverProcess) return;  // adb's own start will be tried (and timed out) instead
         for (int waited = 0; waited < 10000 && serverRunning(); waited += 100) {
+            if (stop && *stop) return;  // source hidden or removed: the server keeps starting without us
             if (listening(port)) return;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -284,7 +310,7 @@ void endStuckServer(int port) {
 }
 
 void restartAdb(const std::string &adb) {
-    std::lock_guard<std::mutex> guard(serverLock);
+    std::lock_guard<std::timed_mutex> guard(serverLock);
     const int port = serverPort();
     if (serverRunning()) { stopServer(); return; }  // ours: prepareAdb starts it again
     if (!listening(port)) return;

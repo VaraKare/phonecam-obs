@@ -82,7 +82,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                     wait(3000); continue;
                 }
                 doing(Activity::StartingAdb);
-                prepareAdb(adb);
+                prepareAdb(adb, &stop);
                 doing(Activity::ListingPhones);
                 auto listed = runAdb(adb, {"devices"});
                 if (stop) break;  // each adb call can take seconds: never start another after a hide (AUDIT-002 A)
