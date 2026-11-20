@@ -48,6 +48,8 @@ Status: step 1 implemented on `feat/v0.3-wifi` (8 November 2026): OBS pairing bu
 
 ### v0.4 — Windows (phase 1: USB, then Wi-Fi)
 
+**Released 20 November 2026 as `v0.4.0-alpha.1`** (pre-release): Windows preview (the exact plugin tested on one laptop), design v1 phone screen, switching while live. Notes: [releases/v0.4.0-alpha.1.md](releases/v0.4.0-alpha.1.md).
+
 Status: started 11 November 2026 on `feat/v0.4-windows`; plan and phases W1–W5 in [Windows plan](WINDOWS.md). W1–W4 (build, decoding, adb, direct Wi-Fi) pass in CI; on 15 and 16 November 2026 a real Windows laptop passed 1080p, rotation and the front camera over USB; reconnecting after unplugging failed and is being fixed, and the full W5 check is still to come.
 
 Most laptop users run Windows, so Windows support is required, delivered in phases.

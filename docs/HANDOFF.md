@@ -4,7 +4,7 @@ For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.m
 
 ## State
 
-- **Work branch:** `feat/v0.4-windows`. Everything is pushed; `main` and the public release are still v0.3.0-alpha.5. Ask the owner before every merge, tag or release.
+- **Released:** v0.4.0-alpha.1 on 20 Nov 2026 (pre-release), merged into `main`. The Mac plugin and APK are built from 1e84305. The Windows plugin is the laptop-tested build from 0b53c03. Ask the owner before every merge, tag or release.
 - **Proven on hardware:**
   - **Windows laptop, plugin from 0b53c03 (17 Nov):** USB live, replug, hide/show, Wi-Fi pairing twice, Wi-Fi live, LAN noise, a 13-minute run and a clean exit. See [WINDOWS_THIRD_LAPTOP_TEST.md](research/WINDOWS_THIRD_LAPTOP_TEST.md).
   - **Mac (18–19 Nov):** USB live, keep live while hidden, Wi-Fi pairing after the deadlock fix (07b6c52), quick exit, and the design v1 phone screens. Switching camera or quality during live restarts in about 3 s.
