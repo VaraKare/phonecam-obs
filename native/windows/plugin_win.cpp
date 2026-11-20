@@ -62,7 +62,7 @@ struct Source {
     std::atomic<bool> card{false};
     // "Keep the phone live while this source is hidden": hide leaves USB and Wi-Fi running. start/end are
     // serialised because hide runs on OBS's video thread and the switch on the UI thread.
-    std::atomic<bool> visible{false}, keepLive{false};
+    std::atomic<bool> visible{false}, keepLive{false}, waitingForPhone{false};
     std::recursive_mutex runLock;
     explicit Source(obs_source_t *value) : source(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
@@ -183,6 +183,11 @@ struct Source {
     void start() {
         std::lock_guard<std::recursive_mutex> running(runLock);
         if (current()) return;
+        if (!claimPhone(this)) {
+            if (!waitingForPhone.exchange(true)) setStatus(anotherSource);
+            return;
+        }
+        waitingForPhone = false;
         stop = false;
         { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
         auto shared = std::make_shared<Link>();
@@ -248,9 +253,14 @@ struct Source {
         }
         card = false;
         obs_source_output_video(source, nullptr);
+        releasePhone(this); waitingForPhone = false;
     }
     // Watchdog, once per frame: reports a connection step that has not finished for 15 s, once per step.
     void watch() {
+        if (waitingForPhone && visible) {  // the owning source was hidden or removed: take over
+            std::unique_lock<std::recursive_mutex> running(runLock, std::try_to_lock);
+            if (running) start();
+        }
         if (card && !hideCardRequested && steadyMs() > cardUntil)
             postStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.", true);
         watchWifi();
