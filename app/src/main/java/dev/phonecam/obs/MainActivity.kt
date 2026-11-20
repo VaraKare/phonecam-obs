@@ -540,7 +540,7 @@ class MainActivity : Activity() {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         AlertDialog.Builder(this).setTitle("Wi-Fi pairing code")
-            .setMessage("In OBS: PhoneCam source → Properties → Pair a phone over Wi-Fi. Type the 16-character code it shows. The phone and Mac must be on the same Wi-Fi.")
+            .setMessage("In OBS: PhoneCam source → Properties → Pair a phone over Wi-Fi. Type the 16-character code it shows. The phone and computer must be on the same Wi-Fi.")
             .setView(FrameLayout(this).apply { setPadding(dp(20), 0, dp(20), 0); addView(input) })
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Pair") { _, _ ->

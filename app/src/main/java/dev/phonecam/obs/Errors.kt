@@ -16,11 +16,11 @@ object Errors {
             e is ConnectException || "ECONNREFUSED" in text || "Connection refused" in text ->
                 "$computer refused the connection. In OBS, click Pair a phone over Wi-Fi again, then scan the new code."
             e is SocketTimeoutException || "ETIMEDOUT" in text || "timed out" in text ->
-                "$computer didn't answer. Check that the phone and $computer are on the same Wi-Fi. Guest and public Wi-Fi often block this; use the phone's hotspot or the USB cable."
+                "$computer didn't answer. Check that the phone and $computer are on the same Wi-Fi. College, office, guest and public Wi-Fi often block this: turn on the phone's hotspot, connect $computer to it, and scan again. Or use the USB cable."
             e is NoRouteToHostException || e is UnknownHostException || "EHOSTUNREACH" in text || "ENETUNREACH" in text ->
                 "Can't reach $computer from this Wi-Fi. Put both on the same network, or use the phone's hotspot or the USB cable."
             e is java.io.IOException && e.message != null && e.cause == null && !e.message!!.contains("errno", ignoreCase = true) -> e.message!!
-            else -> "Pairing didn't work. In OBS, click Pair a phone over Wi-Fi again and scan the new code."
+            else -> "Pairing didn't work. In OBS, click Pair a phone over Wi-Fi again and scan the new code. If it fails again on college, office or public Wi-Fi, turn on the phone's hotspot and connect $computer to it."
         }
     }
 }

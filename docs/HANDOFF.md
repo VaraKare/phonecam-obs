@@ -14,6 +14,19 @@ For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.m
 - **Rule for tomorrow (owner, 19 Nov):** test, and when something fails, fix it following this plan without deviating. Rebuild, retest the failed check, then continue.
 - **Product direction (owner, 19 Nov):** a niche product, the best phone camera for OBS. No 3D. The earning ideas wait until there are users.
 
+## 20 November: where testing stopped
+
+- **All 6 design v1 checks passed** with the candidate files (results in [releases/v0.4.0-alpha.1.md](releases/v0.4.0-alpha.1.md)). Fixes found on the way are in 71025e1: icon, OBS layout, short help, no address shown, no restart for an unchanged quality, no "install the app" during a USB reset.
+- **Wi-Fi:** college Wi-Fi blocked pairing, because it keeps devices apart. The phone's hotspot worked, which is the first hotspot check. The pairing errors now suggest the hotspot. This change is committed but **not built into the candidate yet**.
+- **Open question:** one Wi-Fi restart at 15:20:39 had no touch logged. Ask the owner whether it was a tap. If not, investigate before release. vivo did not keep the app's own log lines that minute.
+- **Next:**
+  1. Rebuild with `python3 tools/release.py`.
+  2. Install the rebuilt files.
+  3. Quick retest: a pairing error message, and one quality change on the front camera, which should not restart.
+  4. Decide on Windows.
+  5. Ask the owner, then merge, tag and publish.
+  6. Then faster switching (step 2 below).
+
 ## Tomorrow's plan (owner's order)
 
 1. **Test design v1 on the Mac and phone, one check at a time,** with the release candidate files: install `PhoneCam-0.4.0-alpha.1.apk` on the phone and the plugin from the zip into OBS.

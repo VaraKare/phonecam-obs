@@ -270,7 +270,7 @@ class ScanActivity : Activity() {
             feedback.play(Feedback.Event.TICK, overlay)
             closeCamera()
             overlay.state = ScanOverlay.State.WORKING
-            title.text = "Pairing with ${link.name}…"; hint.text = "Keep the phone and the Mac on the same Wi-Fi."
+            title.text = "Pairing with ${link.name}…"; hint.text = "Keep the phone and the computer on the same Wi-Fi."
         }
         Thread {
             val result = runCatching { WifiConnector(this).pair(link) }
@@ -279,7 +279,7 @@ class ScanActivity : Activity() {
                     overlay.state = ScanOverlay.State.DONE
                     title.text = "Paired with $name"; hint.text = "Tap Start live to go live over Wi-Fi."
                     feedback.play(Feedback.Event.SUCCESS, overlay)
-                    setResult(RESULT_OK, intent.putExtra("message", "Paired with $name. Tap Start live with the phone and Mac on the same Wi-Fi."))
+                    setResult(RESULT_OK, intent.putExtra("message", "Paired with $name. Tap Start live with the phone and computer on the same Wi-Fi."))
                     overlay.postDelayed({ finish() }, 1400)
                 }.onFailure { e ->
                     overlay.state = ScanOverlay.State.FAILED
