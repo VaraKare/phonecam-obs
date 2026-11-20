@@ -42,7 +42,7 @@ jobs:
     # AUDIT-017: the released Mac plugin, built and tested against the official OBS 33.0.1 on GitHub's Apple
     # Silicon machines. These are virtual: decode tests that need the hardware video decoder skip if it is missing.
     # Nothing here proves a real phone and OBS.
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
