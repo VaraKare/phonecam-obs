@@ -43,7 +43,7 @@ struct Source {
     bool leaked = false;
     std::mutex lock;
     std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
-    std::string status = "Starting…";
+    std::string status = "Starting…", lastEnded;
     std::mutex sizeLock;
     uint32_t shownWidth = 0, shownHeight = 0;  // last picture size, for automatic fitting
     // Direct Wi-Fi server: started and stopped under wifiLock, from show/hide and from the "Allow paired phones
@@ -64,11 +64,12 @@ struct Source {
     explicit Source(obs_source_t *value) : source(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
+    std::string lastEnding() { std::lock_guard<std::mutex> guard(lock); return lastEnded; }
     // Any thread, without waiting on OBS: the Properties window is refreshed by an OBS UI task. Refreshing it
     // directly re-enters properties(), which takes wifiLock; from the Pair button (wifiLock held) that
     // deadlocked OBS (18 Nov Mac, sampled), and from worker threads it blocked them on Windows (17 Nov).
     void setStatus(const std::string &value, bool hideCard = false) {
-        { std::lock_guard<std::mutex> guard(lock); status = value; }
+        { std::lock_guard<std::mutex> guard(lock); status = value; noteEnding(lastEnded, value); }
         blog(LOG_INFO, "[phonecam] %s", value.c_str());
         if (hideCard) hideCardRequested = true;
         obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false);
@@ -278,7 +279,8 @@ void hide(void *value) {
 }
 obs_properties_t *properties(void *value) {
     auto *p = obs_properties_create();
-    addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running");
+    addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running",
+              value ? static_cast<Source *>(value)->lastEnding() : std::string());
 
     obs_properties_t *connection = obs_properties_create();
     obs_property_set_long_description(obs_properties_add_bool(connection, "wifi_direct", "Allow paired phones over Wi-Fi"),

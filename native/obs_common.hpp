@@ -1,4 +1,5 @@
 #pragma once
+#include <cstring>
 // OBS-side helpers shared by the macOS and Windows plugins (each plugin is one translation unit):
 // fitting the picture to the canvas, Wireless debugging pairing, and the OBS log sink.
 #include <obs-module.h>
@@ -92,9 +93,18 @@ bool needsAttention(const std::string &status) {
         if (status.find(word) != std::string::npos) return true;
     return false;
 }
-void addStatus(obs_properties_t *props, const std::string &status) {
+// AUDIT-013: why the last session ended stays readable until the next session starts; the live status
+// line moves on to "Ready…" within a second or two.
+void noteEnding(std::string &lastEnded, const std::string &status) {
+    for (const char *prefix : {"Live ended: ", "Wi-Fi live ended: "})
+        if (status.rfind(prefix, 0) == 0) { lastEnded = status.substr(strlen(prefix)); return; }
+    if (status.rfind("Live over", 0) == 0) lastEnded.clear();
+}
+void addStatus(obs_properties_t *props, const std::string &status, const std::string &lastEnded = std::string()) {
     obs_property_t *line = obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
     obs_property_text_set_info_type(line, needsAttention(status) ? OBS_TEXT_INFO_WARNING : OBS_TEXT_INFO_NORMAL);
     // No long description: OBS would show it beside the status and squeeze both (20 Nov). Each status says the next step.
+    if (!lastEnded.empty() && status.find(lastEnded) == std::string::npos)
+        obs_properties_add_text(props, "last_ended", ("Last session ended: " + lastEnded).c_str(), OBS_TEXT_INFO);
 }
 }
