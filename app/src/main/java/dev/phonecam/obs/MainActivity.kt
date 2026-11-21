@@ -93,6 +93,35 @@ class MainActivity : Activity() {
             badge.postDelayed(this, 1000 - (SystemClock.elapsedRealtime() - liveSince) % 1000)
         }
     }
+    /**
+     * Ready (not live): a grey dot and how the phone can reach OBS: a cable icon when a USB cable to a computer is
+     * plugged in, a Wi-Fi icon with the paired computer when the phone is on Wi-Fi. Checked every 2 s while shown.
+     */
+    private val readyBadge: Runnable = object : Runnable {
+        override fun run() {
+            if (destroyed || shownPhase != LiveState.Phase.STOPPED) return
+            val text = android.text.SpannableStringBuilder()
+            text.append("●", android.text.style.ForegroundColorSpan(0xFF9E9E9E.toInt()), 0)
+            fun icon(res: Int) {
+                val d = getDrawable(res)?.mutate()?.apply { setTint(Color.WHITE); setBounds(0, 0, dp(14), dp(14)) } ?: return
+                text.append("  ").append(" ", android.text.style.ImageSpan(d, android.text.style.DynamicDrawableSpan.ALIGN_CENTER), 0).append(" ")
+            }
+            val cable = usbToComputer(this@MainActivity)
+            val onWifi = runCatching {
+                val net = getSystemService(android.net.ConnectivityManager::class.java)
+                net.getNetworkCapabilities(net.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+            }.getOrDefault(false)
+            val macs = WifiConnector(this@MainActivity).pairings.macs
+            val computer = macs.lastOrNull()?.let { it.name + if (macs.size > 1) " +${macs.size - 1}" else "" }
+            if (cable) { icon(R.drawable.ic_usb); text.append("USB") }
+            if (onWifi && computer != null) { icon(R.drawable.ic_wifi); text.append(computer) }
+            if (!cable && !(onWifi && computer != null))
+                text.append("  ").append(if (computer == null) "Plug in a USB cable, or pair over Wi-Fi" else "Plug in a USB cable or turn on Wi-Fi")
+            badge.text = text
+            badge.contentDescription = "Ready." + (if (cable) " USB cable connected." else "") + (if (onWifi && computer != null) " Wi-Fi to $computer." else "")
+            badge.postDelayed(this, 2000)
+        }
+    }
     private val heatListener = PowerManager.OnThermalStatusChangedListener { heat -> if (!destroyed) showHeat(heat) }
     private lateinit var stats: TextView
     private lateinit var panelScroll: ScrollView
@@ -424,16 +453,14 @@ class MainActivity : Activity() {
             lastPhase = phase
         }
         // The computer used most recently (pairings are kept in order of use), plus how many others are paired.
-        val paired = if (phase == LiveState.Phase.STOPPED) WifiConnector(this).pairings.macs.lastOrNull()?.let { last ->
-            val others = WifiConnector(this).pairings.macs.size - 1
-            last.name + if (others > 0) " +$others" else ""
-        } else null
         badge.removeCallbacks(clock)
         if (phase == LiveState.Phase.LIVE) badge.post(clock)
         if (phase == LiveState.Phase.LIVE && state != null && state.route.isNotEmpty()) liveRoute = state.route
-        badge.text = when (phase) { LiveState.Phase.LIVE -> liveBadge(); LiveState.Phase.WAITING -> if (keepTimer) "Switching…" else "Waiting for OBS"; else -> "Wi-Fi ready · $paired" }
+        badge.removeCallbacks(readyBadge)
+        if (phase == LiveState.Phase.STOPPED) badge.post(readyBadge)  // after shownPhase below is updated
+        else badge.text = when (phase) { LiveState.Phase.LIVE -> liveBadge(); else -> if (keepTimer) "Switching…" else "● Waiting for OBS…" }
         badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> CHIP }, 6)
-        badge.visibility = if (phase == LiveState.Phase.STOPPED && paired == null) View.GONE else View.VISIBLE
+        badge.visibility = View.VISIBLE
         val p = liveProfile
         stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
         if (state != null && p != null) stats.text = "${Quality.short(p).substringBefore(" ")} · ${"%.0f".format(state.fps)} fps · ${state.drops} dropped" +
