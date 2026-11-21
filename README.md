@@ -152,7 +152,7 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | "Install the PhoneCam app" | Install the phone app (step 3). |
 | "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |
 | Live stops when you switch apps | Check **Settings → Keep live when you leave the app** is on. Some phones (vivo, Xiaomi, OPPO and others) close background apps anyway: allow PhoneCam to run in the background in Android's battery settings for the app. Swiping PhoneCam away from recent apps always stops live. |
-| OBS says the PhoneCam source "is not assigned to any audio tracks" | PhoneCam 0.6 turns its tracks on by itself the first time the phone microphone sends sound. If you unticked them, tick them again in **Edit → Advanced Audio Properties → Tracks**. |
+| OBS says the PhoneCam source "is not assigned to any audio tracks" | A PhoneCam source added before 0.6 had no sound, so OBS gave it no tracks. Open **Edit → Advanced Audio Properties**, tick **Tracks 1–6** for the PhoneCam source, and unmute it in the Audio Mixer. Once is enough. (The next plugin update does this by itself.) |
 | Screen sharing shows only one app | Android 14 and later asks "A single app" or "Entire screen" at the top of its permission prompt; choose **Entire screen**. Some phones hide this choice. |
 | Phone says "Warm" or "Hot" | Choose **High** or **Balanced**, take the case off, or keep the phone out of the sun. |
 | Only the middle of the picture shows in OBS | The source was moved or resized by hand. Open its **Properties** → **Fit to canvas now** (or right-click → **Transform → Reset Transform**, then Start live again). |

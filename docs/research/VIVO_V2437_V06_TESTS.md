@@ -10,7 +10,7 @@ App and plugin 0.6.0-alpha.1 from `dist/0.6.0-alpha.1/` (rebuilt after each fix 
 | 2c | Shorter Phone section | **Pass.** OBS lays out one control per row; the section became two lists, two tick boxes and Stop (owner asked for side by side, which OBS's Properties can't do). |
 | 3 | Start timings over USB | Tap → OBS connected 656 ms, camera open 1222 ms, first frame 1697 ms. The camera opened 566 ms after OBS connected because the encoder was set up first; a47ce38 opens the camera first. New timings: see below. |
 | 4 | Icons, top status, What the buttons do | **Pass** (owner); one row of icons after the owner's layout request. |
-| 5 | Microphone with the 0.6 plugin | **First try:** sound reached OBS's mixer, but OBS warned the source "is not assigned to any audio tracks": the source dated from before 0.6, when it had no sound. Fixed in 2e2a0a6 (tracks 1–6 on the first sound, once). Retest pending. |
+| 5 | Microphone with the 0.6 plugin | **First try:** sound reached OBS's mixer, but OBS warned the source "is not assigned to any audio tracks": the source dated from before 0.6, when it had no sound. The owner ticked tracks 1–6 in Advanced Audio Properties and unmuted the source: **pass**, the voice was heard in the recording. The automatic fix (2e2a0a6, tracks 1–6 on the first sound, once) was not installed during the test (OBS stayed open), so it is not in the release and waits for the next one. Clap sync was not measured. |
 | 6 | Screen sharing | **Pass.** The phone's prompt offered sharing one app; entire-screen choice is for a later version. |
 | 7 | Warnings, alert when away, USB preferred, dimming | **Pass** (owner: "all the things work"). |
 
