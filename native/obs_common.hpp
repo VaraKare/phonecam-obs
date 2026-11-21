@@ -118,7 +118,8 @@ void releasePhone(const void *source) {
     if (phoneOwner == source) phoneOwner = nullptr;
 }
 constexpr const char *anotherSource = "Another PhoneCam source is using the phone. Use one PhoneCam source per phone; "
-    "to show it in more scenes, add the existing source (Add Existing). This one takes over when the other is hidden or removed.";
+    "to show it in more scenes, add the existing source (Add Existing). This one takes over when the other is removed, "
+    "or hidden without \"Keep the phone live while this source is hidden\".";
 
 // AUDIT-013: why the last session ended stays readable until the next session starts; the live status
 // line moves on to "Ready…" within a second or two.
