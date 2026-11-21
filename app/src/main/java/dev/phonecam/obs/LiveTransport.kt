@@ -283,7 +283,9 @@ class LiveTransport(private val token: String, private val connected: (String) -
     }
     fun close() {
         closed = true
-        runCatching { socket?.close() }; stopListening(); active?.close()
+        // Shut the connection down before closing it: closing first leaves it open in the kernel while the command
+        // reader is blocked on it, so OBS saw no end and said "video stalled" (21 Nov).
+        active?.close(); runCatching { socket?.close() }; stopListening()
         synchronized(signal) { signal.notifyAll() }
         watchdog.shutdownNow()
     }

@@ -229,25 +229,49 @@ struct PhoneControls {
     }
 };
 
-bool phoneButton(obs_properties_t *, obs_property_t *property, void *data) {
-    if (!data) return false;
-    std::string name = obs_property_name(property);
-    auto *phone = static_cast<PhoneControls *>(data);
-    if (name == "phone_camera") phone->send("camera next");
-    else if (name == "phone_torch") phone->send(phone->snapshot()["torch"] == "on" ? "torch off" : "torch on");
-    else if (name == "phone_mirror") phone->send(phone->snapshot()["mirror"] == "on" ? "mirror off" : "mirror on");
-    else if (name == "phone_stop") phone->send("stop");
-    else if (name.rfind("phone_q_", 0) == 0) phone->send("quality " + name.substr(8));
-    return false;  // the phone's status refreshes Properties when the change has happened
+bool phoneStop(obs_properties_t *, obs_property_t *, void *data) {
+    if (data) static_cast<PhoneControls *>(data)->send("stop");
+    return false;
 }
-// "Phone" section: shown while a PhoneCam 0.6 phone is live. Starting stays on the phone (owner's rule).
+// A Phone control changed in Properties: send it only when it differs from what the phone reports, so opening or
+// refreshing Properties (which re-applies every value) never sends anything.
+bool phoneChanged(void *data, obs_properties_t *, obs_property_t *property, obs_data_t *settings) {
+    if (!data) return false;
+    auto *phone = static_cast<PhoneControls *>(data);
+    auto info = phone->snapshot();
+    std::string name = obs_property_name(property);
+    if (name == "phone_camera") {
+        std::string value = obs_data_get_string(settings, "phone_camera");
+        if (!value.empty() && value != info["camera"]) phone->send("camera " + value);
+    } else if (name == "phone_quality") {
+        std::string value = obs_data_get_string(settings, "phone_quality");
+        if (!value.empty() && value != info["quality"]) phone->send("quality " + value);
+    } else if (name == "phone_torch") {
+        bool on = obs_data_get_bool(settings, "phone_torch");
+        if (on != (info["torch"] == "on")) phone->send(on ? "torch on" : "torch off");
+    } else if (name == "phone_mirror") {
+        bool on = obs_data_get_bool(settings, "phone_mirror");
+        if (on != (info["mirror"] == "on")) phone->send(on ? "mirror on" : "mirror off");
+    }
+    return false;  // the phone's status refreshes Properties once the change has happened
+}
+// "Phone" section: shown while a PhoneCam 0.6 phone is live, as compact as OBS allows (it lays controls out one
+// per row): two drop-down lists, two tick boxes and Stop. Starting stays on the phone (owner's rule).
+// UI thread (properties() runs there): the values are set to what the phone reports before OBS shows them.
 void addPhoneSection(obs_properties_t *props, PhoneControls *phone) {
     if (!phone) return;
     auto info = phone->snapshot();
     if (info.empty()) return;
+    obs_data_t *settings = obs_source_get_settings(phone->source);
+    obs_data_set_string(settings, "phone_camera", info["camera"].c_str());
+    obs_data_set_string(settings, "phone_quality", info["quality"].c_str());
+    obs_data_set_bool(settings, "phone_torch", info["torch"] == "on");
+    obs_data_set_bool(settings, "phone_mirror", info["mirror"] == "on");
+    obs_data_release(settings);
+
     obs_properties_t *group = obs_properties_create();
-    std::string line = info["camera"].empty() ? "Phone screen" : info["camera"] + " camera";
-    for (const char *key : {"quality", "route"}) if (!info[key].empty()) line += " · " + info[key];
+    std::string line = info["mode"] == "screen" ? "Sharing the phone screen" : info["camera"] + " camera";
+    if (!info["route"].empty()) line += " · " + info["route"];
     if (!info["battery"].empty()) line += " · battery " + info["battery"] + " %" + (info["charging"] == "yes" ? " (charging)" : "");
     if (info["mic"] == "on") line += " · microphone on";
     obs_properties_add_text(group, "phone_info", line.c_str(), OBS_TEXT_INFO);
@@ -255,17 +279,23 @@ void addPhoneSection(obs_properties_t *props, PhoneControls *phone) {
         obs_property_t *warning = obs_properties_add_text(group, "phone_warning", info["warning"].c_str(), OBS_TEXT_INFO);
         obs_property_text_set_info_type(warning, OBS_TEXT_INFO_WARNING);
     }
-    if (info["cameras"] != "1" && !info["camera"].empty())
-        obs_properties_add_button2(group, "phone_camera", "Switch camera", phoneButton, phone);
-    for (const auto &quality : splitList(info["qualities"], ',')) {
-        std::string label = "Quality: " + quality + (quality == info["quality"] ? " ✓" : "");
-        obs_properties_add_button2(group, ("phone_q_" + quality).c_str(), label.c_str(), phoneButton, phone);
+    auto cameras = splitList(info["cameras"], ',');
+    if (cameras.size() > 1 && info["mode"] != "screen") {
+        obs_property_t *list = obs_properties_add_list(group, "phone_camera", "Camera", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+        for (const auto &camera : cameras) obs_property_list_add_string(list, camera.c_str(), camera.c_str());
+        obs_property_set_modified_callback2(list, phoneChanged, phone);
+    }
+    auto qualities = splitList(info["qualities"], ',');
+    if (!qualities.empty()) {
+        obs_property_t *list = obs_properties_add_list(group, "phone_quality", "Quality", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+        for (const auto &quality : qualities) obs_property_list_add_string(list, quality.c_str(), quality.c_str());
+        obs_property_set_modified_callback2(list, phoneChanged, phone);
     }
     if (info["torch"] == "on" || info["torch"] == "off")
-        obs_properties_add_button2(group, "phone_torch", info["torch"] == "on" ? "Torch: on (turn off)" : "Torch: off (turn on)", phoneButton, phone);
+        obs_property_set_modified_callback2(obs_properties_add_bool(group, "phone_torch", "Torch"), phoneChanged, phone);
     if (!info["mirror"].empty())
-        obs_properties_add_button2(group, "phone_mirror", info["mirror"] == "on" ? "Mirror: on (turn off)" : "Mirror: off (turn on)", phoneButton, phone);
-    obs_properties_add_button2(group, "phone_stop", "Stop live on the phone", phoneButton, phone);
+        obs_property_set_modified_callback2(obs_properties_add_bool(group, "phone_mirror", "Mirror"), phoneChanged, phone);
+    obs_properties_add_button2(group, "phone_stop", "Stop live on the phone", phoneStop, phone);
     obs_properties_add_group(props, "phone", "Phone", OBS_GROUP_NORMAL, group);
 }
 // OBS hotkeys (Settings → Hotkeys) for each PhoneCam source.

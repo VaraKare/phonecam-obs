@@ -158,8 +158,13 @@ class MainActivity : Activity() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     /** A small white icon before a chip's words (icons drawn for PhoneCam, like the switch-camera one). */
     private fun TextView.icon(res: Int) {
-        val drawable = getDrawable(res)?.mutate()?.apply { setTint(Color.WHITE); setBounds(0, 0, dp(18), dp(18)) }
-        setCompoundDrawablesRelative(drawable, null, null, null); compoundDrawablePadding = dp(6)
+        val drawable = getDrawable(res)?.mutate()?.apply { setTint(Color.WHITE); setBounds(0, 0, dp(20), dp(20)) }
+        setCompoundDrawablesRelative(drawable, null, null, null); compoundDrawablePadding = if (text.isNullOrEmpty()) 0 else dp(6)
+    }
+    /** An icon-only chip: what it does is in its description (screen readers) and shows on a long press. */
+    private fun TextView.iconOnly(res: Int, label: String) {
+        text = ""; icon(res); contentDescription = label; tooltipText = label
+        setPadding(dp(14), dp(8), dp(14), dp(8))
     }
     private fun rounded(color: Int, radius: Int = 10) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
     private fun chip(gravity: Int) = TextView(this).apply {
@@ -217,9 +222,10 @@ class MainActivity : Activity() {
         qualityChip = pill { chooseQuality() }
         mirrorChip = pill { toggleMirror() }
         micChip = pill { toggleMic() }
-        cameraModeChip = pill { chooseSource(false) }.apply { text = "Camera"; textSize = 13f; minHeight = dp(34); icon(R.drawable.ic_videocam); contentDescription = "Send the camera" }
-        screenModeChip = pill { chooseSource(true) }.apply { text = "Screen"; textSize = 13f; minHeight = dp(34); icon(R.drawable.ic_screen_share); contentDescription = "Share the phone screen" }
-        qualityChip.icon(R.drawable.ic_quality); mirrorChip.icon(R.drawable.ic_mirror)
+        cameraModeChip = pill { chooseSource(false) }.apply { minHeight = dp(36); iconOnly(R.drawable.ic_videocam, "Camera: send the phone camera") }
+        screenModeChip = pill { chooseSource(true) }.apply { minHeight = dp(36); iconOnly(R.drawable.ic_screen_share, "Screen: share the phone screen") }
+        qualityChip.iconOnly(R.drawable.ic_quality, "Quality")
+        mirrorChip.iconOnly(R.drawable.ic_mirror, "Mirror in OBS")
         panel.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, 0, 0, dp(10))
             addView(cameraModeChip); addView(screenModeChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
@@ -242,6 +248,7 @@ class MainActivity : Activity() {
         }
         switchButton = round(R.drawable.ic_switch_camera, "Switch camera") { switchCamera() }
         settingsButton = round(R.drawable.ic_tune, "Settings") { openSettings() }
+        switchButton.tooltipText = "Switch camera"; settingsButton.tooltipText = "Settings"
         startButton = Button(this).apply {
             textSize = 17f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD; stateListAnimator = null
             setOnClickListener { onStartPressed() }
@@ -356,11 +363,11 @@ class MainActivity : Activity() {
         switchButton.alpha = if (switchButton.isEnabled) 1f else 0.4f
         switchButton.contentDescription = if (next != null) "Switch to the $next camera" else "Only one camera"
         val profile = selected()
-        qualityChip.text = "${choice.label.substringBefore(" (")} · ${profile?.let { Quality.short(it) } ?: "not available"} ▾"
+        qualityChip.tooltipText = "Quality: ${choice.label}"
         qualityChip.background = rounded(0xFF1E1E1E.toInt(), 20)
         qualityChip.contentDescription = "Quality: ${choice.label}. Tap to change"
         val mirror = cameraId?.let { prefs.getBoolean("ctl.$it.mirror", false) } ?: false
-        mirrorChip.text = "Mirror"
+
         mirrorChip.background = rounded(if (mirror) BLUE else 0xFF1E1E1E.toInt(), 20)
         mirrorChip.contentDescription = "Mirror the picture in OBS, ${if (mirror) "on" else "off"}"
         val screen = screenMode
@@ -370,15 +377,14 @@ class MainActivity : Activity() {
         qualityChip.visibility = if (screen) View.GONE else View.VISIBLE
         mirrorChip.visibility = if (screen) View.GONE else View.VISIBLE
         if (screen) { switchButton.isEnabled = false; switchButton.alpha = 0.4f }
-        micChip.text = "Mic"
-        micChip.icon(if (micOn) R.drawable.ic_mic else R.drawable.ic_mic_off)
+        micChip.iconOnly(if (micOn) R.drawable.ic_mic else R.drawable.ic_mic_off, "Phone microphone ${if (micOn) "on" else "off"}")
         micChip.background = rounded(if (micOn) BLUE else 0xFF1E1E1E.toInt(), 20)
         micChip.contentDescription = "Phone microphone to OBS, ${if (micOn) "on" else "off"}"
         detail.text = when {
             screenMode -> "Phone screen to OBS · up to 1080p · Android asks before sharing"
             options.isEmpty() -> ""
             profile == null -> "$name camera: this quality isn't available. Choose another."
-            else -> "$name camera · ${Quality.describe(profile).substringAfter(" · ")}" + if (highQuality && profile.highQuality) " · sharpening" else ""
+            else -> "${choice.label.substringBefore(" (")} · $name camera · ${Quality.describe(profile).substringAfter(" · ")}" + if (highQuality && profile.highQuality) " · sharpening" else ""
         }
         settingsButton.isEnabled = !switching; settingsButton.alpha = if (switching) 0.4f else 1f
         fun button(label: String, fill: Int, text: Int, enabled: Boolean) {
@@ -627,7 +633,7 @@ class MainActivity : Activity() {
         val text = buildString {
             if (p != null && !screenLive) {
                 append("camera=").append(Quality.cameras(options).firstOrNull { it.first == p.cameraId }?.second.orEmpty()).append('\n')
-                append("cameras=").append(Quality.cameras(options).size).append('\n')
+                append("cameras=").append(Quality.cameras(options).joinToString(",") { it.second }).append('\n')
                 append("torch=").append(if (abilities?.torch != true) "none" else if (controls.torch) "on" else "off").append('\n')
                 append("mirror=").append(if (controls.mirror) "on" else "off").append('\n')
             }
@@ -649,7 +655,13 @@ class MainActivity : Activity() {
         val verb = command.substringBefore(' ').trim(); val arg = command.substringAfter(' ', "").trim()
         if (screenLive && verb != "stop") return  // camera controls don't apply to the screen
         when (verb) {
-            "camera" -> if (live != null && !switching) switchCamera()
+            "camera" -> if (live != null && !switching) {
+                val cameras = Quality.cameras(options)
+                // "camera next", or a camera by its name ("camera Front") from OBS's list.
+                val target = if (arg == "next") null else cameras.firstOrNull { it.second.equals(arg, ignoreCase = true) } ?: return
+                if (target == null) switchCamera()
+                else if (target.first != cameraId) { cameraId = target.first; feedback.play(Feedback.Event.TICK, switchButton); refresh(); restartLive() }
+            }
             "quality" -> qualityChoices().firstOrNull { shortQuality(it).equals(arg, ignoreCase = true) }?.let { q ->
                 if (q == choice || switching) return
                 choice = q; refresh()
