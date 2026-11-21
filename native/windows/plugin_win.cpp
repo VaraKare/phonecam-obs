@@ -46,7 +46,7 @@ struct Source {
     std::thread worker;
     std::mutex lock, sizeLock;
     std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
-    std::string status = "Starting…", beforeWarning;
+    std::string status = "Starting…", beforeWarning, lastEnded;
     std::atomic<int64_t> cardUntil{0};
     std::atomic<bool> hideCardRequested{false};  // set by the Wi-Fi thread, acted on by a UI task  // the pairing card hides itself on time, even if the Wi-Fi server is busy
     bool wifiWarned = false;            // video thread only
@@ -62,17 +62,19 @@ struct Source {
     std::atomic<bool> card{false};
     // "Keep the phone live while this source is hidden": hide leaves USB and Wi-Fi running. start/end are
     // serialised because hide runs on OBS's video thread and the switch on the UI thread.
-    std::atomic<bool> visible{false}, keepLive{false};
+    std::atomic<bool> visible{false}, keepLive{false}, waitingForPhone{false};
+    std::atomic<int64_t> forgetArmedUntil{0};
     std::recursive_mutex runLock;
     explicit Source(obs_source_t *value) : source(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
+    std::string lastEnding() { std::lock_guard<std::mutex> guard(lock); return lastEnded; }
     // Every status change reaches the Properties window through an OBS UI task, from whichever thread.
     // On Windows, refreshing the properties from a worker thread while the Properties window was open
     // blocked that thread until OBS closed (17 Nov laptop: the Wi-Fi thread after "Paired with…", the USB
     // thread after "Unlock the phone…").
     void setStatus(const std::string &value) { postStatus(value, false); }
-    void refreshProperties() { obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false); }
+    void refreshProperties() { queueOnUi(source, refreshOnUi); }
     // A watchdog warning replaces the status line until progress resumes; then the status it replaced comes
     // back (the connection thread does not repeat an unchanged status; audit/FINDINGS.md AUDIT-022a).
     void warn(const std::string &value) {
@@ -138,7 +140,7 @@ struct Source {
     }
     // From any thread without waiting on OBS: the status line and the card are updated by a UI task.
     void postStatus(const std::string &value, bool hideCard) {
-        { std::lock_guard<std::mutex> guard(lock); status = value; beforeWarning.clear(); }
+        { std::lock_guard<std::mutex> guard(lock); status = value; noteEnding(lastEnded, value); beforeWarning.clear(); }
         blog(LOG_INFO, "[phonecam] %s", value.c_str());
         if (hideCard) hideCardRequested = true;
         refreshProperties();
@@ -182,6 +184,11 @@ struct Source {
     void start() {
         std::lock_guard<std::recursive_mutex> running(runLock);
         if (current()) return;
+        if (!claimPhone(this)) {
+            if (!waitingForPhone.exchange(true)) setStatus(anotherSource);
+            return;
+        }
+        waitingForPhone = false;
         stop = false;
         { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
         auto shared = std::make_shared<Link>();
@@ -247,9 +254,14 @@ struct Source {
         }
         card = false;
         obs_source_output_video(source, nullptr);
+        releasePhone(this); waitingForPhone = false;
     }
     // Watchdog, once per frame: reports a connection step that has not finished for 15 s, once per step.
     void watch() {
+        if (waitingForPhone && visible) {  // the owning source was hidden or removed: take over
+            std::unique_lock<std::recursive_mutex> running(runLock, std::try_to_lock);
+            if (running) start();
+        }
         if (card && !hideCardRequested && steadyMs() > cardUntil)
             postStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.", true);
         watchWifi();
@@ -318,7 +330,8 @@ void hide(void *value) {
 }
 obs_properties_t *properties(void *value) {
     obs_properties_t *p = obs_properties_create();
-    addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running");
+    addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running",
+              value ? static_cast<Source *>(value)->lastEnding() : std::string());
 
     obs_properties_t *connection = obs_properties_create();
     obs_property_set_long_description(obs_properties_add_bool(connection, "wifi_direct", "Allow paired phones over Wi-Fi"),
@@ -340,6 +353,14 @@ obs_properties_t *properties(void *value) {
     obs_properties_add_button2(connection, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
         if (!data) return false;
         auto *self = static_cast<Source *>(data);
+        // Two clicks within 5 s: one stray click forgot every pairing (21 Nov). The second click confirms.
+        const int64_t now = steadyMs();
+        if (now > self->forgetArmedUntil) {
+            self->forgetArmedUntil = now + 5000;
+            self->setStatus("Click Forget paired phones again within 5 seconds to forget every paired phone. They will need to pair again for Wi-Fi.");
+            return true;
+        }
+        self->forgetArmedUntil = 0;
         try {
             {
                 std::lock_guard<std::mutex> guard(self->wifiLock);

@@ -114,7 +114,12 @@ public:
         if (format) CFRelease(format);
     }
     void configure(const std::vector<uint8_t> &data) {
-        if (format || data.size() < 20) throw std::runtime_error("Unexpected codec configuration");
+        if (data.size() < 20) throw std::runtime_error("Unexpected codec configuration");
+        if (format) {
+            // The phone switched camera or quality: drop the old decoder and build one for the new stream.
+            if (session) { VTDecompressionSessionWaitForAsynchronousFrames(session); VTDecompressionSessionInvalidate(session); CFRelease(session); session = nullptr; }
+            CFRelease(format); format = nullptr;
+        }
         codec = be32(data.data()); width = be32(data.data() + 4); height = be32(data.data() + 8);
         if ((codec != 1 && codec != 2) || width < 128 || height < 128 || width > 4096 || height > 4096 ||
             width % 2 || height % 2)

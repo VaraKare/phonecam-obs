@@ -43,7 +43,7 @@ struct Source {
     bool leaked = false;
     std::mutex lock;
     std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
-    std::string status = "Starting…";
+    std::string status = "Starting…", lastEnded;
     std::mutex sizeLock;
     uint32_t shownWidth = 0, shownHeight = 0;  // last picture size, for automatic fitting
     // Direct Wi-Fi server: started and stopped under wifiLock, from show/hide and from the "Allow paired phones
@@ -59,19 +59,21 @@ struct Source {
     bool wifiWarned = false;            // video thread only
     // "Keep the phone live while this source is hidden": hide leaves USB and Wi-Fi running. start/end are
     // serialised because hide runs on OBS's video thread and the switch on the UI thread.
-    std::atomic<bool> visible{false}, keepLive{false};
+    std::atomic<bool> visible{false}, keepLive{false}, waitingForPhone{false};
+    std::atomic<int64_t> forgetArmedUntil{0};
     std::recursive_mutex runLock;
     explicit Source(obs_source_t *value) : source(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
+    std::string lastEnding() { std::lock_guard<std::mutex> guard(lock); return lastEnded; }
     // Any thread, without waiting on OBS: the Properties window is refreshed by an OBS UI task. Refreshing it
     // directly re-enters properties(), which takes wifiLock; from the Pair button (wifiLock held) that
     // deadlocked OBS (18 Nov Mac, sampled), and from worker threads it blocked them on Windows (17 Nov).
     void setStatus(const std::string &value, bool hideCard = false) {
-        { std::lock_guard<std::mutex> guard(lock); status = value; }
+        { std::lock_guard<std::mutex> guard(lock); status = value; noteEnding(lastEnded, value); }
         blog(LOG_INFO, "[phonecam] %s", value.c_str());
         if (hideCard) hideCardRequested = true;
-        obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false);
+        queueOnUi(source, refreshOnUi);
     }
     // One picture path for every connection: hardware-decoded NV12 from USB or Wi-Fi.
     void showFrame(CVPixelBufferRef image) {
@@ -129,6 +131,11 @@ struct Source {
     void start() {
         std::lock_guard<std::recursive_mutex> running(runLock);
         if (current()) return;
+        if (!claimPhone(this)) {
+            if (!waitingForPhone.exchange(true)) setStatus(anotherSource);
+            return;
+        }
+        waitingForPhone = false;
         stop = false;
         { std::lock_guard<std::mutex> guard(sizeLock); shownWidth = shownHeight = 0; }
         auto shared = std::make_shared<Link>();
@@ -190,6 +197,7 @@ struct Source {
         }
         card = false;
         obs_source_output_video(source, nullptr);
+        releasePhone(this); waitingForPhone = false;
     }
     // wifiLock held.
     void startWifi() {
@@ -225,6 +233,10 @@ struct Source {
     }
     // Once per frame on OBS's video thread; never blocks it.
     void watch() {
+        if (waitingForPhone && visible) {  // the owning source was hidden or removed: take over
+            std::unique_lock<std::recursive_mutex> running(runLock, std::try_to_lock);
+            if (running) start();
+        }
         if (card && !hideCardRequested && steadyMs() > cardUntil)
             setStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.", true);
         std::unique_lock<std::mutex> guard(wifiLock, std::try_to_lock);
@@ -278,7 +290,8 @@ void hide(void *value) {
 }
 obs_properties_t *properties(void *value) {
     auto *p = obs_properties_create();
-    addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running");
+    addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running",
+              value ? static_cast<Source *>(value)->lastEnding() : std::string());
 
     obs_properties_t *connection = obs_properties_create();
     obs_property_set_long_description(obs_properties_add_bool(connection, "wifi_direct", "Allow paired phones over Wi-Fi"),
@@ -300,6 +313,14 @@ obs_properties_t *properties(void *value) {
     obs_properties_add_button2(connection, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
         if (!data) return false;
         auto *self = static_cast<Source *>(data);
+        // Two clicks within 5 s: one stray click forgot every pairing (21 Nov). The second click confirms.
+        const int64_t now = steadyMs();
+        if (now > self->forgetArmedUntil) {
+            self->forgetArmedUntil = now + 5000;
+            self->setStatus("Click Forget paired phones again within 5 seconds to forget every paired phone. They will need to pair again for Wi-Fi.");
+            return true;
+        }
+        self->forgetArmedUntil = 0;
         try {
             {
                 std::lock_guard<std::mutex> guard(self->wifiLock);

@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 // Automatic phone discovery, pairing and forwarding through Android's ADB tool, over USB or
 // Android's Wireless debugging (same ADB link and security, no cable).
 // Parsing is header-only and pure so it can be tested under sanitizers without ADB.
@@ -15,7 +16,7 @@ std::string findAdb(const std::string &configured);
 // Windows: makes sure an adb server is listening. If none is, starts one in adb's foreground mode
 // (`adb -L tcp:PORT server nodaemon`), tied to this process so it ends with OBS. Some antivirus programs
 // (seen with Avast) stop adb's own background start, which then hangs. Does nothing on macOS.
-void prepareAdb(const std::string &adb);
+void prepareAdb(const std::string &adb, const std::atomic<bool> *stop = nullptr);
 // Ends an adb server that stopped answering, so the next call starts a fresh one: `adb kill-server`, and on
 // Windows our own server, or a stuck adb.exe still holding the server port, is ended directly. After USB
 // unplugging, adb on Windows was seen to accept connections but answer nothing.

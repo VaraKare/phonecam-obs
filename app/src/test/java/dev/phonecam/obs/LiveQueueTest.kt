@@ -12,6 +12,16 @@ class LiveQueueTest {
         assertEquals(1L, q.poll()!!.sequence)
         assertEquals(1L, q.dropped)
     }
+    @Test fun clearForASwitchWaitsForTheNewKeyframeWithoutCountingDrops() {
+        val q = LiveQueue(maxFrames = 6)
+        q.offer(frame(0, true)); q.offer(frame(1))
+        q.clear()
+        assertNull(q.poll())
+        assertFalse(q.offer(frame(2)))  // the new encoder's first frame must be a keyframe
+        assertTrue(q.offer(frame(3, true)))
+        assertEquals(3L, q.poll()!!.sequence)
+        assertEquals(1L, q.dropped)  // only the dependent frame after the switch
+    }
     @Test fun overflowDiscardsDependentGopUntilKey() {
         val q = LiveQueue()
         q.offer(frame(0, true)); q.offer(frame(1))

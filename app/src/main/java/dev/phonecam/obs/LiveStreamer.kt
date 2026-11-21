@@ -32,9 +32,9 @@ import java.nio.ByteOrder
  * [setControls] changes zoom, exposure, white balance, torch, focus and the OBS mirror while live.
  * High-speed profiles use a constrained high-speed session; the encoder drops frames to the profile's fps.
  */
-class LiveStreamer(private val context: Context, private val profile: Profile,
-                   private val highQuality: Boolean, initialRotation: Int,
-                   private val abilities: Abilities, initialControls: Controls,
+class LiveStreamer(private val context: Context, private var profile: Profile,
+                   private var highQuality: Boolean, initialRotation: Int,
+                   private var abilities: Abilities, initialControls: Controls,
                    private val preview: () -> Surface?,
                    private val notify: (LiveState) -> Unit) {
     @Volatile private var rotation = initialRotation
@@ -57,11 +57,15 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
     private var finished = false
     private var sequence = 0L
     private var lastKeyRequest = 0L
+    /** Bumped by [switchTo]; callbacks from the previous camera or encoder see a stale value and do nothing. */
+    private var generation = 0
+    /** When a switch began (elapsed ms), until its first frame; 0 otherwise. */
+    @Volatile private var switchedAt = 0L
     private var lastFrameAt = 0L
     private var loggedDrops = 0L
-    private val stats = FrameStats()
+    private var stats = FrameStats()
     // Lowers the bitrate while the link (Wi-Fi especially) drops frames; shown on the badge.
-    private val bitrate = BitrateController(profile.bitrate)
+    private var bitrate = BitrateController(profile.bitrate)
     @Volatile private var sentBytes = 0L
     private var loggedBytes = 0L
     @Volatile private var route = "USB"
@@ -85,9 +89,9 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                 // Requested (the user's choice), target (this controller) and actual output, kept apart.
                 Log.i("PhoneCam", "bitrate target ${target / 1_000_000} of ${profile.bitrate / 1_000_000} Mb/s${if (applied) "" else " (encoder refused)"}; last second ${"%.1f".format(actualMbps)} Mb/s")
             }
-            val message = note ?: if (bitrate.starved) "The connection is too slow even at ${bitrate.current / 1_000_000} Mb/s. Choose a lower quality, move closer to the Wi-Fi router, or use the USB cable."
+            val message = if (switchedAt > 0) "Switching…" else note ?: if (bitrate.starved) "The connection is too slow even at ${bitrate.current / 1_000_000} Mb/s. Choose a lower quality, move closer to the Wi-Fi router, or use the USB cable."
                 else "Sending to OBS over $route. Nothing is saved on the phone."
-            post(LiveState(LiveState.Phase.LIVE, message, stats.fps, sequence, dropped, rotation, bitrate.current, profile.bitrate, route))
+            post(LiveState(LiveState.Phase.LIVE, message, stats.fps, sequence, dropped, rotation, bitrate.current, profile.bitrate, route, switchedAt > 0))
             handler.postDelayed(this, 1_000)
         }
     }
@@ -99,12 +103,34 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
         }
     }
     fun stop(reason: String = "Stopped by you") { handler.post { finish(reason) } }
+    /**
+     * Switches camera or quality without leaving OBS: the camera and encoder restart, the connection stays,
+     * and OBS gets the new settings before the first new frame. About a second instead of a full restart.
+     */
+    fun switchTo(next: Profile, hq: Boolean, able: Abilities, value: Controls) {
+        handler.post {
+            if (finished) return@post
+            generation++
+            handler.removeCallbacks(startDeadline)
+            releaseCapture()
+            transport.restart()
+            profile = next; highQuality = hq; abilities = able; controls = value
+            bitrate = BitrateController(next.bitrate); stats = FrameStats()
+            lastFrameAt = 0; switchedAt = SystemClock.elapsedRealtime()
+            post(LiveState(LiveState.Phase.LIVE, "Switching…", 0.0, sequence, transport.dropped, rotation, next.bitrate, next.bitrate, route, true))
+            prepare()
+        }
+    }
     private fun post(state: LiveState) { main.post { notify(state) } }
 
     @SuppressLint("MissingPermission")
     private fun prepare() {
         if (finished) return
+        val gen = generation
         try {
+            val characteristics = context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)
+            requestKeys = characteristics.availableCaptureRequestKeys.toSet()
+            continuousFocus = CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in characteristics[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
             handler.postDelayed(startDeadline, 15_000)
             val encoder = MediaCodec.createByCodecName(profile.encoder)
             codec = encoder
@@ -130,9 +156,9 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
             }
             encoder.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(c: MediaCodec, index: Int) = Unit
-                override fun onError(c: MediaCodec, e: MediaCodec.CodecException) { finish("Hardware encoder failed: ${e.diagnosticInfo}") }
+                override fun onError(c: MediaCodec, e: MediaCodec.CodecException) { if (gen == generation) finish("Hardware encoder failed: ${e.diagnosticInfo}") }
                 override fun onOutputFormatChanged(c: MediaCodec, format: MediaFormat) {
-                    if (finished) return
+                    if (finished || gen != generation) return
                     try {
                         val csd = (0..2).mapNotNull { index -> format.getByteBuffer("csd-$index")?.duplicate()?.let {
                             ByteArray(it.remaining()).also(it::get)
@@ -146,7 +172,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                     } catch (e: Exception) { finish("Video format rejected: ${e.message}") }
                 }
                 override fun onOutputBufferAvailable(c: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
-                    if (finished) return
+                    if (finished || gen != generation) return
                     var error: String? = null
                     try {
                         check(info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM == 0) { "Encoder ended unexpectedly" }
@@ -160,6 +186,7 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                             stats.add(info.presentationTimeUs)
                             sentBytes += info.size
                             lastFrameAt = SystemClock.elapsedRealtime()
+                            if (switchedAt > 0) { Log.i("PhoneCam", "Switched in ${lastFrameAt - switchedAt} ms"); switchedAt = 0 }
                             handler.removeCallbacks(startDeadline)
                             if (sequence == 1L) handler.post(status)
                             // At most one early keyframe a second: keyframes are the largest frames, so asking
@@ -180,33 +207,35 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
                 override fun onOpened(device: CameraDevice) {
                     // The main looper outlives the capture worker. A late open must still close its device.
                     if (!handler.post {
-                        if (finished) device.close()
+                        if (finished || gen != generation) device.close()
                         else {
                             camera = device
                             try { configureCamera(device) } catch (e: Exception) { finish("Camera session failed: ${e.message}") }
                         }
                     }) device.close()
                 }
-                override fun onDisconnected(device: CameraDevice) { device.close(); handler.post { finish("Camera disconnected") } }
-                override fun onError(device: CameraDevice, error: Int) { device.close(); handler.post { finish("Camera error $error") } }
+                override fun onDisconnected(device: CameraDevice) { device.close(); handler.post { if (gen == generation) finish("Camera disconnected") } }
+                override fun onError(device: CameraDevice, error: Int) { device.close(); handler.post { if (gen == generation) finish("Camera error $error") } }
             }, main)
         } catch (e: Exception) { finish("Could not start live: ${e.message}. No settings silently substituted.") }
     }
 
     @Suppress("DEPRECATION")
     private fun configureCamera(device: CameraDevice) {
+        val gen = generation
         val surface = input ?: error("No encoder surface")
         val view = preview()?.takeIf { it.isValid }
         viewSurface = view
         val callback = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(session: CameraCaptureSession) {
-                if (finished) { session.close(); return }
+                if (finished || gen != generation) { session.close(); return }
                 capture = session
                 try { submit(session, request(), repeating = true) }
                 catch (e: Exception) { finish("Camera rejected live settings: ${e.message}") }
             }
             override fun onConfigureFailed(session: CameraCaptureSession) {
                 session.close()
+                if (gen != generation) return
                 finish(when {
                     profile.highSpeed -> "This phone rejected the experimental 60 fps mode. Choose Best or High."
                     view != null -> "Camera rejected this profile together with the phone preview. Turn off Show phone preview, or choose a lower profile."
@@ -219,13 +248,9 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
         else device.createCaptureSession(surfaces, callback, handler)
     }
 
-    private val requestKeys by lazy {
-        context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId).availableCaptureRequestKeys.toSet()
-    }
-    private val continuousFocus by lazy {
-        CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in context.getSystemService(CameraManager::class.java)
-            .getCameraCharacteristics(profile.cameraId)[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
-    }
+    // Per camera; set in prepare() (a switch can change the camera).
+    private var requestKeys: Set<CaptureRequest.Key<*>> = emptySet()
+    private var continuousFocus = false
 
     /** One capture request from the profile plus the current [controls]. */
     private fun request(trigger: Int = CR.CONTROL_AF_TRIGGER_IDLE): CaptureRequest {
@@ -285,15 +310,20 @@ class LiveStreamer(private val context: Context, private val profile: Profile,
         }
     }
 
+    /** Camera, capture session, encoder and its surface; the connection to OBS is separate. */
+    private fun releaseCapture() {
+        runCatching { capture?.stopRepeating() }; runCatching { capture?.close() }; capture = null
+        runCatching { camera?.close() }; camera = null
+        runCatching { codec?.stop() }; runCatching { codec?.release() }; codec = null
+        runCatching { input?.release() }; input = null; viewSurface = null  // the SurfaceView owns its surface
+    }
+
     private fun finish(reason: String) {
         if (finished) return
         finished = true
         handler.removeCallbacks(startDeadline); handler.removeCallbacks(status)
         transport.close()
-        runCatching { capture?.stopRepeating() }; runCatching { capture?.close() }; capture = null
-        runCatching { camera?.close() }; camera = null
-        runCatching { codec?.stop() }; runCatching { codec?.release() }; codec = null
-        runCatching { input?.release() }; input = null; viewSurface = null  // the SurfaceView owns its surface
+        releaseCapture()
         post(LiveState(LiveState.Phase.STOPPED, reason, stats.fps, sequence, transport.dropped, rotation))
         thread.quitSafely()
     }
@@ -305,6 +335,8 @@ data class LiveState(val phase: Phase, val message: String, val fps: Double = 0.
                      /** Current encoder bitrate target and the user's choice; they differ only while the link is busy. */
                      val bitrate: Int = 0, val requestedBitrate: Int = 0,
                      /** "USB" or "Wi-Fi" while live. */
-                     val route: String = "") {
+                     val route: String = "",
+                     /** A camera or quality switch is under way on the open connection. */
+                     val switching: Boolean = false) {
     enum class Phase { WAITING, LIVE, STOPPED }
 }

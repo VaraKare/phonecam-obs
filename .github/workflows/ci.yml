@@ -38,6 +38,46 @@ jobs:
         with:
           name: phonecam-probe-research-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+  mac-plugin:
+    # AUDIT-017: the released Mac plugin, built and tested against the official OBS 33.0.1 on GitHub's Apple
+    # Silicon machines. These are virtual: decode tests that need the hardware video decoder skip if it is missing.
+    # Nothing here proves a real phone and OBS.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            native/build/*.tar.gz
+            ~/obs-dmg
+          key: mac-downloads-obs-33.0.1-v1
+      - name: Install OBS 33.0.1 (official download, checksum checked)
+        run: |
+          mkdir -p ~/obs-dmg
+          dmg=~/obs-dmg/OBS-Studio-33.0.1-macOS-Apple.dmg
+          [ -f "$dmg" ] || curl -fsSL -o "$dmg" https://github.com/obsproject/obs-studio/releases/download/33.0.1/OBS-Studio-33.0.1-macOS-Apple.dmg
+          echo "3d6b2eedeb56416602af635adaba32327fdf11ff9d2806a4ce7d5b608de73238  $dmg" | shasum -a 256 -c -
+          hdiutil attach -nobrowse -readonly -mountpoint /Volumes/OBS "$dmg"
+          sudo cp -R /Volumes/OBS/OBS.app /Applications/
+          hdiutil detach /Volumes/OBS
+      - run: brew install ffmpeg
+      # Java and the Android SDK run the phone's Kotlin Wi-Fi client against the Mac Wi-Fi server.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools'
+      - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - run: python3 tools/build_native.py
+      - run: python3 tools/test_native.py -v
+        env:
+          PHONECAM_ALLOW_NO_HW: '1'
   windows-plugin:
     # Test build only: nothing here proves a real Windows PC, phone and OBS (docs/WINDOWS.md).
     runs-on: windows-latest

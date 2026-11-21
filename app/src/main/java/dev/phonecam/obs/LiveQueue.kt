@@ -22,5 +22,7 @@ class LiveQueue(private val maxFrames: Int = 2, private val maxBytes: Int = 8 * 
         frames.addLast(frame); bytes += frame.bytes.size
         return true
     }
+    /** Forgets queued frames without counting them as drops (camera or quality switch). */
+    @Synchronized fun clear() { frames.clear(); bytes = 0; waitingForKey = true }
     @Synchronized fun poll(): Frame? = frames.removeFirstOrNull()?.also { bytes -= it.bytes.size }
 }

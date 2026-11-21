@@ -48,6 +48,10 @@ class NativeIntegration(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             self.assertEqual(authorized, [True])
             if success:
+                # GitHub's macOS machines are virtual and may lack the hardware video decoder the Mac plugin
+                # requires (software decoding is disabled on purpose). Only CI sets this; locally it fails.
+                if result.returncode and os.environ.get("PHONECAM_ALLOW_NO_HW") and "Hardware" in result.stderr and "decod" in result.stderr:
+                    self.skipTest("no hardware video decoder on this machine (virtual CI machine)")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 value = json.loads(result.stdout)
                 self.assertEqual(value["decodedFrames"], expected)
@@ -183,6 +187,29 @@ esac
             self.assertEqual(sum(call == "-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1" for call in calls), 2, calls)
             self.assertIn(f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}", calls)
 
+    def test_one_unanswering_device_does_not_restart_adb(self):
+        """AUDIT-012: a device whose shell calls hang (locked second phone, stale Wireless-debugging entry) is
+        skipped. adb answers 'devices' normally, so it must not be restarted: that would end other tools' sessions."""
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "adb.log"
+            fake = Path(directory) / "adb"
+            fake.write_text(f"""#!/bin/sh
+echo "$@" >> '{log}'
+case "$*" in
+  devices) printf 'List of devices attached\\nSTUCK\\tdevice\\nOTHER\\tdevice\\n' ;;
+  "-s STUCK"*) sleep 30 ;;
+esac
+""")
+            fake.chmod(0o755)
+            process = subprocess.Popen([str(RECEIVER), "--auto", "1", str(fake)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            time.sleep(14)
+            process.terminate()
+            _, stderr = process.communicate(timeout=20)
+            calls = log.read_text().splitlines()
+            self.assertGreaterEqual(sum(call.startswith("-s STUCK shell content query") for call in calls), 2, calls)
+            self.assertNotIn("kill-server", calls)
+            self.assertIn("The phone isn't answering over USB", stderr)
+
     def test_missing_adb_reports_guidance(self):
         process = subprocess.Popen([str(RECEIVER), "--auto", "1", "/nonexistent/adb"], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
         try:
@@ -271,6 +298,18 @@ esac
         # Landscape, then portrait, then the opposite landscape, as the phone is turned live.
         _, value = self.exchange(self.encoded_packets(width=1920, height=1080, turns=lambda seq: 0 if seq < 4 else 1 if seq < 8 else 2), 12)
         self.assertEqual((value["lastWidth"], value["lastHeight"], value["sizeChanges"]), (1920, 1080, 2))
+    def switched_packets(self, first=dict(width=1920, height=1080), second=dict(hevc=True, width=1280, height=720)):
+        """H.264, then the phone switches to H.265 at another size on the same connection (0.4.1): a second
+        configuration, sequence numbers that continue, and timestamps that restart (another camera's clock)."""
+        before = self.encoded_packets(**first)
+        after = []
+        for data in self.encoded_packets(**second):
+            magic, version, kind, length, flags, seq, pts = struct.unpack(">4sHHIIQQ", data[:32])
+            after.append(struct.pack(">4sHHIIQQ", magic, version, kind, length, flags, seq + 12 if kind == 2 else 0, pts) + data[32:])
+        return before + after
+    def test_switch_camera_or_quality_mid_stream(self):
+        _, value = self.exchange(self.switched_packets(), 24)
+        self.assertEqual((value["lastWidth"], value["lastHeight"]), (1280, 720))
     def test_keyflag_mismatch_rejected(self):
         packets = self.encoded_packets()
         # A dependent P-frame falsely claims to be a keyframe.

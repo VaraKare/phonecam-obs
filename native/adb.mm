@@ -42,7 +42,7 @@ std::string findAdb(const std::string &configured) {
     return {};
 }
 
-void prepareAdb(const std::string &) {}  // adb's own background start works on macOS
+void prepareAdb(const std::string &, const std::atomic<bool> *) {}  // adb's own background start works on macOS
 // The next adb call starts a fresh server by itself on macOS.
 void restartAdb(const std::string &adb) { if (!adb.empty()) runAdb(adb, {"kill-server"}, 3000); }
 void keepLoaded() {}

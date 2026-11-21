@@ -26,3 +26,8 @@ if __name__ == "__main__":
         data = b"".join(maker.encoded_packets(**options))
         (OUT / name).write_bytes(data)
         print(f"{name}: {len(data)} bytes")
+    # Camera or quality switch on one connection (0.4.1): 640x360 H.264, then 320x240 H.265, 24 frames.
+    name = "switch-avc-640x360-to-hevc-320x240.pcam"
+    data = b"".join(maker.switched_packets(dict(width=640, height=360), dict(hevc=True)))
+    (OUT / name).write_bytes(data)
+    print(f"{name}: {len(data)} bytes")

@@ -54,6 +54,8 @@ class MainActivity : Activity() {
         const val BLUE = 0xFF1565C0.toInt(); const val PANEL = 0xFF0E0E0E.toInt(); const val CHIP = 0xCC000000.toInt()
         const val MUTED = 0xFFB0B0B0.toInt()
         const val SCAN_REQUEST = 7
+        /** Why the last session ended, if its screen was gone by then (AUDIT-014); shown once on the next screen. */
+        var lastStop: String? = null
         const val SETTINGS_REQUEST = 8
     }
     private lateinit var prefs: SharedPreferences
@@ -348,7 +350,8 @@ class MainActivity : Activity() {
                 scanning = false
                 result.onSuccess {
                     options = it
-                    message.text = if (it.isEmpty()) "No supported camera profile was found on this phone." else "Ready. Open OBS with the PhoneCam source, then tap Start."
+                    message.text = if (it.isEmpty()) "No supported camera profile was found on this phone."
+                        else lastStop?.also { lastStop = null } ?: "Ready. Open OBS with the PhoneCam source, then tap Start."
                 }.onFailure { message.text = "Camera check failed: ${it.message}. Close other camera apps and try again." }
                 refresh()
             }
@@ -389,7 +392,8 @@ class MainActivity : Activity() {
         controls = loadControls(profile.cameraId); sliding = null
         renderControls()
         live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
-            if (destroyed) return@LiveStreamer
+            if (destroyed) { if (state.phase == LiveState.Phase.STOPPED) lastStop = state.message; return@LiveStreamer }
+            if (switching && state.phase == LiveState.Phase.LIVE && !state.switching && state.frames > 0) { switching = false; refresh() }
             showState(state)
             message.text = state.message
             if (state.phase == LiveState.Phase.STOPPED) {
@@ -618,11 +622,25 @@ class MainActivity : Activity() {
         refresh()
     }
 
+    /**
+     * Switches on the open connection (about a second). If OBS runs an older plugin it ends the connection;
+     * the session then stops while [switching] is set, and the STOPPED handler restarts it the old way.
+     */
     private fun restartLive() {
         val session = live ?: return
-        if (selected() == null) { message.text = "This quality isn't available on this camera."; return }
-        switching = true; message.text = "Switching…"; refresh()
-        session.stop("Switching camera or quality")
+        val profile = selected() ?: run { message.text = "This quality isn't available on this camera."; return }
+        switching = true; message.text = "Switching…"
+        if (showPreview) {
+            val size = previewSize(profile)
+            if (size == null) { refresh(); session.stop("Switching camera or quality"); return }  // the full restart explains it
+            preview.holder.setFixedSize(size.width, size.height)
+        }
+        liveProfile = profile
+        val able = Abilities.from(getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId))
+        abilities = able
+        controls = loadControls(profile.cameraId); sliding = null
+        renderControls(); refresh()
+        session.switchTo(profile, highQuality && profile.highQuality, able, controls)
     }
 
     private fun chooseCustom() {
@@ -668,7 +686,7 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         destroyed = true; orientation.disable()
-        live?.stop("Activity destroyed"); executor.shutdown(); feedback.release()
+        live?.stop("The PhoneCam screen closed, so live stopped. Keep PhoneCam open while streaming."); executor.shutdown(); feedback.release()
         super.onDestroy()
     }
 }
