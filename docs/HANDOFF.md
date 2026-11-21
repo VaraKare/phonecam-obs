@@ -1,6 +1,6 @@
 # Hand-off: where PhoneCam OBS stands and what comes next
 
-For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.md) (rules) and [audit/REMEDIATION_LOG.md](../audit/REMEDIATION_LOG.md) (fix status). Last updated 19 November 2026.
+For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.md) (rules) and [audit/REMEDIATION_LOG.md](../audit/REMEDIATION_LOG.md) (fix status). Last updated 21 November 2026.
 
 ## State
 
@@ -13,6 +13,16 @@ For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.m
 - **v0.4 prepared, not released:** version 0.4.0-alpha.1, with draft notes in [releases/v0.4.0-alpha.1.md](releases/v0.4.0-alpha.1.md). Candidate files are built locally into `dist/0.4.0-alpha.1/` (outside Git) by `python3 tools/release.py`. Tomorrow's tests use those exact files.
 - **Rule for tomorrow (owner, 19 Nov):** test, and when something fails, fix it following this plan without deviating. Rebuild, retest the failed check, then continue.
 - **Product direction (owner, 19 Nov):** a niche product, the best phone camera for OBS. No 3D. The earning ideas wait until there are users.
+
+## 21 November: v0.4.1 ready to release
+
+- **Hardware looks passed (phone + Mac):** the "Last session ended" line, dark mode while live, and the two-source walkthrough (wait, hand over on hide with keep-live off, wait again on show, take back on remove).
+- **Fixed on the way:** OBS crashed on Forget paired phones (f71cc5a; one click now asks again), and the second source's message now says exactly when it takes over (bf02ea9).
+- **Release candidate:** `dist/0.4.1-alpha.1/` (outside Git) from `python3 tools/release.py`; notes in [releases/v0.4.1-alpha.1.md](releases/v0.4.1-alpha.1.md). Phone and Mac only: the Windows build has not run on a Windows PC, so v0.4.1 points Windows users to the v0.4.0 plugin.
+- **Next:**
+  1. Install the candidate files and do one short live (exact-file check).
+  2. With the owner's yes: merge to `main`, tag `v0.4.1-alpha.1`, publish the pre-release.
+  3. v0.5: background live (on by default, notification with Stop, swipe-away stops, vivo battery hint), then picture-in-picture. Record the rule change in AGENTS.md and docs/PLAN.md.
 
 ## 20 November, after the v0.4 release
 
