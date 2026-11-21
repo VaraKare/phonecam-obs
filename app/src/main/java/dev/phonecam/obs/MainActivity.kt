@@ -100,6 +100,7 @@ class MainActivity : Activity() {
     private lateinit var mirrorChip: TextView
     private lateinit var detail: TextView
     private lateinit var startButton: Button
+    private lateinit var recordButton: RecordButton
     private lateinit var settingsButton: ImageButton
     private lateinit var message: TextView
     private lateinit var stageControls: LinearLayout
@@ -217,10 +218,15 @@ class MainActivity : Activity() {
             textSize = 17f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD; stateListAnimator = null
             setOnClickListener { onStartPressed() }
         }
+        // Ready and live: the round record button. Setup steps (camera access, camera check) keep a worded button.
+        recordButton = RecordButton(this).apply { setOnClickListener { onStartPressed() } }
         panel.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(14), 0, 0)
             addView(switchButton, LinearLayout.LayoutParams(dp(52), dp(52)))
-            addView(startButton, LinearLayout.LayoutParams(0, dp(54), 1f).apply { marginStart = dp(12); marginEnd = dp(12) })
+            addView(FrameLayout(this@MainActivity).apply {
+                addView(startButton, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54), Gravity.CENTER))
+                addView(recordButton, FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER))
+            }, LinearLayout.LayoutParams(0, dp(72), 1f).apply { marginStart = dp(12); marginEnd = dp(12) })
             addView(settingsButton, LinearLayout.LayoutParams(dp(52), dp(52)))
         })
         message = TextView(this).apply { setTextColor(MUTED); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
@@ -336,13 +342,18 @@ class MainActivity : Activity() {
         settingsButton.isEnabled = !switching; settingsButton.alpha = if (switching) 0.4f else 1f
         fun button(label: String, fill: Int, text: Int, enabled: Boolean) {
             startButton.text = label; startButton.background = rounded(fill, 27); startButton.setTextColor(text); startButton.isEnabled = enabled
+            startButton.visibility = View.VISIBLE; recordButton.visibility = View.GONE
+        }
+        fun record(isLive: Boolean, enabled: Boolean) {
+            recordButton.live = isLive; recordButton.isEnabled = enabled
+            recordButton.visibility = View.VISIBLE; startButton.visibility = View.GONE
         }
         when {
-            switching -> button("Switching…", GREY, Color.WHITE, false)
-            live != null -> button("Stop", RED, Color.WHITE, true)
+            switching -> record(true, false)
+            live != null -> record(true, true)
             !permitted -> button("Allow camera access", Color.WHITE, Color.BLACK, true)
             scanning || options.isEmpty() -> button(if (scanning) "Checking camera…" else "Check camera", GREY, Color.WHITE, !scanning)
-            else -> button("Start live", if (profile != null) Color.WHITE else GREY, if (profile != null) Color.BLACK else MUTED, profile != null)
+            else -> record(false, profile != null)
         }
         if (live == null) arrange()
     }
@@ -415,7 +426,7 @@ class MainActivity : Activity() {
                 result.onSuccess {
                     options = it
                     message.text = if (it.isEmpty()) "No supported camera profile was found on this phone."
-                        else lastStop?.also { lastStop = null } ?: "Ready. Open OBS with the PhoneCam source, then tap Start."
+                        else lastStop?.also { lastStop = null } ?: "Ready. Open OBS with the PhoneCam source, then tap the red record button."
                 }.onFailure { message.text = "Camera check failed: ${it.message}. Close other camera apps and try again." }
                 refresh()
             }
@@ -635,7 +646,7 @@ class MainActivity : Activity() {
                 Thread {
                     val result = runCatching { WifiConnector(this).pair(code) }
                     runOnUiThread {
-                        message.text = result.fold({ "Paired with $it. Tap Start live with the phone and computer on the same Wi-Fi." }, { Errors.friendly(it) })
+                        message.text = result.fold({ "Paired with $it. Tap the record button with the phone and computer on the same Wi-Fi." }, { Errors.friendly(it) })
                         feedback.play(if (result.isSuccess) Feedback.Event.SUCCESS else Feedback.Event.ERROR, message)
                     }
                 }.start()
