@@ -373,7 +373,7 @@ class MainActivity : Activity() {
                 if (keepTimer) keepTimer = false else { feedback.play(Feedback.Event.LIVE, badge); liveSince = SystemClock.elapsedRealtime() }
             }
             else if (phase == LiveState.Phase.STOPPED && !switching && foreground && lastPhase != null && lastPhase != LiveState.Phase.STOPPED)
-                feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
+                feedback.play(if (state?.message?.startsWith("Stopped") == true) Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
             lastPhase = phase
         }
         // The computer used most recently (pairings are kept in order of use), plus how many others are paired.
@@ -473,15 +473,21 @@ class MainActivity : Activity() {
         controls = loadControls(profile.cameraId); sliding = null
         renderControls()
         val app = applicationContext
-        live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
+        warnings.reset(); lastStatus = ""
+        live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null },
+            onCommand = { command -> if (!destroyed) obeyObs(command) }, notify = { state ->
             if (state.phase == LiveState.Phase.STOPPED) { LiveService.end(app); if (leftLive) leftLive = false }
             if (destroyed) { if (state.phase == LiveState.Phase.STOPPED) lastStop = state.message; return@LiveStreamer }
             if (switching && state.phase == LiveState.Phase.LIVE && !state.switching && state.frames > 0) { switching = false; refresh() }
             showState(state)
             LiveService.update(app, state, liveSince)
+            if (state.phase == LiveState.Phase.LIVE) tickLive(state)
             message.text = state.message
             if (state.phase == LiveState.Phase.STOPPED) {
                 if (!foreground) orientation.disable()
+                brighten()
+                // Never end silently while away: OBS closed, cable out, phone too hot…
+                if (!foreground && !inPip && !switching && !state.message.startsWith("Stopped by you")) warnings.ended(state.message)
                 if (!switching && state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
                     message.text = "${state.message}\nIf this keeps happening, choose Quality: High."
                 live = null; liveProfile = null; sliding = null; focusMark.visibility = View.GONE
@@ -495,10 +501,91 @@ class MainActivity : Activity() {
                 }
                 refresh()
             }
-        }.also { it.start() }
+        }).also { it.start() }
         // The notification's and the picture-in-picture window's Stop reach the session through LiveService.
         live?.let { session -> val stop = { reason: String -> session.stop(reason) }; if (backgroundLive) LiveService.start(app, stop) else LiveService.stop = stop }
+        LiveService.lower = { if (!destroyed) lowerQuality() }
+        scheduleDim()
         arrange(); refresh()
+    }
+
+    // ---- OBS controls, status and warnings (v0.6) ----
+
+    private val warnings by lazy { Warnings(this) }
+    private var lastStatus = ""
+    private fun shortQuality(q: Quality) = q.label.substringBefore(" ")
+
+    /** Every status tick while live (about once a second, also in the background): warnings and OBS's Phone section. */
+    private fun tickLive(state: LiveState) {
+        val battery = getSystemService(android.os.BatteryManager::class.java)
+        val percent = runCatching { battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) }.getOrDefault(-1)
+        val charging = runCatching { battery.isCharging }.getOrDefault(false)
+        val heat = runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
+        warnings.check(prefs.getBoolean("warnings", true), heat, percent, charging, choice != Quality.BALANCED)
+        val session = live ?: return
+        if (!session.talks) return
+        val p = liveProfile
+        val text = buildString {
+            if (p != null) {
+                append("camera=").append(Quality.cameras(options).firstOrNull { it.first == p.cameraId }?.second.orEmpty()).append('\n')
+                append("cameras=").append(Quality.cameras(options).size).append('\n')
+                append("torch=").append(if (abilities?.torch != true) "none" else if (controls.torch) "on" else "off").append('\n')
+                append("mirror=").append(if (controls.mirror) "on" else "off").append('\n')
+            }
+            append("quality=").append(shortQuality(choice)).append('\n')
+            append("qualities=").append(qualityChoices().joinToString(",") { shortQuality(it) }).append('\n')
+            append("route=").append(state.route).append('\n')
+            if (percent >= 0) append("battery=").append(percent).append('\n')
+            append("charging=").append(if (charging) "yes" else "no").append('\n')
+            warnings.current?.let { append("warning=").append(it).append('\n') }
+        }
+        if (text != lastStatus) { lastStatus = text; session.sendStatus(text) }
+    }
+
+    /** A command from OBS's Properties → Phone or an OBS hotkey; the same paths as the phone's own buttons. */
+    private fun obeyObs(command: String) {
+        val verb = command.substringBefore(' ').trim(); val arg = command.substringAfter(' ', "").trim()
+        when (verb) {
+            "camera" -> if (live != null && !switching) switchCamera()
+            "quality" -> qualityChoices().firstOrNull { shortQuality(it).equals(arg, ignoreCase = true) }?.let { q ->
+                if (q == choice || switching) return
+                choice = q; refresh()
+                if (live != null && selected() != liveProfile) restartLive()
+            }
+            "torch" -> if (live != null && abilities?.torch == true) { updateControls(controls.copy(torch = arg == "on")); renderControls() }
+            "mirror" -> if (live != null) { updateControls(controls.copy(mirror = arg == "on")); refresh() }
+            "stop" -> live?.stop("Stopped from OBS")
+        }
+    }
+
+    /** The warning's Lower quality button: Best or Smooth → High → Balanced. */
+    private fun lowerQuality() {
+        val next = when (choice) { Quality.BEST, Quality.SMOOTH, Quality.CUSTOM -> Quality.HIGH; Quality.HIGH -> Quality.BALANCED; Quality.BALANCED -> return }
+        val id = cameraId ?: return
+        if (Quality.pick(options, id, next, customKey) == null || switching) return
+        choice = next; refresh()
+        if (live != null && selected() != liveProfile) restartLive()
+        message.text = "Quality lowered to ${shortQuality(next)} to cool the phone and save battery."
+    }
+
+    // Dims the screen after 30 s of live without a touch (on screen, not picture-in-picture); a touch brightens it.
+    private val dimmer = Runnable {
+        if (live != null && foreground && !inPip && prefs.getBoolean("dim", true))
+            window.attributes = window.attributes.apply { screenBrightness = 0.05f }
+    }
+    private fun scheduleDim() { badge.removeCallbacks(dimmer); if (live != null) badge.postDelayed(dimmer, 30_000) }
+    private fun brighten() {
+        badge.removeCallbacks(dimmer)
+        if (window.attributes.screenBrightness != WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            window.attributes = window.attributes.apply { screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
+    }
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && live != null) {
+            val dimmed = window.attributes.screenBrightness != WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            brighten(); scheduleDim()
+            if (dimmed) return true  // the first touch only wakes the screen, like a dimmed camera app
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     // ---- Live camera controls (v0.2) ----
@@ -765,7 +852,7 @@ class MainActivity : Activity() {
         super.onResume(); foreground = true
         if (openingSettings) { openingSettings = false; updatePip() }
         if (leftLive) leftLive = false
-        if (live != null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (live != null) { window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); scheduleDim() }
         if (startOnResume) { startOnResume = false; badge.post { if (foreground) startLive() } }
         runCatching { getSystemService(PowerManager::class.java).addThermalStatusListener(heatListener) }  // also reports the current status
         if (orientation.canDetectOrientation()) orientation.enable()
@@ -787,6 +874,7 @@ class MainActivity : Activity() {
         foreground = false
         runCatching { getSystemService(PowerManager::class.java).removeThermalStatusListener(heatListener) }
         if (!isInPictureInPictureMode) window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        brighten()
         super.onPause()
     }
     /** Not visible any more (picture-in-picture is still visible): background live keeps going, otherwise live stops. */

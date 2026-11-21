@@ -28,6 +28,9 @@ class LiveService : Service() {
         private const val CHANNEL = "live"
         private const val ID = 1
         const val STOP = "dev.phonecam.obs.STOP"
+        const val LOWER = "dev.phonecam.obs.LOWER"
+        /** The heat or battery warning's Lower quality button; set by MainActivity while live. */
+        @Volatile var lower: (() -> Unit)? = null
         /** Stops the user's session (with a reason); set at Start and cleared when it stops. */
         @Volatile var stop: ((String) -> Unit)? = null
         /** True once Android accepted the foreground service, so leaving the app may keep live running. */
@@ -55,7 +58,7 @@ class LiveService : Service() {
 
         /** The session stopped: remove the notification and let the process rest. */
         fun end(context: Context) {
-            stop = null; shown = null
+            stop = null; lower = null; shown = null
             context.stopService(Intent(context, LiveService::class.java))
         }
 
@@ -99,6 +102,10 @@ class LiveService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) {
             stop?.invoke("Stopped by you") ?: stopSelf()
+            return START_NOT_STICKY
+        }
+        if (intent?.action == LOWER) {
+            lower?.let { android.os.Handler(mainLooper).post(it) } ?: stopSelf()
             return START_NOT_STICKY
         }
         // Android requires startForeground after startForegroundService, even when the session already ended.

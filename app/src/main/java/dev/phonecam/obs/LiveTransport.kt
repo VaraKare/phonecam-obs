@@ -125,7 +125,7 @@ class LiveTransport(private val token: String, private val connected: (String) -
 
     fun start() {
         deadline = SystemClock.elapsedRealtime() + 30_000
-        watchdog.scheduleAtFixedRate({
+        watchdog.scheduleWithFixedDelay({
             if (!closed && SystemClock.elapsedRealtime() > deadline) {
                 val wifiProblem = wifi?.problem?.let { " Direct Wi-Fi: $it" }.orEmpty()
                 close()

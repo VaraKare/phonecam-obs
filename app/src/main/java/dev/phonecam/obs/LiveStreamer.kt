@@ -39,7 +39,9 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                    private var highQuality: Boolean, initialRotation: Int,
                    private var abilities: Abilities, initialControls: Controls,
                    private val preview: () -> Surface?,
-                   private val notify: (LiveState) -> Unit) {
+                   private val notify: (LiveState) -> Unit,
+                   /** Commands from OBS (0.6 plugins), on the main thread. */
+                   private val onCommand: (String) -> Unit = {}) {
     @Volatile private var rotation = initialRotation
     @Volatile private var controls = initialControls
     fun setRotation(degrees: Int) { require(degrees in setOf(0, 90, 180, 270)); rotation = degrees }
@@ -72,9 +74,19 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
     @Volatile private var sentBytes = 0L
     private var loggedBytes = 0L
     @Volatile private var route = "USB"
+    // Start timings (elapsed ms), sent to OBS's log once the first frame is out: vivo drops this app's own log lines.
+    private val tappedAt = SystemClock.elapsedRealtime()
+    @Volatile private var connectedAt = 0L
+    @Volatile private var cameraAt = 0L
     private val transport = LiveTransport(LiveTransport.token(context.filesDir),
-        { via -> route = via; handler.post { prepare() } }, { reason -> handler.post { finish(reason) } },
-        WifiConnector(context).takeIf { it.hasPairings })
+        { via -> route = via; connectedAt = SystemClock.elapsedRealtime(); handler.post { prepare() } }, { reason -> handler.post { finish(reason) } },
+        WifiConnector(context).takeIf { it.hasPairings },
+        { text -> main.post { onCommand(text) } },
+        { usbToComputer(context) })
+    /** OBS runs a 0.6 plugin: it shows the phone's status and sends commands. */
+    val talks: Boolean get() = transport.talks
+    /** The phone's state for OBS's Properties → Phone ("key=value" lines). */
+    fun sendStatus(lines: String) = transport.sendControl("status\n$lines")
     private val startDeadline = Runnable { finish("No hardware video after 15 seconds; choose another profile or close other camera apps.") }
     private val status = object : Runnable {
         override fun run() {
@@ -224,7 +236,12 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                             lastFrameAt = SystemClock.elapsedRealtime()
                             if (switchedAt > 0) { Log.i("PhoneCam", "Switched in ${lastFrameAt - switchedAt} ms"); switchedAt = 0 }
                             handler.removeCallbacks(startDeadline)
-                            if (sequence == 1L) handler.post(status)
+                            if (sequence == 1L) {
+                                handler.post(status)
+                                val now = SystemClock.elapsedRealtime()
+                                transport.sendControl("timings\ntap to OBS connected ${connectedAt - tappedAt} ms, camera open ${cameraAt - tappedAt} ms, " +
+                                    "first frame ${now - tappedAt} ms (over $route)")
+                            }
                             // At most one early keyframe a second: keyframes are the largest frames, so asking
                             // for them faster on a busy link causes the next overflow.
                             if (!accepted && SystemClock.elapsedRealtime() - lastKeyRequest > 1000) {
@@ -245,7 +262,7 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                     if (!handler.post {
                         if (finished || gen != generation) device.close()
                         else {
-                            camera = device
+                            camera = device; cameraAt = SystemClock.elapsedRealtime()
                             try { configureCamera(device) } catch (e: Exception) { finish("Camera session failed: ${e.message}") }
                         }
                     }) device.close()
@@ -364,6 +381,12 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         thread.quitSafely()
     }
 }
+
+/** A USB cable to a computer is plugged in (the battery reports USB power, not a wall charger). */
+fun usbToComputer(context: Context): Boolean = runCatching {
+    context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        ?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) == android.os.BatteryManager.BATTERY_PLUGGED_USB
+}.getOrDefault(false)
 
 /** What the screen shows. STOPPED is final for a session; [message] then explains why. */
 data class LiveState(val phase: Phase, val message: String, val fps: Double = 0.0, val frames: Long = 0,
