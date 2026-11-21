@@ -24,6 +24,8 @@ import android.util.Log
  * Swiping PhoneCam away from recent apps stops live.
  */
 class LiveService : Service() {
+    /** What the session uses: the camera or the screen, and the microphone. */
+    data class Uses(val screen: Boolean, val microphone: Boolean)
     companion object {
         private const val CHANNEL = "live"
         private const val ID = 1
@@ -40,8 +42,10 @@ class LiveService : Service() {
         private var radio: WifiManager.WifiLock? = null
 
         /** Starts the service for [live]. False when Android refuses; live then stops when the app is left. */
-        fun start(context: Context, stopLive: (String) -> Unit): Boolean {
-            stop = stopLive; shown = null
+        /** What the session uses in the background: the camera or the screen, and the microphone (Android 11+ types). */
+        @Volatile private var uses = Uses(screen = false, microphone = false)
+        fun start(context: Context, stopLive: (String) -> Unit, use: Uses = Uses(false, false)): Boolean {
+            stop = stopLive; shown = null; uses = use
             return runCatching { context.startForegroundService(Intent(context, LiveService::class.java)) }
                 .onFailure { Log.w("PhoneCam", "Background live unavailable: ${it.message}") }.isSuccess
         }
@@ -116,7 +120,9 @@ class LiveService : Service() {
             })
         try {
             // Android 11+ needs the camera type to keep using the camera in the background; Android 10 has no types.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) startForeground(ID, build(this, shown), ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) startForeground(ID, build(this, shown),
+                (if (uses.screen) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) or
+                    (if (uses.microphone) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0))
             else startForeground(ID, build(this, shown))
         } catch (e: Exception) {
             Log.w("PhoneCam", "Background live refused: ${e.message}")

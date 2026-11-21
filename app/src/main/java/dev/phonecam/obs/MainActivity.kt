@@ -98,6 +98,10 @@ class MainActivity : Activity() {
     private lateinit var switchButton: ImageButton
     private lateinit var qualityChip: TextView
     private lateinit var mirrorChip: TextView
+    private lateinit var micChip: TextView
+    /** Phone microphone to OBS (0.6): off unless turned on; RECORD_AUDIO is asked only then. */
+    private var micOn: Boolean get() = prefs.getBoolean("mic", false); set(v) { prefs.edit().putBoolean("mic", v).apply() }
+    private var serviceStop: ((String) -> Unit)? = null
     private lateinit var detail: TextView
     private lateinit var startButton: Button
     private lateinit var recordButton: RecordButton
@@ -201,9 +205,11 @@ class MainActivity : Activity() {
         }
         qualityChip = pill { chooseQuality() }
         mirrorChip = pill { toggleMirror() }
+        micChip = pill { toggleMic() }
         panel.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
             addView(qualityChip); addView(mirrorChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+            addView(micChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
         })
         detail = TextView(this).apply { setTextColor(0xFF7A7A7A.toInt()); textSize = 12f; gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) }
         panel.addView(detail)
@@ -334,6 +340,9 @@ class MainActivity : Activity() {
         mirrorChip.text = if (mirror) "Mirror on" else "Mirror off"
         mirrorChip.background = rounded(if (mirror) BLUE else 0xFF1E1E1E.toInt(), 20)
         mirrorChip.contentDescription = "Mirror the picture in OBS, ${if (mirror) "on" else "off"}"
+        micChip.text = if (micOn) "Mic on" else "Mic off"
+        micChip.background = rounded(if (micOn) BLUE else 0xFF1E1E1E.toInt(), 20)
+        micChip.contentDescription = "Phone microphone to OBS, ${if (micOn) "on" else "off"}"
         detail.text = when {
             options.isEmpty() -> ""
             profile == null -> "$name camera: this quality isn't available. Choose another."
@@ -455,6 +464,10 @@ class MainActivity : Activity() {
 
     private fun startLive() {
         if (!foreground || live != null) return
+        if (micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            message.text = "The microphone is on, but PhoneCam isn't allowed to use it. Tap Mic to allow it, or turn it off."
+            micOn = false; refresh(); return
+        }
         val profile = selected() ?: run { message.text = "This quality isn't available on this camera."; return }
         if (device == Orientation.UNKNOWN) device = Orientation.fromDisplay(displayDegrees())
         val rotation = Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device)
@@ -475,7 +488,7 @@ class MainActivity : Activity() {
         val app = applicationContext
         warnings.reset(); lastStatus = ""
         live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null },
-            onCommand = { command -> if (!destroyed) obeyObs(command) }, notify = { state ->
+            onCommand = { command -> if (!destroyed) obeyObs(command) }, microphone = micOn, notify = { state ->
             if (state.phase == LiveState.Phase.STOPPED) { LiveService.end(app); if (leftLive) leftLive = false }
             if (destroyed) { if (state.phase == LiveState.Phase.STOPPED) lastStop = state.message; return@LiveStreamer }
             if (switching && state.phase == LiveState.Phase.LIVE && !state.switching && state.frames > 0) { switching = false; refresh() }
@@ -503,7 +516,8 @@ class MainActivity : Activity() {
             }
         }).also { it.start() }
         // The notification's and the picture-in-picture window's Stop reach the session through LiveService.
-        live?.let { session -> val stop = { reason: String -> session.stop(reason) }; if (backgroundLive) LiveService.start(app, stop) else LiveService.stop = stop }
+        live?.let { session -> val stop = { reason: String -> session.stop(reason) }; serviceStop = stop
+            if (backgroundLive) LiveService.start(app, stop, LiveService.Uses(screen = false, microphone = micOn)) else LiveService.stop = stop }
         LiveService.lower = { if (!destroyed) lowerQuality() }
         scheduleDim()
         arrange(); refresh()
@@ -538,6 +552,7 @@ class MainActivity : Activity() {
             if (percent >= 0) append("battery=").append(percent).append('\n')
             append("charging=").append(if (charging) "yes" else "no").append('\n')
             warnings.current?.let { append("warning=").append(it).append('\n') }
+            append("mic=").append(if (micOn) "on" else "off").append('\n')
         }
         if (text != lastStatus) { lastStatus = text; session.sendStatus(text) }
     }
@@ -792,6 +807,22 @@ class MainActivity : Activity() {
         if (live != null) restartLive()
     }
 
+    /** Phone microphone on or off, also while live. Turning it on asks for the permission the first time. */
+    private fun toggleMic() {
+        if (!micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 3); return
+        }
+        setMic(!micOn)
+    }
+    private fun setMic(on: Boolean) {
+        micOn = on; live?.setMicrophone(on)
+        // Background live needs Android's microphone type to keep hearing when PhoneCam is off screen.
+        val stop = serviceStop
+        if (live != null && backgroundLive && stop != null) LiveService.start(applicationContext, stop, LiveService.Uses(screen = false, microphone = on))
+        if (on && live != null && live?.talks == false) message.text = "The PhoneCam plugin in OBS is older than this app and can't take the microphone."
+        refresh()
+    }
+
     /** Mirror in OBS, remembered per camera; applied at once while live. */
     private fun toggleMirror() {
         val id = cameraId ?: return
@@ -839,6 +870,11 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 3) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) setMic(true)
+            else message.text = "Microphone access wasn't allowed, so the microphone stays off. Video works as before."
+            return
+        }
         if (requestCode == 2) {
             if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED)
                 Toast.makeText(this, "Notifications are off: live still continues when you leave PhoneCam, but Stop won't show in the status bar.", Toast.LENGTH_LONG).show()

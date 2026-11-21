@@ -41,7 +41,23 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                    private val preview: () -> Surface?,
                    private val notify: (LiveState) -> Unit,
                    /** Commands from OBS (0.6 plugins), on the main thread. */
-                   private val onCommand: (String) -> Unit = {}) {
+                   private val onCommand: (String) -> Unit = {},
+                   /** Send the phone microphone too (0.6 plugins only; off unless the user turned it on). */
+                   microphone: Boolean = false) {
+    @Volatile private var micWanted = microphone
+    private var audio: AudioSender? = null
+    /** The camera stamps frames with elapsedRealtime (boot time) rather than the monotonic clock. */
+    private var boottime = false
+    /** Turns the microphone on or off during live. */
+    fun setMicrophone(on: Boolean) { handler.post { micWanted = on; if (connectedAt > 0) applyMicrophone() } }
+    private fun applyMicrophone() {
+        if (finished) return
+        if (micWanted && audio == null) {
+            // Never drop sound silently: an older plugin can't take it, so say so (AGENTS.md).
+            if (!transport.talks) { finish("The PhoneCam plugin in OBS is older than this app and can't take the phone microphone. Update the plugin, or turn the microphone off."); return }
+            audio = AudioSender(boottime, { body, pts -> transport.offerAudio(body, pts) }, { reason -> handler.post { finish(reason) } }).also { it.start() }
+        } else if (!micWanted) { audio?.stop(); audio = null }
+    }
     @Volatile private var rotation = initialRotation
     @Volatile private var controls = initialControls
     fun setRotation(degrees: Int) { require(degrees in setOf(0, 90, 180, 270)); rotation = degrees }
@@ -79,7 +95,7 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
     @Volatile private var connectedAt = 0L
     @Volatile private var cameraAt = 0L
     private val transport = LiveTransport(LiveTransport.token(context.filesDir),
-        { via -> route = via; connectedAt = SystemClock.elapsedRealtime(); handler.post { prepare() } }, { reason -> handler.post { finish(reason) } },
+        { via -> route = via; connectedAt = SystemClock.elapsedRealtime(); handler.post { prepare(); applyMicrophone() } }, { reason -> handler.post { finish(reason) } },
         WifiConnector(context).takeIf { it.hasPairings },
         { text -> main.post { onCommand(text) } },
         { usbToComputer(context) })
@@ -178,6 +194,7 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         try {
             val characteristics = context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)
             requestKeys = characteristics.availableCaptureRequestKeys.toSet()
+            boottime = characteristics[CC.SENSOR_INFO_TIMESTAMP_SOURCE] == CC.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
             continuousFocus = CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in characteristics[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
             handler.postDelayed(startDeadline, 15_000)
             val encoder = MediaCodec.createByCodecName(profile.encoder)
@@ -375,6 +392,7 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         if (finished) return
         finished = true
         handler.removeCallbacks(startDeadline); handler.removeCallbacks(status)
+        audio?.stop(); audio = null
         transport.close()
         releaseCapture()
         post(LiveState(LiveState.Phase.STOPPED, reason, stats.fps, sequence, transport.dropped, rotation))
