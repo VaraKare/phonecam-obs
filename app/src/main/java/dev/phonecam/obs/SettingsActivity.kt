@@ -3,6 +3,10 @@ package dev.phonecam.obs
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.TextView
@@ -25,6 +29,9 @@ class SettingsActivity : Activity() {
         build()
     }
 
+    // Back from Android's app or notification settings: show the current notification state.
+    override fun onRestart() { super.onRestart(); build() }
+
     private fun build() {
         ui.list.removeAllViews()
         ui.title("Settings")
@@ -34,6 +41,16 @@ class SettingsActivity : Activity() {
         ui.row("Paired computers", if (count == 0) "None yet" else "For direct Wi-Fi", value = count.toString()) { showPaired() }
         ui.row("Pair a computer", "Scan the QR code shown in OBS") { finishWith(SCAN) }
         ui.row("Type a pairing code", "If scanning doesn't work") { finishWith(TYPE_CODE) }
+
+        ui.section("While live")
+        toggle("Keep live when you leave the app", "A notification with Stop shows while live. Swiping PhoneCam away from recent apps stops it.", "background")
+        ui.row("Let PhoneCam run in the background", backgroundHint()) {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+        }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            ui.row("Notifications are off", "Stop won't show in the status bar while live. Tap to turn them on.") {
+                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+            }
 
         ui.section("Video")
         toggle("Phone preview while live", null, "preview")
@@ -78,6 +95,14 @@ class SettingsActivity : Activity() {
                     .setPositiveButton("Forget") { _, _ -> pairings.forget(mac.id); build(); showPaired() }.show()
             }
             .setNegativeButton("Close", null).show()
+    }
+
+    /** vivo (and some other brands) close background apps to save battery unless the app is allowed. */
+    private fun backgroundHint() = when (Build.MANUFACTURER.lowercase()) {
+        "vivo", "iqoo" -> "vivo can close background apps. Tap, then Battery, and allow background power use."
+        "xiaomi", "redmi", "poco" -> "Xiaomi can close background apps. Tap, then Battery saver, and choose No restrictions."
+        "oppo", "realme", "oneplus" -> "This phone can close background apps. Tap, then Battery, and allow background activity."
+        else -> "If live stops when you leave PhoneCam, tap, then Battery, and allow background use."
     }
 
     private fun toggle(title: String, subtitle: String?, key: String) =

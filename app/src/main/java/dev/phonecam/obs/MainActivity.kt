@@ -31,6 +31,7 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.*
+import android.os.Build
 import java.util.concurrent.Executors
 
 /** Centers one child at a fixed aspect ratio (letterboxed), like a camera viewfinder. */
@@ -124,6 +125,12 @@ class MainActivity : Activity() {
     private var customKey: String? get() = prefs.getString("custom", null); set(v) { prefs.edit().putString("custom", v).apply() }
     private var highQuality: Boolean get() = prefs.getBoolean("hq", true); set(v) { prefs.edit().putBoolean("hq", v).apply() }
     private var showPreview: Boolean get() = prefs.getBoolean("preview", true); set(v) { prefs.edit().putBoolean("preview", v).apply() }
+    /** Background live (v0.5, on by default): leaving the app keeps a session running, with a notification. */
+    private val backgroundLive get() = prefs.getBoolean("background", true)
+    /** Set while live runs with PhoneCam off screen; if the process dies there, the next launch explains why. */
+    private var leftLive: Boolean get() = prefs.getBoolean("left_live", false); @Suppress("ApplySharedPref") set(v) { prefs.edit().putBoolean("left_live", v).commit() }  // must reach disk before the phone can close the app
+    /** Start after the notification permission prompt closes (the prompt pauses this screen). */
+    private var startOnResume = false
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun rounded(color: Int, radius: Int = 10) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
@@ -137,14 +144,20 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("settings", MODE_PRIVATE)
         LiveTransport.token(filesDir)
+        if (leftLive && LiveService.stop == null) {
+            leftLive = false
+            lastStop = "Live ended while PhoneCam was in the background. If you didn't close it, this phone closed it to save battery: " +
+                "in Settings → While live, open Let PhoneCam run in the background."
+        }
 
         stage = Stage(this).apply { setBackgroundColor(Color.BLACK) }
         preview = SurfaceView(this).apply {
             visibility = View.INVISIBLE; contentDescription = "Camera preview"
             holder.addCallback(object : SurfaceHolder.Callback {
-                override fun surfaceCreated(holder: SurfaceHolder) { previewReady = true }
+                override fun surfaceCreated(holder: SurfaceHolder) { previewReady = true; live?.attachPreview() }
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-                override fun surfaceDestroyed(holder: SurfaceHolder) { previewReady = false }
+                // Leaving the app destroys the preview; background live keeps the camera feeding OBS only.
+                override fun surfaceDestroyed(holder: SurfaceHolder) { previewReady = false; live?.detachPreview() }
             })
         }
         stage.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -363,6 +376,12 @@ class MainActivity : Activity() {
             live != null -> live?.stop()
             checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED -> requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
             options.isEmpty() -> scan()
+            // Asked once, at the first Start: the background-live notification carries Stop.
+            Build.VERSION.SDK_INT >= 33 && backgroundLive && !prefs.getBoolean("asked_notifications", false) &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED -> {
+                prefs.edit().putBoolean("asked_notifications", true).apply()
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
+            }
             else -> startLive()
         }
     }
@@ -391,12 +410,16 @@ class MainActivity : Activity() {
         abilities = able
         controls = loadControls(profile.cameraId); sliding = null
         renderControls()
+        val app = applicationContext
         live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
+            if (state.phase == LiveState.Phase.STOPPED) { LiveService.end(app); if (leftLive) leftLive = false }
             if (destroyed) { if (state.phase == LiveState.Phase.STOPPED) lastStop = state.message; return@LiveStreamer }
             if (switching && state.phase == LiveState.Phase.LIVE && !state.switching && state.frames > 0) { switching = false; refresh() }
             showState(state)
+            LiveService.update(app, state, liveSince)
             message.text = state.message
             if (state.phase == LiveState.Phase.STOPPED) {
+                if (!foreground) orientation.disable()
                 if (!switching && state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
                     message.text = "${state.message}\nIf this keeps happening, choose Quality: High."
                 live = null; liveProfile = null; sliding = null; focusMark.visibility = View.GONE
@@ -411,6 +434,7 @@ class MainActivity : Activity() {
                 refresh()
             }
         }.also { it.start() }
+        if (backgroundLive) live?.let { session -> LiveService.start(app) { reason -> session.stop(reason) } }
         arrange(); refresh()
     }
 
@@ -660,17 +684,30 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2) {
+            if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED)
+                Toast.makeText(this, "Notifications are off: live still continues when you leave PhoneCam, but Stop won't show in the status bar.", Toast.LENGTH_LONG).show()
+            startOnResume = true; return
+        }
         if (requestCode == 1 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) scan()
         else message.text = "Camera access is needed to stream. Allow it in Android Settings → Apps → PhoneCam → Permissions."
         refresh()
     }
     override fun onResume() {
         super.onResume(); foreground = true
+        if (leftLive) leftLive = false
+        if (live != null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (startOnResume) { startOnResume = false; badge.post { if (foreground) startLive() } }
         runCatching { getSystemService(PowerManager::class.java).addThermalStatusListener(heatListener) }  // also reports the current status
         if (orientation.canDetectOrientation()) orientation.enable()
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { if (options.isEmpty()) scan() }
         else message.text = "PhoneCam turns this phone into a camera for OBS. Allow camera access to begin."
         refresh()
+    }
+    /** Back while live leaves the app like Home, so background live continues. Android 12+ already does this. */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (Build.VERSION.SDK_INT < 31 && keyCode == android.view.KeyEvent.KEYCODE_BACK && live != null && backgroundLive) { moveTaskToBack(true); return true }
+        return super.onKeyDown(keyCode, event)
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -678,15 +715,22 @@ class MainActivity : Activity() {
         arrange()
     }
     override fun onPause() {
-        foreground = false; orientation.disable()
+        foreground = false
         runCatching { getSystemService(PowerManager::class.java).removeThermalStatusListener(heatListener) }
-        live?.stop("App left the screen, so live stopped. Keep PhoneCam open while streaming.")
+        val session = live
+        if (session != null && backgroundLive && LiveService.running) leftLive = true  // keeps running; rotation still followed
+        else {
+            orientation.disable()
+            session?.stop(if (backgroundLive) "Android didn't allow live in the background, so it stopped when PhoneCam left the screen."
+                else "PhoneCam left the screen, so live stopped. To keep live running, turn on Settings → Keep live when you leave the app.")
+        }
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onPause()
     }
     override fun onDestroy() {
         destroyed = true; orientation.disable()
-        live?.stop("The PhoneCam screen closed, so live stopped. Keep PhoneCam open while streaming."); executor.shutdown(); feedback.release()
+        if (live != null) leftLive = false  // closed on purpose (swiped away), not by the phone
+        live?.stop("PhoneCam was closed, so live stopped."); executor.shutdown(); feedback.release()
         super.onDestroy()
     }
 }

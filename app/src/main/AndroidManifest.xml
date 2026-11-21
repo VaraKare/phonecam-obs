@@ -4,6 +4,11 @@
     <!-- Direct Wi-Fi to a paired Mac on the local network only (docs/WIFI.md); approved 11 Nov 2026. No Internet servers. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Background live (owner, 21 Nov 2026): a camera-type foreground service with a Stop notification, only during a session the user started. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <application android:label="PhoneCam" android:theme="@android:style/Theme.Material.NoActionBar"
         android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules"
@@ -19,6 +24,7 @@
         <activity android:name=".SettingsActivity" android:exported="false" android:label="Settings" />
         <activity android:name=".BenchmarkActivity" android:exported="false" android:label="Research tools"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboard|keyboardHidden|navigation|fontScale|density|locale|layoutDirection" />
+        <service android:name=".LiveService" android:exported="false" android:foregroundServiceType="camera" />
         <!-- Answers only Android's shell user (an authorized ADB connection); see PairingProvider. -->
         <provider android:name=".PairingProvider" android:authorities="dev.phonecam.obs.pairing"
             android:exported="true" android:grantUriPermissions="false" />

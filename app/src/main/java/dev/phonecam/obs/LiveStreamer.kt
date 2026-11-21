@@ -23,9 +23,12 @@ import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
- * Explicit foreground-only live session. No muxer, media files, or automatic reconnect.
+ * Live session the user started. No muxer, media files, or automatic reconnect. It may keep running after
+ * the user leaves PhoneCam (background live, [LiveService]); [detachPreview] and [attachPreview] follow the screen.
  * [initialRotation] and later [setRotation] values are clockwise degrees the Mac applies to show
  * the image upright; the encoder itself never changes shape. [preview] supplies an optional on-phone
  * view surface when the camera opens; if the camera rejects encoder + preview together, the session fails clearly.
@@ -121,6 +124,39 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
             prepare()
         }
     }
+    /**
+     * The phone preview is going away (PhoneCam left the screen): the camera keeps feeding the encoder only.
+     * Waits briefly, because the preview surface must not be used once its owner returns.
+     */
+    fun detachPreview() {
+        val done = CountDownLatch(1)
+        val posted = handler.post {
+            try {
+                if (!finished && viewSurface != null) {
+                    viewSurface = null
+                    capture?.let { session ->
+                        try { submit(session, request(), repeating = true) } catch (e: Exception) { camera?.let(::rebuild) }
+                    }
+                }
+            } finally { done.countDown() }
+        }
+        if (posted) runCatching { done.await(500, TimeUnit.MILLISECONDS) }
+    }
+
+    /** The phone preview is back: the capture session is rebuilt with it (a short pause; the connection stays). */
+    fun attachPreview() {
+        handler.post {
+            val device = camera
+            if (finished || device == null || viewSurface != null || preview()?.isValid != true) return@post
+            rebuild(device)
+        }
+    }
+
+    private fun rebuild(device: CameraDevice) {
+        runCatching { capture?.stopRepeating() }; runCatching { capture?.close() }; capture = null
+        try { configureCamera(device) } catch (e: Exception) { finish("Camera session failed: ${e.message}") }
+    }
+
     private fun post(state: LiveState) { main.post { notify(state) } }
 
     @SuppressLint("MissingPermission")

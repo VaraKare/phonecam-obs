@@ -144,7 +144,7 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | "Unlock the phone and tap Allow" | Unlock the phone and accept the USB debugging prompt. |
 | "Install the PhoneCam app" | Install the phone app (step 3). |
 | "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |
-| Live stops when you switch apps | Keep PhoneCam open on screen while streaming. Locking the phone or leaving the app stops the camera on purpose. |
+| Live stops when you switch apps | Check **Settings → Keep live when you leave the app** is on. Some phones (vivo, Xiaomi, OPPO and others) close background apps anyway: allow PhoneCam to run in the background in Android's battery settings for the app. Swiping PhoneCam away from recent apps always stops live. |
 | Phone says "Warm" or "Hot" | Choose **High** or **Balanced**, take the case off, or keep the phone out of the sun. |
 | Only the middle of the picture shows in OBS | The source was moved or resized by hand. Open its **Properties** → **Fit to canvas now** (or right-click → **Transform → Reset Transform**, then Start live again). |
 | Phone says "OBS stopped receiving" | Normal when you hide the source, quit OBS or unplug. Show the source and tap Start live again. |
