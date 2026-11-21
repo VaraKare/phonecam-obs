@@ -6,7 +6,8 @@ Use your Android phone's camera as a high-quality video source in [OBS Studio](h
 
 - **Rear or front camera**, up to 4K where your phone allows it, encoded in hardware on the phone and decoded in hardware on the Mac.
 - **Any orientation:** portrait or landscape, and turning the phone during a session keeps the picture upright in OBS.
-- **Cable or Wi-Fi:** plug in, or pair once over Wi-Fi by scanning a QR code in OBS. Then open OBS and tap **Start live** on the phone. No commands to type.
+- **Cable or Wi-Fi:** plug in, or pair once over Wi-Fi by scanning a QR code in OBS. Then open OBS and tap the red record button on the phone. No commands to type.
+- **Keeps going when you leave the app:** switch apps, go Home or lock the phone and OBS keeps the picture, with a notification that has **Stop**. Going Home shows the phone preview in a small floating window (picture-in-picture). Both can be turned off in the phone's Settings.
 - **Private:** the phone saves nothing during live sessions. Wi-Fi video is encrypted and stays on your local network. No microphone, no accounts, no analytics.
 
 ## What you need
@@ -62,11 +63,11 @@ Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on t
 
 1. Connect the phone with the USB cable and open **PhoneCam** on the phone. Allow camera access the first time.
 2. Open OBS. In **Sources**, click **+** and choose **PhoneCam (phone camera)**, then **OK**.
-3. On the phone, pick **Rear** or **Front** and a **Quality** (Best is the default), then tap **Start live to OBS**.
-4. The phone shows **● LIVE** and your camera appears in OBS within a few seconds.
+3. On the phone, pick **Rear** or **Front** and a **Quality** (Best is the default), then tap the round red **record button** (a white ring with a red circle).
+4. The red circle turns into a square, the phone shows **● Live 00:05**, and your camera appears in OBS within a few seconds.
 5. The picture fits your canvas automatically, in portrait and landscape. If you had already moved or resized the source, open its **Properties** and click **Fit to canvas now**. For full-screen vertical video, set the canvas to 1080×1920 in **Settings → Video**.
 6. Add masks and filters as with any camera: right-click the source → **Filters** (for example **Image Mask/Blend**, **Crop/Pad**, **Color Correction**, **Chroma Key**). Then use OBS's **Start Recording** or **Start Streaming**.
-7. Tap **Stop live** on the phone when you're done.
+7. Tap the red square on the phone when you're done, or **Stop** in its notification or small window. Swiping PhoneCam away from recent apps also stops live.
 
 <!-- IMAGE: docs/images/obs-add-source.png — Sources, +, PhoneCam -->
 <!-- IMAGE: docs/images/phone-live.png — the phone showing LIVE -->
@@ -81,7 +82,7 @@ Pair once with a QR code; no Developer options needed for this part. The phone a
 
 1. In OBS, right-click the PhoneCam source → **Properties** → **Pair a phone over Wi-Fi**. The source shows a QR code and a 16-character code for 3 minutes. Hide the source from your stream while it shows.
 2. On the phone, open PhoneCam → **Settings** → **Pair a computer** and point the camera at the code. The phone vibrates and chimes when it's paired. Or choose **Type a pairing code** and type the 16 characters.
-3. The phone says **Paired with …**. From now on, unplug the cable and tap **Start live**; the phone finds OBS by itself and the source's Status says **Live over direct Wi-Fi**.
+3. The phone says **Paired with …**. From now on, unplug the cable and tap the record button; the phone finds OBS by itself and the source's Status says **Live over direct Wi-Fi**.
 
 <!-- IMAGE: docs/images/obs-pairing-card.png — the QR code in the OBS source -->
 <!-- IMAGE: docs/images/phone-scan-qr.png — scanning on the phone -->
@@ -98,7 +99,7 @@ Uses Android's **Wireless debugging** (Android 11 or newer). The phone and Mac o
 **Each time you want Wi-Fi:**
 1. On the phone, open **Settings**, search for **Wireless debugging** and open it. (It is in **Developer options**, under **USB debugging**. Tap the words, not only the switch.)
 2. Turn it **on** and tap **Allow** for your Wi-Fi network.
-3. Unplug the cable, open OBS and tap **Start live**. Within about 10 seconds the source's Status says **Live over Wi-Fi**. If the cable is plugged in, USB is used instead.
+3. Unplug the cable, open OBS and tap the record button. Within about 10 seconds the source's Status says **Live over Wi-Fi**. If the cable is plugged in, USB is used instead.
 
 Tip: Developer options → **Quick settings developer tiles** → **Wireless debugging** puts an on/off switch in the phone's quick settings.
 
@@ -144,10 +145,10 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | "Unlock the phone and tap Allow" | Unlock the phone and accept the USB debugging prompt. |
 | "Install the PhoneCam app" | Install the phone app (step 3). |
 | "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |
-| Live stops when you switch apps | Keep PhoneCam open on screen while streaming. Locking the phone or leaving the app stops the camera on purpose. |
+| Live stops when you switch apps | Check **Settings → Keep live when you leave the app** is on. Some phones (vivo, Xiaomi, OPPO and others) close background apps anyway: allow PhoneCam to run in the background in Android's battery settings for the app. Swiping PhoneCam away from recent apps always stops live. |
 | Phone says "Warm" or "Hot" | Choose **High** or **Balanced**, take the case off, or keep the phone out of the sun. |
 | Only the middle of the picture shows in OBS | The source was moved or resized by hand. Open its **Properties** → **Fit to canvas now** (or right-click → **Transform → Reset Transform**, then Start live again). |
-| Phone says "OBS stopped receiving" | Normal when you hide the source, quit OBS or unplug. Show the source and tap Start live again. |
+| Phone says "OBS stopped receiving" | Normal when you hide the source, quit OBS or unplug. Show the source and tap the record button again. |
 
 Still stuck? Open an issue with your phone model, Android version, OBS version and the Status text. If it works, a **Device report** issue helps others with the same phone.
 

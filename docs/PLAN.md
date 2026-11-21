@@ -20,7 +20,11 @@ The user's goal: use their own phone as an OBS camera on their laptop, choosing 
 3. **Wireless via ADB Wireless debugging:** same pipeline; host pairing/connect helpers; measure against USB.
 4. **Native Wi-Fi:** only if step 3 is insufficient and with separate approval (Internet permission, discovery, pairing, encryption).
 
-Advertised profiles stay unverified until captured; this direction does not pass any gate. Versions, release scope and platform order (Windows required, phased) are in the [roadmap](ROADMAP.md).
+Advertised profiles stay unverified until captured; this direction does not pass any gate.
+
+## Background live — 21 November 2026
+
+The owner replaced the rule "camera only while the app is on screen". A live session the user started keeps sending to OBS when they leave PhoneCam (another app, the home screen, the screen off), on by default with a Settings switch to turn it off. Android's foreground service of type camera keeps it running, with a notification that has Stop, and Android's own camera indicator. Swiping PhoneCam away from recent apps stops live. Capture never starts in the background, nothing is saved on the phone, and the camera, encoder and connection are released on Stop exactly as before. The phone preview is detached while the screen is hidden and attached again on return. See the [roadmap](ROADMAP.md) (v0.5). Versions, release scope and platform order (Windows required, phased) are in the [roadmap](ROADMAP.md).
 
 ## Phase gates
 

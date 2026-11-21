@@ -31,6 +31,12 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.*
+import android.os.Build
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.graphics.drawable.Icon
+import android.util.Rational
 import java.util.concurrent.Executors
 
 /** Centers one child at a fixed aspect ratio (letterboxed), like a camera viewfinder. */
@@ -72,7 +78,8 @@ class MainActivity : Activity() {
     /** A camera or quality change while live: the session stops and starts again; the timer keeps counting. */
     private var switching = false
     private var keepTimer = false
-    private fun liveBadge() = "● Live  ${elapsed()}" + if (liveRoute.isNotEmpty()) " · $liveRoute" else ""
+    // The small picture-in-picture window gets a compact badge: the red dot and the timer only.
+    private fun liveBadge() = if (inPip) "● ${elapsed()}" else "● Live  ${elapsed()}" + if (liveRoute.isNotEmpty()) " · $liveRoute" else ""
     private fun elapsed(): String {
         val seconds = ((SystemClock.elapsedRealtime() - liveSince) / 1000).coerceAtLeast(0)
         val h = seconds / 3600; val m = seconds / 60 % 60; val s = seconds % 60
@@ -93,6 +100,7 @@ class MainActivity : Activity() {
     private lateinit var mirrorChip: TextView
     private lateinit var detail: TextView
     private lateinit var startButton: Button
+    private lateinit var recordButton: RecordButton
     private lateinit var settingsButton: ImageButton
     private lateinit var message: TextView
     private lateinit var stageControls: LinearLayout
@@ -124,6 +132,18 @@ class MainActivity : Activity() {
     private var customKey: String? get() = prefs.getString("custom", null); set(v) { prefs.edit().putString("custom", v).apply() }
     private var highQuality: Boolean get() = prefs.getBoolean("hq", true); set(v) { prefs.edit().putBoolean("hq", v).apply() }
     private var showPreview: Boolean get() = prefs.getBoolean("preview", true); set(v) { prefs.edit().putBoolean("preview", v).apply() }
+    /** Background live (v0.5, on by default): leaving the app keeps a session running, with a notification. */
+    private val backgroundLive get() = prefs.getBoolean("background", true)
+    /** Set while live runs with PhoneCam off screen; if the process dies there, the next launch explains why. */
+    private var leftLive: Boolean get() = prefs.getBoolean("left_live", false); @Suppress("ApplySharedPref") set(v) { prefs.edit().putBoolean("left_live", v).commit() }  // must reach disk before the phone can close the app
+    /** Picture-in-picture (v0.5, on by default): leaving the app while live shows the preview in a small window. */
+    private val pipWanted get() = prefs.getBoolean("pip", true) && showPreview &&
+        packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    private var inPip = false
+    /** PhoneCam's own Settings is on top: live keeps running even with background live off. */
+    private var openingSettings = false
+    /** Start after the notification permission prompt closes (the prompt pauses this screen). */
+    private var startOnResume = false
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun rounded(color: Int, radius: Int = 10) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
@@ -137,14 +157,20 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("settings", MODE_PRIVATE)
         LiveTransport.token(filesDir)
+        if (leftLive && LiveService.stop == null) {
+            leftLive = false
+            lastStop = "Live ended while PhoneCam was in the background. If you didn't close it, this phone closed it to save battery: " +
+                "in Settings → While live, open Let PhoneCam run in the background."
+        }
 
         stage = Stage(this).apply { setBackgroundColor(Color.BLACK) }
         preview = SurfaceView(this).apply {
             visibility = View.INVISIBLE; contentDescription = "Camera preview"
             holder.addCallback(object : SurfaceHolder.Callback {
-                override fun surfaceCreated(holder: SurfaceHolder) { previewReady = true }
+                override fun surfaceCreated(holder: SurfaceHolder) { previewReady = true; live?.attachPreview() }
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-                override fun surfaceDestroyed(holder: SurfaceHolder) { previewReady = false }
+                // Leaving the app destroys the preview; background live keeps the camera feeding OBS only.
+                override fun surfaceDestroyed(holder: SurfaceHolder) { previewReady = false; live?.detachPreview() }
             })
         }
         stage.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -192,10 +218,15 @@ class MainActivity : Activity() {
             textSize = 17f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD; stateListAnimator = null
             setOnClickListener { onStartPressed() }
         }
+        // Ready and live: the round record button. Setup steps (camera access, camera check) keep a worded button.
+        recordButton = RecordButton(this).apply { setOnClickListener { onStartPressed() } }
         panel.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(14), 0, 0)
             addView(switchButton, LinearLayout.LayoutParams(dp(52), dp(52)))
-            addView(startButton, LinearLayout.LayoutParams(0, dp(54), 1f).apply { marginStart = dp(12); marginEnd = dp(12) })
+            addView(FrameLayout(this@MainActivity).apply {
+                addView(startButton, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54), Gravity.CENTER))
+                addView(recordButton, FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER))
+            }, LinearLayout.LayoutParams(0, dp(72), 1f).apply { marginStart = dp(12); marginEnd = dp(12) })
             addView(settingsButton, LinearLayout.LayoutParams(dp(52), dp(52)))
         })
         message = TextView(this).apply { setTextColor(MUTED); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
@@ -239,6 +270,42 @@ class MainActivity : Activity() {
         val p = liveProfile ?: selected()
         stage.aspect = if (p == null) (if (portrait) 9f / 16f else 16f / 9f)
             else if (portrait) p.height.toFloat() / p.width else p.width.toFloat() / p.height
+        updatePip()
+    }
+
+    /**
+     * Picture-in-picture follows the session: it opens by itself on Home only while live (Android 12+;
+     * older versions use [onUserLeaveHint]), with the preview's shape and a Stop button.
+     */
+    private fun pipParams(): PictureInPictureParams {
+        val aspect = stage.aspect.coerceIn(0.43f, 2.3f)  // Android allows 1:2.39 to 2.39:1
+        val stop = PendingIntent.getService(this, 1, Intent(this, LiveService::class.java).setAction(LiveService.STOP), PendingIntent.FLAG_IMMUTABLE)
+        return PictureInPictureParams.Builder()
+            .setAspectRatio(Rational((aspect * 1000).toInt(), 1000))
+            .setActions(listOf(RemoteAction(Icon.createWithResource(this, R.drawable.ic_stop), "Stop", "Stop live", stop)))
+            .apply { if (Build.VERSION.SDK_INT >= 31) setAutoEnterEnabled(pipWanted && shownPhase == LiveState.Phase.LIVE && live != null) }
+            .build()
+    }
+    private fun updatePip() {
+        if (!::stage.isInitialized || !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        runCatching { setPictureInPictureParams(pipParams()) }
+    }
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < 31 && pipWanted && live != null && shownPhase == LiveState.Phase.LIVE)
+            runCatching { enterPictureInPictureMode(pipParams()) }
+    }
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPip = isInPictureInPictureMode
+        // Only the picture and the live badge in the small window; everything returns when it opens full screen.
+        panelScroll.visibility = if (inPip) View.GONE else View.VISIBLE
+        badge.textSize = if (inPip) 10f else 13f
+        badge.setPadding(dp(if (inPip) 5 else 8), dp(if (inPip) 2 else 4), dp(if (inPip) 5 else 8), dp(if (inPip) 2 else 4))
+        (badge.layoutParams as FrameLayout.LayoutParams).setMargins(dp(if (inPip) 6 else 12), dp(if (inPip) 6 else 12), dp(12), dp(12))
+        if (shownPhase == LiveState.Phase.LIVE) badge.text = liveBadge()
+        if (inPip) { stageControls.visibility = View.GONE; stats.visibility = View.GONE; thermal.visibility = View.GONE; focusMark.visibility = View.GONE }
+        else refresh()
     }
 
     private fun qualityChoices() = listOfNotNull(Quality.BEST, Quality.HIGH, Quality.BALANCED,
@@ -272,16 +339,21 @@ class MainActivity : Activity() {
             profile == null -> "$name camera: this quality isn't available. Choose another."
             else -> "$name camera · ${Quality.describe(profile).substringAfter(" · ")}" + if (highQuality && profile.highQuality) " · sharpening" else ""
         }
-        settingsButton.isEnabled = live == null; settingsButton.alpha = if (live == null) 1f else 0.4f
+        settingsButton.isEnabled = !switching; settingsButton.alpha = if (switching) 0.4f else 1f
         fun button(label: String, fill: Int, text: Int, enabled: Boolean) {
             startButton.text = label; startButton.background = rounded(fill, 27); startButton.setTextColor(text); startButton.isEnabled = enabled
+            startButton.visibility = View.VISIBLE; recordButton.visibility = View.GONE
+        }
+        fun record(isLive: Boolean, enabled: Boolean) {
+            recordButton.live = isLive; recordButton.isEnabled = enabled
+            recordButton.visibility = View.VISIBLE; startButton.visibility = View.GONE
         }
         when {
-            switching -> button("Switching…", GREY, Color.WHITE, false)
-            live != null -> button("Stop", RED, Color.WHITE, true)
+            switching -> record(true, false)
+            live != null -> record(true, true)
             !permitted -> button("Allow camera access", Color.WHITE, Color.BLACK, true)
             scanning || options.isEmpty() -> button(if (scanning) "Checking camera…" else "Check camera", GREY, Color.WHITE, !scanning)
-            else -> button("Start live", if (profile != null) Color.WHITE else GREY, if (profile != null) Color.BLACK else MUTED, profile != null)
+            else -> record(false, profile != null)
         }
         if (live == null) arrange()
     }
@@ -290,7 +362,7 @@ class MainActivity : Activity() {
     private fun showHeat(heat: Int) {
         thermal.text = when { heat >= PowerManager.THERMAL_STATUS_SEVERE -> "Hot — consider stopping"; heat >= PowerManager.THERMAL_STATUS_MODERATE -> "Warm"; else -> "Cool" }
         thermal.background = rounded(if (heat >= PowerManager.THERMAL_STATUS_SEVERE) RED else if (heat >= PowerManager.THERMAL_STATUS_MODERATE) AMBER else CHIP, 6)
-        thermal.visibility = if (shownPhase == LiveState.Phase.LIVE || heat >= PowerManager.THERMAL_STATUS_MODERATE) View.VISIBLE else View.GONE
+        thermal.visibility = if (!inPip && (shownPhase == LiveState.Phase.LIVE || heat >= PowerManager.THERMAL_STATUS_MODERATE)) View.VISIBLE else View.GONE
     }
 
     private fun showState(state: LiveState?) {
@@ -319,9 +391,12 @@ class MainActivity : Activity() {
         stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
         if (state != null && p != null) stats.text = "${Quality.short(p).substringBefore(" ")} · ${"%.0f".format(state.fps)} fps · ${state.drops} dropped" +
             if (state.bitrate in 1 until state.requestedBitrate) "\nLink busy: ${state.bitrate / 1_000_000} of ${state.requestedBitrate / 1_000_000} Mb/s" else ""
+        val changed = shownPhase != phase
         shownPhase = phase
+        if (changed) updatePip()  // after shownPhase, which decides whether Home opens the small window
         showHeat(runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0))
-        stageControls.visibility = if (phase == LiveState.Phase.LIVE) View.VISIBLE else View.GONE
+        stageControls.visibility = if (phase == LiveState.Phase.LIVE && !inPip) View.VISIBLE else View.GONE
+        if (inPip) stats.visibility = View.GONE
         val previewing = phase != LiveState.Phase.STOPPED && showPreview
         placeholder.visibility = if (phase == LiveState.Phase.LIVE && previewing) View.GONE else View.VISIBLE
         placeholder.text = when (phase) {
@@ -351,7 +426,7 @@ class MainActivity : Activity() {
                 result.onSuccess {
                     options = it
                     message.text = if (it.isEmpty()) "No supported camera profile was found on this phone."
-                        else lastStop?.also { lastStop = null } ?: "Ready. Open OBS with the PhoneCam source, then tap Start."
+                        else lastStop?.also { lastStop = null } ?: "Ready. Open OBS with the PhoneCam source, then tap the red record button."
                 }.onFailure { message.text = "Camera check failed: ${it.message}. Close other camera apps and try again." }
                 refresh()
             }
@@ -363,6 +438,12 @@ class MainActivity : Activity() {
             live != null -> live?.stop()
             checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED -> requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
             options.isEmpty() -> scan()
+            // Asked once, at the first Start: the background-live notification carries Stop.
+            Build.VERSION.SDK_INT >= 33 && backgroundLive && !prefs.getBoolean("asked_notifications", false) &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED -> {
+                prefs.edit().putBoolean("asked_notifications", true).apply()
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
+            }
             else -> startLive()
         }
     }
@@ -391,12 +472,16 @@ class MainActivity : Activity() {
         abilities = able
         controls = loadControls(profile.cameraId); sliding = null
         renderControls()
+        val app = applicationContext
         live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
+            if (state.phase == LiveState.Phase.STOPPED) { LiveService.end(app); if (leftLive) leftLive = false }
             if (destroyed) { if (state.phase == LiveState.Phase.STOPPED) lastStop = state.message; return@LiveStreamer }
             if (switching && state.phase == LiveState.Phase.LIVE && !state.switching && state.frames > 0) { switching = false; refresh() }
             showState(state)
+            LiveService.update(app, state, liveSince)
             message.text = state.message
             if (state.phase == LiveState.Phase.STOPPED) {
+                if (!foreground) orientation.disable()
                 if (!switching && state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
                     message.text = "${state.message}\nIf this keeps happening, choose Quality: High."
                 live = null; liveProfile = null; sliding = null; focusMark.visibility = View.GONE
@@ -411,6 +496,8 @@ class MainActivity : Activity() {
                 refresh()
             }
         }.also { it.start() }
+        // The notification's and the picture-in-picture window's Stop reach the session through LiveService.
+        live?.let { session -> val stop = { reason: String -> session.stop(reason) }; if (backgroundLive) LiveService.start(app, stop) else LiveService.stop = stop }
         arrange(); refresh()
     }
 
@@ -533,9 +620,14 @@ class MainActivity : Activity() {
         updateControls(controls.copy(focusX = sx, focusY = sy), refocus = true)
     }
 
+    /** Settings open during live too; options that need the camera or restart the session wait until Stop. */
     private fun openSettings() {
-        if (live != null) return
-        @Suppress("DEPRECATION") startActivityForResult(Intent(this, SettingsActivity::class.java), SETTINGS_REQUEST)
+        if (switching) return
+        if (live != null) {
+            openingSettings = true
+            if (Build.VERSION.SDK_INT >= 31) runCatching { setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()) }
+        }
+        @Suppress("DEPRECATION") startActivityForResult(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_LIVE, live != null), SETTINGS_REQUEST)
     }
 
     private fun typePairingCode() {
@@ -554,7 +646,7 @@ class MainActivity : Activity() {
                 Thread {
                     val result = runCatching { WifiConnector(this).pair(code) }
                     runOnUiThread {
-                        message.text = result.fold({ "Paired with $it. Tap Start live with the phone and computer on the same Wi-Fi." }, { Errors.friendly(it) })
+                        message.text = result.fold({ "Paired with $it. Tap the record button with the phone and computer on the same Wi-Fi." }, { Errors.friendly(it) })
                         feedback.play(if (result.isSuccess) Feedback.Event.SUCCESS else Feedback.Event.ERROR, message)
                     }
                 }.start()
@@ -660,17 +752,31 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2) {
+            if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED)
+                Toast.makeText(this, "Notifications are off: live still continues when you leave PhoneCam, but Stop won't show in the status bar.", Toast.LENGTH_LONG).show()
+            startOnResume = true; return
+        }
         if (requestCode == 1 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) scan()
         else message.text = "Camera access is needed to stream. Allow it in Android Settings → Apps → PhoneCam → Permissions."
         refresh()
     }
     override fun onResume() {
         super.onResume(); foreground = true
+        if (openingSettings) { openingSettings = false; updatePip() }
+        if (leftLive) leftLive = false
+        if (live != null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (startOnResume) { startOnResume = false; badge.post { if (foreground) startLive() } }
         runCatching { getSystemService(PowerManager::class.java).addThermalStatusListener(heatListener) }  // also reports the current status
         if (orientation.canDetectOrientation()) orientation.enable()
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { if (options.isEmpty()) scan() }
         else message.text = "PhoneCam turns this phone into a camera for OBS. Allow camera access to begin."
         refresh()
+    }
+    /** Back while live leaves the app like Home, so background live continues. Android 12+ already does this. */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (Build.VERSION.SDK_INT < 31 && keyCode == android.view.KeyEvent.KEYCODE_BACK && live != null && backgroundLive) { moveTaskToBack(true); return true }
+        return super.onKeyDown(keyCode, event)
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -678,15 +784,27 @@ class MainActivity : Activity() {
         arrange()
     }
     override fun onPause() {
-        foreground = false; orientation.disable()
+        foreground = false
         runCatching { getSystemService(PowerManager::class.java).removeThermalStatusListener(heatListener) }
-        live?.stop("App left the screen, so live stopped. Keep PhoneCam open while streaming.")
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (!isInPictureInPictureMode) window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onPause()
+    }
+    /** Not visible any more (picture-in-picture is still visible): background live keeps going, otherwise live stops. */
+    override fun onStop() {
+        if (openingSettings) { super.onStop(); return }
+        val session = live
+        if (session != null && backgroundLive && LiveService.running) leftLive = true  // keeps running; rotation still followed
+        else {
+            orientation.disable()
+            session?.stop(if (backgroundLive) "Android didn't allow live in the background, so it stopped when PhoneCam left the screen."
+                else "PhoneCam left the screen, so live stopped. To keep live running, turn on Settings → Keep live when you leave the app.")
+        }
+        super.onStop()
     }
     override fun onDestroy() {
         destroyed = true; orientation.disable()
-        live?.stop("The PhoneCam screen closed, so live stopped. Keep PhoneCam open while streaming."); executor.shutdown(); feedback.release()
+        if (live != null) leftLive = false  // closed on purpose (swiped away), not by the phone
+        live?.stop("PhoneCam was closed, so live stopped."); executor.shutdown(); feedback.release()
         super.onDestroy()
     }
 }

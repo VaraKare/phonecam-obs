@@ -277,9 +277,9 @@ class ScanActivity : Activity() {
             runOnUiThread {
                 result.onSuccess { name ->
                     overlay.state = ScanOverlay.State.DONE
-                    title.text = "Paired with $name"; hint.text = "Tap Start live to go live over Wi-Fi."
+                    title.text = "Paired with $name"; hint.text = "Tap the record button to go live over Wi-Fi."
                     feedback.play(Feedback.Event.SUCCESS, overlay)
-                    setResult(RESULT_OK, intent.putExtra("message", "Paired with $name. Tap Start live with the phone and computer on the same Wi-Fi."))
+                    setResult(RESULT_OK, intent.putExtra("message", "Paired with $name. Tap the record button with the phone and computer on the same Wi-Fi."))
                     overlay.postDelayed({ finish() }, 1400)
                 }.onFailure { e ->
                     overlay.state = ScanOverlay.State.FAILED

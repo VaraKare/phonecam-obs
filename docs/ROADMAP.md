@@ -64,6 +64,8 @@ Camera and quality changes keep the connection to OBS. Audit fixes 010 to 014 an
 
 ### v0.5 — Live when you leave the app (owner, 21 November 2026)
 
+**Status:** built and tested on the vivo V2437 on 21 Nov: background live, picture-in-picture, the record button and Settings during live ([version guide](versions/v0.5.md), [results](research/VIVO_V2437_BACKGROUND_LIVE.md)). Phone app only; ready to release as 0.5.0-alpha.1 with the owner's yes.
+
 - **Background live, on by default.** Leaving PhoneCam (another app, the home screen, the screen off) keeps sending to OBS.
   - A notification stays in the status bar the whole time: "● PhoneCam is live to OBS · 05:23" with **Stop**. Android's own green camera dot also shows.
   - Swiping PhoneCam away from recents, or "clear all", stops live. Nothing is saved on the phone.

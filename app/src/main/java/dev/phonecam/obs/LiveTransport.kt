@@ -39,7 +39,7 @@ class LiveTransport(private val token: String, private val connected: (String) -
         fun stopReason(e: Exception): String {
             val message = e.message.orEmpty()
             val closedByMac = e is java.io.IOException && listOf("EPIPE", "Broken pipe", "ECONNRESET", "Connection reset").any { it in message }
-            return if (closedByMac) "OBS stopped receiving: the PhoneCam source was hidden, OBS was closed, or the cable or Wi-Fi was disconnected. Tap Start live to go live again."
+            return if (closedByMac) "OBS stopped receiving: the PhoneCam source was hidden, OBS was closed, or the cable or Wi-Fi was disconnected. Tap the record button to go live again."
             else "Live stopped: $message"
         }
         const val NAME = "phonecam-live-v1"
@@ -92,8 +92,8 @@ class LiveTransport(private val token: String, private val connected: (String) -
             if (!closed && SystemClock.elapsedRealtime() > deadline) {
                 val wifiProblem = wifi?.problem?.let { " Direct Wi-Fi: $it" }.orEmpty()
                 close()
-                failed(if (active == null) "OBS did not connect within 30 seconds. Open OBS with the PhoneCam source visible, check the USB cable, Wi-Fi pairing or Wireless debugging, then tap Start again.$wifiProblem"
-                       else "The connection to OBS stalled. Tap Start live to try again.")
+                failed(if (active == null) "OBS did not connect within 30 seconds. Open OBS with the PhoneCam source visible, check the USB cable, Wi-Fi pairing or Wireless debugging, then tap the record button again.$wifiProblem"
+                       else "The connection to OBS stalled. Tap the record button to try again.")
             }
         }, 250, 250, TimeUnit.MILLISECONDS)
         Thread({
@@ -112,7 +112,7 @@ class LiveTransport(private val token: String, private val connected: (String) -
                     if (closed || active != null) { client.close(); return@Thread }
                     if (authenticate(client)) break
                     runCatching { client.close() }; socket = null
-                    check(++failures < MAX_AUTH_FAILURES) { "Rejected $failures connections with the wrong key. Reconnect the USB cable or Wi-Fi so OBS re-pairs, then tap Start again." }
+                    check(++failures < MAX_AUTH_FAILURES) { "Rejected $failures connections with the wrong key. Reconnect the USB cable or Wi-Fi so OBS re-pairs, then tap the record button again." }
                 }
                 val sink = UsbSink(client)
                 if (!claim(sink)) { sink.close(); return@Thread }
