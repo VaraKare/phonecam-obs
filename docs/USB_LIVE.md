@@ -44,13 +44,21 @@ The receiver first writes 64 lowercase hex token bytes plus LF. The phone allows
 |---|---|---|
 | 0 | 4 | ASCII `PCAM` |
 | 4 | 2 | Version 3 since 0.2.0 (version 2 in 0.1.0). A different version is rejected with a clear app/plugin mismatch error |
-| 6 | 2 | Type: 1 configuration, 2 frame |
-| 8 | 4 | Payload byte length, 1..4 MiB (configuration 20..65536) |
+| 6 | 2 | Type: 1 configuration, 2 frame, 3 audio (0.6), 4 control text (0.6, both directions) |
+| 8 | 4 | Payload byte length, 1..4 MiB (configuration 20..65536; audio 9..65536; control 1..4096) |
 | 12 | 4 | Flags: bit 0 keyframe; bits 1–2 clockwise quarter turns to display the frame upright; bit 3 mirror the upright picture horizontally ("Mirror in OBS"); higher bits rejected. Configuration flags must be 0 |
 | 16 | 8 | Monotonic frame identity, starting at 0; gaps expose dropped frames |
 | 24 | 8 | Encoder PTS in phone microseconds; increasing, signed-64-bit representable |
 
-Configuration is sent once before frames, with header flags/sequence/PTS zero. Payload starts with four u32 values: codec (1 AVC, 2 HEVC), width, height, initial rotation (0/90/180/270; frames carry the live value). Remaining bytes are Annex-B parameter sets. Dimensions must be even and within 128..4096, and agree with encoded parameters. Frames contain one Annex-B access unit; the receiver converts start codes to four-byte lengths for VideoToolbox. Configuration changes require a new explicitly initiated session. New connections reset sequence/decoder state.
+Configuration is sent once before frames, with header flags/sequence/PTS zero. Payload starts with four u32 values: codec (1 AVC, 2 HEVC), width, height, initial rotation (0/90/180/270; frames carry the live value). Remaining bytes are Annex-B parameter sets. Dimensions must be even and within 128..4096, and agree with encoded parameters. Frames contain one Annex-B access unit; the receiver converts start codes to four-byte lengths for VideoToolbox. Since 0.4.1 a second configuration on the same connection (camera or quality switch) makes the receiver rebuild its decoder. New connections reset sequence/decoder state.
+
+### Two-way link (0.6)
+
+- **Hello:** a 0.6 plugin sends one control message right after the key line: `hello`, then `features=control,audio,screen` (one `key=value` per line, UTF-8, at most 4096 bytes). A 0.6 phone reads it within 500 ms and answers with its own `hello` (`features=…`, `app=<version>`). Older phones never read it; with an older plugin a 0.6 phone gets no hello and sends only types 1 and 2.
+- **Phone → computer control:** `status` with `key=value` lines (`camera`, `cameras`, `quality`, `qualities`, `torch` on/off/none, `mirror`, `route`, `battery`, `charging`, `mic`, `mode=screen`, `warning`) whenever something changes; and `timings` once per session (tap → OBS connected → camera open → first frame), written to the OBS log.
+- **Computer → phone control:** one command per message: `camera next`, `quality <Best|High|Balanced|Smooth>`, `torch on|off`, `mirror on|off`, `stop`. Unknown commands are ignored. OBS cannot start live: only the phone's record button does.
+- **Audio (type 3):** flags 0; sequence counts audio chunks; PTS is the first sample's time in phone microseconds on the same clock as the video frames. Body: u32 sample rate (8000..96000), u16 channels (1–2), u16 format (1 = signed 16-bit little-endian), then the samples. The phone sends 10 ms chunks at 48 kHz mono, only to a 0.6 plugin and only when the user turned the microphone on. With an older plugin the phone refuses the microphone with a message instead of dropping it silently.
+- **Timing in OBS:** without audio, pictures are stamped with their arrival time (lowest delay). While audio flows, pictures and sound are both stamped with the phone's own time mapped to the computer's clock by one offset: the smallest (arrival − phone time) seen, renewed every 30 s.
 
 ## Acceptance still required
 

@@ -48,7 +48,7 @@ def main():
     parser.add_argument("--serial")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("prepare")
-    receive = commands.add_parser("receive", help="Test hardware decode without OBS; tap Start live yourself")
+    receive = commands.add_parser("receive", help="Test hardware decode without OBS; tap the record button yourself")
     receive.add_argument("--auto", action="store_true", help="Find, pair and forward automatically, like the OBS source (no prepare needed)")
     receive.add_argument("--frames", type=int, default=300)
     args = parser.parse_args()

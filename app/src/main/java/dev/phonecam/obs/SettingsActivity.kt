@@ -64,6 +64,8 @@ class SettingsActivity : Activity() {
         toggle("Keep live when you leave the app", "A notification with Stop shows while live. Swiping PhoneCam away from recent apps stops it.", "background")
         if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE))
             toggle("Picture-in-picture when you leave", "The phone preview stays in a small window. Closing the window keeps live running in the background (if the switch above is on).", "pip")
+        toggle("Heat and battery warnings", "A notification when the phone gets hot (with Lower quality) and at 20, 15, 10 and 5 % battery.", "warnings")
+        toggle("Dim the screen while live", "After 30 seconds without a touch. Saves battery and heat; the video isn't affected.", "dim")
         ui.row("Let PhoneCam run in the background", backgroundHint()) {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
         }
@@ -82,6 +84,7 @@ class SettingsActivity : Activity() {
         toggle("Sounds", "When going live, stopping and pairing. Silent mode always wins.", "sounds")
 
         ui.section("About")
+        ui.row("What the buttons do", "The icons on the main screen") { showLegend() }
         ui.row("Privacy") {
             AlertDialog.Builder(this).setTitle("Privacy").setMessage(
                 "Video goes only to OBS: over the USB cable, or encrypted over your local Wi-Fi to a computer you paired. " +
@@ -93,6 +96,32 @@ class SettingsActivity : Activity() {
             text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}"
             setTextColor(Ui.MUTED); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, ui.dp(28), 0, 0)
         })
+    }
+
+    /** What each icon on the main screen does (a long press on an icon shows its name too). */
+    private fun showLegend() {
+        val items = listOf(
+            R.drawable.ic_videocam to "Camera: send the phone camera to OBS.",
+            R.drawable.ic_screen_share to "Screen: share the phone screen to OBS. Android asks every time.",
+            R.drawable.ic_quality to "Quality: Best, High, Balanced or Smooth. The line below the icons shows the current one.",
+            R.drawable.ic_mirror to "Mirror: flips the picture in OBS (blue when on). Handy for the front camera.",
+            R.drawable.ic_mic to "Microphone: sends the phone's sound to OBS (blue when on, crossed out when off).",
+            R.drawable.ic_switch_camera to "Switch camera: rear, front, and back again. Works while live.",
+            R.drawable.ic_tune to "Settings: pairing, background live, warnings and more.",
+            R.drawable.ic_stop to "Record button: the red circle goes live; the red square stops.")
+        val list = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL; setPadding(ui.dp(24), ui.dp(8), ui.dp(24), 0) }
+        for ((icon, text) in items) list.addView(android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, ui.dp(8), 0, ui.dp(8))
+            addView(android.widget.ImageView(this@SettingsActivity).apply { setImageResource(icon); setColorFilter(android.graphics.Color.WHITE) },
+                android.widget.LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)))
+            addView(TextView(this@SettingsActivity).apply { this.text = text; setTextColor(android.graphics.Color.WHITE); textSize = 15f; setPadding(ui.dp(14), 0, 0, 0) })
+        })
+        list.addView(TextView(this).apply {
+            text = "Tip: press and hold any icon on the main screen to see its name."
+            setTextColor(Ui.MUTED); textSize = 14f; setPadding(0, ui.dp(12), 0, ui.dp(4))
+        })
+        AlertDialog.Builder(this).setTitle("What the buttons do").setView(android.widget.ScrollView(this).apply { addView(list) })
+            .setPositiveButton("OK", null).show()
     }
 
     /** The paired computers, most recently used first; tapping one offers to forget it. */

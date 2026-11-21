@@ -39,7 +39,44 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                    private var highQuality: Boolean, initialRotation: Int,
                    private var abilities: Abilities, initialControls: Controls,
                    private val preview: () -> Surface?,
-                   private val notify: (LiveState) -> Unit) {
+                   private val notify: (LiveState) -> Unit,
+                   /** Commands from OBS (0.6 plugins), on the main thread. */
+                   private val onCommand: (String) -> Unit = {},
+                   /** Send the phone microphone too (0.6 plugins only; off unless the user turned it on). */
+                   microphone: Boolean = false,
+                   /** Screen sharing (0.6): the user's consent for this session; the camera is not used. */
+                   private val screen: android.media.projection.MediaProjection? = null) {
+    private var virtual: android.hardware.display.VirtualDisplay? = null
+    /** Screen sharing: the screen changed shape (turned); the encoder restarts at the new size on the same connection. */
+    fun resizeScreen(width: Int, height: Int) {
+        handler.post {
+            if (finished || screen == null || (width == profile.width && height == profile.height)) return@post
+            val next = ScreenSource.profile(width, height) ?: return@post
+            if (next.width == profile.width && next.height == profile.height) return@post
+            generation++
+            handler.removeCallbacks(startDeadline)
+            releaseCapture()
+            transport.restart()
+            profile = next
+            bitrate = BitrateController(next.bitrate); stats = FrameStats()
+            lastFrameAt = 0; switchedAt = SystemClock.elapsedRealtime()
+            prepare()
+        }
+    }
+    @Volatile private var micWanted = microphone
+    private var audio: AudioSender? = null
+    /** The camera stamps frames with elapsedRealtime (boot time) rather than the monotonic clock. */
+    private var boottime = false
+    /** Turns the microphone on or off during live. */
+    fun setMicrophone(on: Boolean) { handler.post { micWanted = on; if (connectedAt > 0) applyMicrophone() } }
+    private fun applyMicrophone() {
+        if (finished) return
+        if (micWanted && audio == null) {
+            // Never drop sound silently: an older plugin can't take it, so say so (AGENTS.md).
+            if (!transport.talks) { finish("The PhoneCam plugin in OBS is older than this app and can't take the phone microphone. Update the plugin, or turn the microphone off."); return }
+            audio = AudioSender(boottime, { body, pts -> transport.offerAudio(body, pts) }, { reason -> handler.post { finish(reason) } }).also { it.start() }
+        } else if (!micWanted) { audio?.stop(); audio = null }
+    }
     @Volatile private var rotation = initialRotation
     @Volatile private var controls = initialControls
     fun setRotation(degrees: Int) { require(degrees in setOf(0, 90, 180, 270)); rotation = degrees }
@@ -72,9 +109,19 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
     @Volatile private var sentBytes = 0L
     private var loggedBytes = 0L
     @Volatile private var route = "USB"
+    // Start timings (elapsed ms), sent to OBS's log once the first frame is out: vivo drops this app's own log lines.
+    private val tappedAt = SystemClock.elapsedRealtime()
+    @Volatile private var connectedAt = 0L
+    @Volatile private var cameraAt = 0L
     private val transport = LiveTransport(LiveTransport.token(context.filesDir),
-        { via -> route = via; handler.post { prepare() } }, { reason -> handler.post { finish(reason) } },
-        WifiConnector(context).takeIf { it.hasPairings })
+        { via -> route = via; connectedAt = SystemClock.elapsedRealtime(); handler.post { prepare(); applyMicrophone() } }, { reason -> handler.post { finish(reason) } },
+        WifiConnector(context).takeIf { it.hasPairings },
+        { text -> main.post { onCommand(text) } },
+        { usbToComputer(context) })
+    /** OBS runs a 0.6 plugin: it shows the phone's status and sends commands. */
+    val talks: Boolean get() = transport.talks
+    /** The phone's state for OBS's Properties → Phone ("key=value" lines). */
+    fun sendStatus(lines: String) = transport.sendControl("status\n$lines")
     private val startDeadline = Runnable { finish("No hardware video after 15 seconds; choose another profile or close other camera apps.") }
     private val status = object : Runnable {
         override fun run() {
@@ -164,10 +211,16 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         if (finished) return
         val gen = generation
         try {
-            val characteristics = context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)
-            requestKeys = characteristics.availableCaptureRequestKeys.toSet()
-            continuousFocus = CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in characteristics[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
+            if (screen == null) {
+                val characteristics = context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)
+                requestKeys = characteristics.availableCaptureRequestKeys.toSet()
+                boottime = characteristics[CC.SENSOR_INFO_TIMESTAMP_SOURCE] == CC.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
+                continuousFocus = CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in characteristics[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
+            }
             handler.postDelayed(startDeadline, 15_000)
+            // Faster start (21 Nov timings: the camera opened 0.57 s after OBS connected): ask for the camera first and
+            // set up the encoder while it opens. The camera's answer waits in this thread's queue until the encoder is ready.
+            if (screen == null) openCamera(gen)
             val encoder = MediaCodec.createByCodecName(profile.encoder)
             codec = encoder
             val constantBitrate = runCatching {
@@ -189,6 +242,8 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                 setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
                 setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
                 setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+                // A still screen sends no new pictures; repeating the last one keeps OBS fed (and the stall check quiet).
+                if (screen != null) setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
             }
             encoder.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(c: MediaCodec, index: Int) = Unit
@@ -224,7 +279,12 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                             lastFrameAt = SystemClock.elapsedRealtime()
                             if (switchedAt > 0) { Log.i("PhoneCam", "Switched in ${lastFrameAt - switchedAt} ms"); switchedAt = 0 }
                             handler.removeCallbacks(startDeadline)
-                            if (sequence == 1L) handler.post(status)
+                            if (sequence == 1L) {
+                                handler.post(status)
+                                val now = SystemClock.elapsedRealtime()
+                                transport.sendControl("timings\ntap to OBS connected ${connectedAt - tappedAt} ms, camera open ${cameraAt - tappedAt} ms, " +
+                                    "first frame ${now - tappedAt} ms (over $route)")
+                            }
                             // At most one early keyframe a second: keyframes are the largest frames, so asking
                             // for them faster on a busy link causes the next overflow.
                             if (!accepted && SystemClock.elapsedRealtime() - lastKeyRequest > 1000) {
@@ -239,21 +299,41 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
             }, handler)
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             input = encoder.createInputSurface(); encoder.start()
-            context.getSystemService(CameraManager::class.java).openCamera(profile.cameraId, object : CameraDevice.StateCallback() {
-                override fun onOpened(device: CameraDevice) {
-                    // The main looper outlives the capture worker. A late open must still close its device.
-                    if (!handler.post {
-                        if (finished || gen != generation) device.close()
-                        else {
-                            camera = device
-                            try { configureCamera(device) } catch (e: Exception) { finish("Camera session failed: ${e.message}") }
-                        }
-                    }) device.close()
-                }
-                override fun onDisconnected(device: CameraDevice) { device.close(); handler.post { if (gen == generation) finish("Camera disconnected") } }
-                override fun onError(device: CameraDevice, error: Int) { device.close(); handler.post { if (gen == generation) finish("Camera error $error") } }
-            }, main)
+            if (screen != null) showScreen()
         } catch (e: Exception) { finish("Could not start live: ${e.message}. No settings silently substituted.") }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun openCamera(gen: Int) {
+        context.getSystemService(CameraManager::class.java).openCamera(profile.cameraId, object : CameraDevice.StateCallback() {
+            override fun onOpened(device: CameraDevice) {
+                // The main looper outlives the capture worker. A late open must still close its device.
+                if (!handler.post {
+                    if (finished || gen != generation) device.close()
+                    else {
+                        camera = device; cameraAt = SystemClock.elapsedRealtime()
+                        try { configureCamera(device) } catch (e: Exception) { finish("Camera session failed: ${e.message}") }
+                    }
+                }) device.close()
+            }
+            override fun onDisconnected(device: CameraDevice) { device.close(); handler.post { if (gen == generation) finish("Camera disconnected") } }
+            override fun onError(device: CameraDevice, error: Int) { device.close(); handler.post { if (gen == generation) finish("Camera error $error") } }
+        }, main)
+    }
+
+    /** Screen sharing: Android draws the screen into the encoder's surface (created once, then given new surfaces). */
+    private fun showScreen() {
+        val projection = screen ?: return
+        val surface = input ?: error("No encoder surface")
+        val existing = virtual
+        if (existing != null) { existing.resize(profile.width, profile.height, context.resources.displayMetrics.densityDpi); existing.surface = surface; return }
+        // Android 14 requires the callback before the display; it also reports the user ending sharing and turns.
+        projection.registerCallback(object : android.media.projection.MediaProjection.Callback() {
+            override fun onStop() { handler.post { finish("Screen sharing ended.") } }
+            override fun onCapturedContentResize(width: Int, height: Int) { resizeScreen(ScreenSource.scaled(width, height, 1920).first, ScreenSource.scaled(width, height, 1920).second) }
+        }, handler)
+        virtual = projection.createVirtualDisplay("PhoneCam screen", profile.width, profile.height, context.resources.displayMetrics.densityDpi,
+            android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, handler)
     }
 
     @Suppress("DEPRECATION")
@@ -351,6 +431,7 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         runCatching { capture?.stopRepeating() }; runCatching { capture?.close() }; capture = null
         runCatching { camera?.close() }; camera = null
         runCatching { codec?.stop() }; runCatching { codec?.release() }; codec = null
+        runCatching { virtual?.surface = null }
         runCatching { input?.release() }; input = null; viewSurface = null  // the SurfaceView owns its surface
     }
 
@@ -358,12 +439,21 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         if (finished) return
         finished = true
         handler.removeCallbacks(startDeadline); handler.removeCallbacks(status)
+        audio?.stop(); audio = null
         transport.close()
         releaseCapture()
+        runCatching { virtual?.release() }; virtual = null
+        runCatching { screen?.stop() }
         post(LiveState(LiveState.Phase.STOPPED, reason, stats.fps, sequence, transport.dropped, rotation))
         thread.quitSafely()
     }
 }
+
+/** A USB cable to a computer is plugged in (the battery reports USB power, not a wall charger). */
+fun usbToComputer(context: Context): Boolean = runCatching {
+    context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        ?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) == android.os.BatteryManager.BATTERY_PLUGGED_USB
+}.getOrDefault(false)
 
 /** What the screen shows. STOPPED is final for a session; [message] then explains why. */
 data class LiveState(val phase: Phase, val message: String, val fps: Double = 0.0, val frames: Long = 0,

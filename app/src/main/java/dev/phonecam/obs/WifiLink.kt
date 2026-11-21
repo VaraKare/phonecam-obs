@@ -123,12 +123,16 @@ object WifiClient {
         return shake.keys()
     }
 
-    /** Sends PCAM v3 messages as encrypted records. */
+    /** Sends PCAM v3 messages as encrypted records, and reads the computer's (0.6: hello and commands). */
     class Session(private val socket: Socket, keys: WifiCrypto.Keys) {
         private val sealer = WifiCrypto.Sealer(keys)
+        private val opener = keys.reply?.let { WifiCrypto.Opener(it) }
         private val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
+        private val input = DataInputStream(socket.getInputStream())
         val address: String get() = socket.inetAddress?.hostAddress.orEmpty()
         fun send(header: ByteArray, payload: ByteArray) { sealer.seal(output, header, payload); output.flush() }
+        /** One whole message from the computer; [timeoutMs] 0 waits until the connection closes. */
+        fun receive(timeoutMs: Int): ByteArray { socket.soTimeout = timeoutMs; return (opener ?: throw IOException("No reply keys")).open(input) }
         fun close() { runCatching { socket.close() } }
     }
 }

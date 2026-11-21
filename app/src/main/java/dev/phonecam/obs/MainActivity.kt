@@ -63,6 +63,7 @@ class MainActivity : Activity() {
         /** Why the last session ended, if its screen was gone by then (AUDIT-014); shown once on the next screen. */
         var lastStop: String? = null
         const val SETTINGS_REQUEST = 8
+        const val SCREEN_REQUEST = 9
     }
     private lateinit var prefs: SharedPreferences
     private lateinit var root: LinearLayout
@@ -92,12 +93,45 @@ class MainActivity : Activity() {
             badge.postDelayed(this, 1000 - (SystemClock.elapsedRealtime() - liveSince) % 1000)
         }
     }
+    /**
+     * Ready (not live): a grey dot and how the phone can reach OBS: a cable icon when a USB cable to a computer is
+     * plugged in, a Wi-Fi icon with the paired computer when the phone is on Wi-Fi. Checked every 2 s while shown.
+     */
+    private val readyBadge: Runnable = object : Runnable {
+        override fun run() {
+            if (destroyed || shownPhase != LiveState.Phase.STOPPED) return
+            val text = android.text.SpannableStringBuilder()
+            text.append("●", android.text.style.ForegroundColorSpan(0xFF9E9E9E.toInt()), 0)
+            fun icon(res: Int) {
+                val d = getDrawable(res)?.mutate()?.apply { setTint(Color.WHITE); setBounds(0, 0, dp(14), dp(14)) } ?: return
+                text.append("  ").append(" ", android.text.style.ImageSpan(d, android.text.style.DynamicDrawableSpan.ALIGN_CENTER), 0).append(" ")
+            }
+            val cable = usbToComputer(this@MainActivity)
+            val onWifi = runCatching {
+                val net = getSystemService(android.net.ConnectivityManager::class.java)
+                net.getNetworkCapabilities(net.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+            }.getOrDefault(false)
+            val macs = WifiConnector(this@MainActivity).pairings.macs
+            val computer = macs.lastOrNull()?.let { it.name + if (macs.size > 1) " +${macs.size - 1}" else "" }
+            if (cable) { icon(R.drawable.ic_usb); text.append("USB") }
+            if (onWifi && computer != null) { icon(R.drawable.ic_wifi); text.append(computer) }
+            if (!cable && !(onWifi && computer != null))
+                text.append("  ").append(if (computer == null) "Plug in a USB cable, or pair over Wi-Fi" else "Plug in a USB cable or turn on Wi-Fi")
+            badge.text = text
+            badge.contentDescription = "Ready." + (if (cable) " USB cable connected." else "") + (if (onWifi && computer != null) " Wi-Fi to $computer." else "")
+            badge.postDelayed(this, 2000)
+        }
+    }
     private val heatListener = PowerManager.OnThermalStatusChangedListener { heat -> if (!destroyed) showHeat(heat) }
     private lateinit var stats: TextView
     private lateinit var panelScroll: ScrollView
     private lateinit var switchButton: ImageButton
     private lateinit var qualityChip: TextView
     private lateinit var mirrorChip: TextView
+    private lateinit var micChip: TextView
+    /** Phone microphone to OBS (0.6): off unless turned on; RECORD_AUDIO is asked only then. */
+    private var micOn: Boolean get() = prefs.getBoolean("mic", false); set(v) { prefs.edit().putBoolean("mic", v).apply() }
+    private var serviceStop: ((String) -> Unit)? = null
     private lateinit var detail: TextView
     private lateinit var startButton: Button
     private lateinit var recordButton: RecordButton
@@ -137,7 +171,12 @@ class MainActivity : Activity() {
     /** Set while live runs with PhoneCam off screen; if the process dies there, the next launch explains why. */
     private var leftLive: Boolean get() = prefs.getBoolean("left_live", false); @Suppress("ApplySharedPref") set(v) { prefs.edit().putBoolean("left_live", v).commit() }  // must reach disk before the phone can close the app
     /** Picture-in-picture (v0.5, on by default): leaving the app while live shows the preview in a small window. */
-    private val pipWanted get() = prefs.getBoolean("pip", true) && showPreview &&
+    /** Screen sharing (0.6): the source the record button starts; [screenLive] while a screen session runs. */
+    private val screenMode get() = prefs.getString("source", "camera") == "screen"
+    private var screenLive = false
+    private lateinit var cameraModeChip: TextView
+    private lateinit var screenModeChip: TextView
+    private val pipWanted get() = !screenLive && prefs.getBoolean("pip", true) && showPreview &&
         packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
     private var inPip = false
     /** PhoneCam's own Settings is on top: live keeps running even with background live off. */
@@ -146,6 +185,16 @@ class MainActivity : Activity() {
     private var startOnResume = false
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    /** A small white icon before a chip's words (icons drawn for PhoneCam, like the switch-camera one). */
+    private fun TextView.icon(res: Int) {
+        val drawable = getDrawable(res)?.mutate()?.apply { setTint(Color.WHITE); setBounds(0, 0, dp(20), dp(20)) }
+        setCompoundDrawablesRelative(drawable, null, null, null); compoundDrawablePadding = if (text.isNullOrEmpty()) 0 else dp(6)
+    }
+    /** An icon-only chip: what it does is in its description (screen readers) and shows on a long press. */
+    private fun TextView.iconOnly(res: Int, label: String) {
+        text = ""; icon(res); contentDescription = label; tooltipText = label
+        setPadding(dp(13), dp(9), dp(13), dp(9))
+    }
     private fun rounded(color: Int, radius: Int = 10) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
     private fun chip(gravity: Int) = TextView(this).apply {
         setTextColor(Color.WHITE); textSize = 13f; background = rounded(CHIP, 6); setPadding(dp(8), dp(4), dp(8), dp(4))
@@ -201,9 +250,23 @@ class MainActivity : Activity() {
         }
         qualityChip = pill { chooseQuality() }
         mirrorChip = pill { toggleMirror() }
-        panel.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            addView(qualityChip); addView(mirrorChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+        micChip = pill { toggleMic() }
+        cameraModeChip = pill { chooseSource(false) }.apply { iconOnly(R.drawable.ic_videocam, "Camera: send the phone camera") }
+        screenModeChip = pill { chooseSource(true) }.apply { iconOnly(R.drawable.ic_screen_share, "Screen: share the phone screen") }
+        qualityChip.iconOnly(R.drawable.ic_quality, "Quality")
+        mirrorChip.iconOnly(R.drawable.ic_mirror, "Mirror in OBS")
+        // One row: the source (camera, screen), a thin divider, then quality, mirror and microphone.
+        // Scrolls sideways on very narrow phones rather than squeezing the icons.
+        panel.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false; isFillViewport = true
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+                fun gap(view: View, start: Int) = addView(view, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(start) })
+                gap(cameraModeChip, 0); gap(screenModeChip, 6)
+                addView(View(this@MainActivity).apply { setBackgroundColor(0xFF3A3A3A.toInt()) },
+                    LinearLayout.LayoutParams(dp(1), dp(28)).apply { marginStart = dp(10); marginEnd = dp(10) })
+                gap(qualityChip, 0); gap(mirrorChip, 6); gap(micChip, 6)
+            })
         })
         detail = TextView(this).apply { setTextColor(0xFF7A7A7A.toInt()); textSize = 12f; gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) }
         panel.addView(detail)
@@ -214,6 +277,7 @@ class MainActivity : Activity() {
         }
         switchButton = round(R.drawable.ic_switch_camera, "Switch camera") { switchCamera() }
         settingsButton = round(R.drawable.ic_tune, "Settings") { openSettings() }
+        switchButton.tooltipText = "Switch camera"; settingsButton.tooltipText = "Settings"
         startButton = Button(this).apply {
             textSize = 17f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD; stateListAnimator = null
             setOnClickListener { onStartPressed() }
@@ -251,6 +315,7 @@ class MainActivity : Activity() {
                 if (next == device) return
                 device = next
                 val profile = liveProfile ?: return
+                if (screenLive) return  // the screen turns itself; Android reports the new shape
                 live?.setRotation(Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device))
             }
         }
@@ -327,17 +392,28 @@ class MainActivity : Activity() {
         switchButton.alpha = if (switchButton.isEnabled) 1f else 0.4f
         switchButton.contentDescription = if (next != null) "Switch to the $next camera" else "Only one camera"
         val profile = selected()
-        qualityChip.text = "${choice.label.substringBefore(" (")} · ${profile?.let { Quality.short(it) } ?: "not available"}  ▾"
+        qualityChip.tooltipText = "Quality: ${choice.label}"
         qualityChip.background = rounded(0xFF1E1E1E.toInt(), 20)
         qualityChip.contentDescription = "Quality: ${choice.label}. Tap to change"
         val mirror = cameraId?.let { prefs.getBoolean("ctl.$it.mirror", false) } ?: false
-        mirrorChip.text = if (mirror) "Mirror on" else "Mirror off"
+
         mirrorChip.background = rounded(if (mirror) BLUE else 0xFF1E1E1E.toInt(), 20)
         mirrorChip.contentDescription = "Mirror the picture in OBS, ${if (mirror) "on" else "off"}"
+        val screen = screenMode
+        cameraModeChip.background = rounded(if (!screen) BLUE else 0xFF1E1E1E.toInt(), 20)
+        screenModeChip.background = rounded(if (screen) BLUE else 0xFF1E1E1E.toInt(), 20)
+        cameraModeChip.isEnabled = live == null; screenModeChip.isEnabled = live == null
+        qualityChip.visibility = if (screen) View.GONE else View.VISIBLE
+        mirrorChip.visibility = if (screen) View.GONE else View.VISIBLE
+        if (screen) { switchButton.isEnabled = false; switchButton.alpha = 0.4f }
+        micChip.iconOnly(if (micOn) R.drawable.ic_mic else R.drawable.ic_mic_off, "Phone microphone ${if (micOn) "on" else "off"}")
+        micChip.background = rounded(if (micOn) BLUE else 0xFF1E1E1E.toInt(), 20)
+        micChip.contentDescription = "Phone microphone to OBS, ${if (micOn) "on" else "off"}"
         detail.text = when {
+            screenMode -> "Phone screen to OBS · up to 1080p · Android asks before sharing"
             options.isEmpty() -> ""
             profile == null -> "$name camera: this quality isn't available. Choose another."
-            else -> "$name camera · ${Quality.describe(profile).substringAfter(" · ")}" + if (highQuality && profile.highQuality) " · sharpening" else ""
+            else -> "${choice.label.substringBefore(" (")} · $name camera · ${Quality.describe(profile).substringAfter(" · ")}" + if (highQuality && profile.highQuality) " · sharpening" else ""
         }
         settingsButton.isEnabled = !switching; settingsButton.alpha = if (switching) 0.4f else 1f
         fun button(label: String, fill: Int, text: Int, enabled: Boolean) {
@@ -373,20 +449,18 @@ class MainActivity : Activity() {
                 if (keepTimer) keepTimer = false else { feedback.play(Feedback.Event.LIVE, badge); liveSince = SystemClock.elapsedRealtime() }
             }
             else if (phase == LiveState.Phase.STOPPED && !switching && foreground && lastPhase != null && lastPhase != LiveState.Phase.STOPPED)
-                feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
+                feedback.play(if (state?.message?.startsWith("Stopped") == true) Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
             lastPhase = phase
         }
         // The computer used most recently (pairings are kept in order of use), plus how many others are paired.
-        val paired = if (phase == LiveState.Phase.STOPPED) WifiConnector(this).pairings.macs.lastOrNull()?.let { last ->
-            val others = WifiConnector(this).pairings.macs.size - 1
-            last.name + if (others > 0) " +$others" else ""
-        } else null
         badge.removeCallbacks(clock)
         if (phase == LiveState.Phase.LIVE) badge.post(clock)
         if (phase == LiveState.Phase.LIVE && state != null && state.route.isNotEmpty()) liveRoute = state.route
-        badge.text = when (phase) { LiveState.Phase.LIVE -> liveBadge(); LiveState.Phase.WAITING -> if (keepTimer) "Switching…" else "Waiting for OBS"; else -> "Wi-Fi ready · $paired" }
+        badge.removeCallbacks(readyBadge)
+        if (phase == LiveState.Phase.STOPPED) badge.post(readyBadge)  // after shownPhase below is updated
+        else badge.text = when (phase) { LiveState.Phase.LIVE -> liveBadge(); else -> if (keepTimer) "Switching…" else "● Waiting for OBS…" }
         badge.background = rounded(when (phase) { LiveState.Phase.LIVE -> RED; LiveState.Phase.WAITING -> AMBER; else -> CHIP }, 6)
-        badge.visibility = if (phase == LiveState.Phase.STOPPED && paired == null) View.GONE else View.VISIBLE
+        badge.visibility = View.VISIBLE
         val p = liveProfile
         stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
         if (state != null && p != null) stats.text = "${Quality.short(p).substringBefore(" ")} · ${"%.0f".format(state.fps)} fps · ${state.drops} dropped" +
@@ -397,10 +471,10 @@ class MainActivity : Activity() {
         showHeat(runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0))
         stageControls.visibility = if (phase == LiveState.Phase.LIVE && !inPip) View.VISIBLE else View.GONE
         if (inPip) stats.visibility = View.GONE
-        val previewing = phase != LiveState.Phase.STOPPED && showPreview
+        val previewing = phase != LiveState.Phase.STOPPED && showPreview && !screenLive
         placeholder.visibility = if (phase == LiveState.Phase.LIVE && previewing) View.GONE else View.VISIBLE
         placeholder.text = when (phase) {
-            LiveState.Phase.LIVE -> "Live. Preview is off."
+            LiveState.Phase.LIVE -> if (screenLive) "Sharing your screen with OBS.\nGo to any app; Stop is in the notification." else "Live. Preview is off."
             LiveState.Phase.WAITING -> "Waiting for OBS…\nOpen OBS with the PhoneCam source visible."
             else -> "Camera off"
         }
@@ -436,6 +510,8 @@ class MainActivity : Activity() {
     private fun onStartPressed() {
         when {
             live != null -> live?.stop()
+            screenMode && !(Build.VERSION.SDK_INT >= 33 && !prefs.getBoolean("asked_notifications", false) &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) -> askScreen()
             checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED -> requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
             options.isEmpty() -> scan()
             // Asked once, at the first Start: the background-live notification carries Stop.
@@ -455,6 +531,10 @@ class MainActivity : Activity() {
 
     private fun startLive() {
         if (!foreground || live != null) return
+        if (micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            message.text = "The microphone is on, but PhoneCam isn't allowed to use it. Tap Mic to allow it, or turn it off."
+            micOn = false; refresh(); return
+        }
         val profile = selected() ?: run { message.text = "This quality isn't available on this camera."; return }
         if (device == Orientation.UNKNOWN) device = Orientation.fromDisplay(displayDegrees())
         val rotation = Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device)
@@ -473,32 +553,182 @@ class MainActivity : Activity() {
         controls = loadControls(profile.cameraId); sliding = null
         renderControls()
         val app = applicationContext
-        live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null }) { state ->
-            if (state.phase == LiveState.Phase.STOPPED) { LiveService.end(app); if (leftLive) leftLive = false }
-            if (destroyed) { if (state.phase == LiveState.Phase.STOPPED) lastStop = state.message; return@LiveStreamer }
-            if (switching && state.phase == LiveState.Phase.LIVE && !state.switching && state.frames > 0) { switching = false; refresh() }
-            showState(state)
-            LiveService.update(app, state, liveSince)
-            message.text = state.message
-            if (state.phase == LiveState.Phase.STOPPED) {
-                if (!foreground) orientation.disable()
-                if (!switching && state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
-                    message.text = "${state.message}\nIf this keeps happening, choose Quality: High."
-                live = null; liveProfile = null; sliding = null; focusMark.visibility = View.GONE
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                preview.visibility = View.INVISIBLE
-                if (switching) {
-                    // Restart with the new camera or quality; OBS keeps its source and reconnects.
-                    switching = false; keepTimer = true
-                    message.text = "Switching…"
-                    badge.postDelayed({ if (!destroyed) { startLive(); if (live == null) keepTimer = false } }, 300)
-                }
-                refresh()
-            }
-        }.also { it.start() }
+        warnings.reset(); lastStatus = ""
+        live = LiveStreamer(this, profile, hq, rotation, able, controls, { if (wantPreview && previewReady) preview.holder.surface else null },
+            onCommand = { command -> if (!destroyed) obeyObs(command) }, microphone = micOn, notify = ::onLiveState).also { it.start() }
         // The notification's and the picture-in-picture window's Stop reach the session through LiveService.
-        live?.let { session -> val stop = { reason: String -> session.stop(reason) }; if (backgroundLive) LiveService.start(app, stop) else LiveService.stop = stop }
+        live?.let { session -> val stop = { reason: String -> session.stop(reason) }; serviceStop = stop
+            if (backgroundLive) LiveService.start(app, stop, LiveService.Uses(screen = false, microphone = micOn)) else LiveService.stop = stop }
+        LiveService.lower = { if (!destroyed) lowerQuality() }
+        scheduleDim()
         arrange(); refresh()
+    }
+
+    /** Every state change of the session (camera or screen), on the main thread. */
+    private fun onLiveState(state: LiveState) {
+        if (state.phase == LiveState.Phase.STOPPED) { LiveService.end(applicationContext); if (leftLive) leftLive = false }
+        if (destroyed) { if (state.phase == LiveState.Phase.STOPPED) lastStop = state.message; return }
+        if (switching && state.phase == LiveState.Phase.LIVE && !state.switching && state.frames > 0) { switching = false; refresh() }
+        showState(state)
+        LiveService.update(applicationContext, state, liveSince)
+        if (state.phase == LiveState.Phase.LIVE) tickLive(state)
+        message.text = state.message
+        if (state.phase == LiveState.Phase.STOPPED) {
+            if (!foreground) orientation.disable()
+            brighten()
+            // Never end silently while away: OBS closed, cable out, phone too hot…
+            if (!foreground && !inPip && !switching && !state.message.startsWith("Stopped by you")) warnings.ended(state.message)
+            if (!switching && !screenLive && state.frames == 0L && choice == Quality.BEST && state.message != "Stopped by you")
+                message.text = "${state.message}\nIf this keeps happening, choose Quality: High."
+            live = null; liveProfile = null; sliding = null; focusMark.visibility = View.GONE; screenLive = false
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            preview.visibility = View.INVISIBLE
+            if (switching) {
+                // Restart with the new camera or quality; OBS keeps its source and reconnects.
+                switching = false; keepTimer = true
+                message.text = "Switching…"
+                badge.postDelayed({ if (!destroyed) { startLive(); if (live == null) keepTimer = false } }, 300)
+            }
+            refresh()
+        }
+    }
+
+    // ---- Screen sharing (v0.6) ----
+
+    private fun chooseSource(screen: Boolean) {
+        if (live != null) return
+        prefs.edit().putString("source", if (screen) "screen" else "camera").apply()
+        message.text = if (screen) "Screen: tap the record button, then allow screen sharing. Android asks every time."
+            else "Ready. Open OBS with the PhoneCam source, then tap the red record button."
+        refresh()
+    }
+    /** Android's own consent, every time (AGENTS.md). */
+    private fun askScreen() {
+        if (live != null) return
+        if (micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            message.text = "The microphone is on, but PhoneCam isn't allowed to use it. Tap Mic to allow it, or turn it off."
+            micOn = false; refresh(); return
+        }
+        @Suppress("DEPRECATION") startActivityForResult(
+            getSystemService(android.media.projection.MediaProjectionManager::class.java).createScreenCaptureIntent(), SCREEN_REQUEST)
+    }
+    /** Android 14 wants the screen-sharing service running before the projection is made, so it starts first. */
+    private fun beginScreen(code: Int, data: Intent) {
+        val (w, h) = ScreenSource.displaySize(this)
+        val profile = ScreenSource.profile(w, h) ?: run { message.text = "This phone has no hardware video encoder for its screen size."; return }
+        message.text = "Starting screen sharing…"
+        LiveService.onForeground = { ok -> runOnUiThread { if (ok) createScreenSession(code, data, profile) else message.text = "Android didn't allow screen sharing to start. Try again." } }
+        val stop = { reason: String -> live?.stop(reason) ?: LiveService.end(applicationContext) }
+        serviceStop = stop
+        if (!LiveService.start(applicationContext, stop, LiveService.Uses(screen = true, microphone = micOn))) {
+            LiveService.onForeground = null
+            message.text = "Android didn't allow screen sharing to start. Try again."
+        }
+    }
+    private fun createScreenSession(code: Int, data: Intent, profile: Profile) {
+        if (destroyed || live != null) return
+        val projection = runCatching {
+            getSystemService(android.media.projection.MediaProjectionManager::class.java).getMediaProjection(code, data)
+        }.getOrNull() ?: run { message.text = "Screen sharing couldn't start. Try again."; LiveService.end(applicationContext); return }
+        screenLive = true; liveProfile = profile
+        abilities = ScreenSource.noAbilities; controls = Controls(); sliding = null
+        warnings.reset(); lastStatus = ""
+        live = LiveStreamer(this, profile, false, 0, ScreenSource.noAbilities, Controls(), { null },
+            onCommand = { command -> if (!destroyed) obeyObs(command) }, microphone = micOn, screen = projection, notify = ::onLiveState)
+            .also { it.start() }
+        LiveService.lower = null
+        scheduleDim()
+        arrange(); refresh()
+    }
+
+    // ---- OBS controls, status and warnings (v0.6) ----
+
+    private val warnings by lazy { Warnings(this) }
+    private var lastStatus = ""
+    private fun shortQuality(q: Quality) = q.label.substringBefore(" ")
+
+    /** Every status tick while live (about once a second, also in the background): warnings and OBS's Phone section. */
+    private fun tickLive(state: LiveState) {
+        val battery = getSystemService(android.os.BatteryManager::class.java)
+        val percent = runCatching { battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) }.getOrDefault(-1)
+        val charging = runCatching { battery.isCharging }.getOrDefault(false)
+        val heat = runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
+        warnings.check(prefs.getBoolean("warnings", true), heat, percent, charging, choice != Quality.BALANCED)
+        val session = live ?: return
+        if (!session.talks) return
+        val p = liveProfile
+        val text = buildString {
+            if (p != null && !screenLive) {
+                append("camera=").append(Quality.cameras(options).firstOrNull { it.first == p.cameraId }?.second.orEmpty()).append('\n')
+                append("cameras=").append(Quality.cameras(options).joinToString(",") { it.second }).append('\n')
+                append("torch=").append(if (abilities?.torch != true) "none" else if (controls.torch) "on" else "off").append('\n')
+                append("mirror=").append(if (controls.mirror) "on" else "off").append('\n')
+            }
+            if (screenLive) append("mode=screen\n") else {
+                append("quality=").append(shortQuality(choice)).append('\n')
+                append("qualities=").append(qualityChoices().joinToString(",") { shortQuality(it) }).append('\n')
+            }
+            append("route=").append(state.route).append('\n')
+            if (percent >= 0) append("battery=").append(percent).append('\n')
+            append("charging=").append(if (charging) "yes" else "no").append('\n')
+            warnings.current?.let { append("warning=").append(it).append('\n') }
+            append("mic=").append(if (micOn) "on" else "off").append('\n')
+        }
+        if (text != lastStatus) { lastStatus = text; session.sendStatus(text) }
+    }
+
+    /** A command from OBS's Properties → Phone or an OBS hotkey; the same paths as the phone's own buttons. */
+    private fun obeyObs(command: String) {
+        val verb = command.substringBefore(' ').trim(); val arg = command.substringAfter(' ', "").trim()
+        if (screenLive && verb != "stop") return  // camera controls don't apply to the screen
+        when (verb) {
+            "camera" -> if (live != null && !switching) {
+                val cameras = Quality.cameras(options)
+                // "camera next", or a camera by its name ("camera Front") from OBS's list.
+                val target = if (arg == "next") null else cameras.firstOrNull { it.second.equals(arg, ignoreCase = true) } ?: return
+                if (target == null) switchCamera()
+                else if (target.first != cameraId) { cameraId = target.first; feedback.play(Feedback.Event.TICK, switchButton); refresh(); restartLive() }
+            }
+            "quality" -> qualityChoices().firstOrNull { shortQuality(it).equals(arg, ignoreCase = true) }?.let { q ->
+                if (q == choice || switching) return
+                choice = q; refresh()
+                if (live != null && selected() != liveProfile) restartLive()
+            }
+            "torch" -> if (live != null && abilities?.torch == true) { updateControls(controls.copy(torch = arg == "on")); renderControls() }
+            "mirror" -> if (live != null) { updateControls(controls.copy(mirror = arg == "on")); refresh() }
+            "stop" -> live?.stop("Stopped from OBS")
+        }
+    }
+
+    /** The warning's Lower quality button: Best or Smooth → High → Balanced. */
+    private fun lowerQuality() {
+        if (screenLive) return
+        val next = when (choice) { Quality.BEST, Quality.SMOOTH, Quality.CUSTOM -> Quality.HIGH; Quality.HIGH -> Quality.BALANCED; Quality.BALANCED -> return }
+        val id = cameraId ?: return
+        if (Quality.pick(options, id, next, customKey) == null || switching) return
+        choice = next; refresh()
+        if (live != null && selected() != liveProfile) restartLive()
+        message.text = "Quality lowered to ${shortQuality(next)} to cool the phone and save battery."
+    }
+
+    // Dims the screen after 30 s of live without a touch (on screen, not picture-in-picture); a touch brightens it.
+    private val dimmer = Runnable {
+        if (live != null && foreground && !inPip && prefs.getBoolean("dim", true))
+            window.attributes = window.attributes.apply { screenBrightness = 0.05f }
+    }
+    private fun scheduleDim() { badge.removeCallbacks(dimmer); if (live != null) badge.postDelayed(dimmer, 30_000) }
+    private fun brighten() {
+        badge.removeCallbacks(dimmer)
+        if (window.attributes.screenBrightness != WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            window.attributes = window.attributes.apply { screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
+    }
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && live != null) {
+            val dimmed = window.attributes.screenBrightness != WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            brighten(); scheduleDim()
+            if (dimmed) return true  // the first touch only wakes the screen, like a dimmed camera app
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     // ---- Live camera controls (v0.2) ----
@@ -655,6 +885,11 @@ class MainActivity : Activity() {
     @Deprecated("Activity result API is not used in this app")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == SCREEN_REQUEST) {
+            if (resultCode == RESULT_OK && data != null) beginScreen(resultCode, data)
+            else message.text = "Screen sharing wasn't allowed. Tap the record button to ask again."
+            return
+        }
         if (requestCode == SCAN_REQUEST && resultCode == RESULT_OK) message.text = data?.getStringExtra("message") ?: "Paired."
         if (requestCode == SCAN_REQUEST && resultCode == ScanActivity.RESULT_TYPE_CODE) typePairingCode()
         if (requestCode == SETTINGS_REQUEST) {
@@ -705,6 +940,22 @@ class MainActivity : Activity() {
         if (live != null) restartLive()
     }
 
+    /** Phone microphone on or off, also while live. Turning it on asks for the permission the first time. */
+    private fun toggleMic() {
+        if (!micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 3); return
+        }
+        setMic(!micOn)
+    }
+    private fun setMic(on: Boolean) {
+        micOn = on; live?.setMicrophone(on)
+        // Background live needs Android's microphone type to keep hearing when PhoneCam is off screen.
+        val stop = serviceStop
+        if (live != null && backgroundLive && stop != null) LiveService.start(applicationContext, stop, LiveService.Uses(screen = false, microphone = on))
+        if (on && live != null && live?.talks == false) message.text = "The PhoneCam plugin in OBS is older than this app and can't take the microphone."
+        refresh()
+    }
+
     /** Mirror in OBS, remembered per camera; applied at once while live. */
     private fun toggleMirror() {
         val id = cameraId ?: return
@@ -752,6 +1003,11 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 3) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) setMic(true)
+            else message.text = "Microphone access wasn't allowed, so the microphone stays off. Video works as before."
+            return
+        }
         if (requestCode == 2) {
             if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED)
                 Toast.makeText(this, "Notifications are off: live still continues when you leave PhoneCam, but Stop won't show in the status bar.", Toast.LENGTH_LONG).show()
@@ -765,8 +1021,8 @@ class MainActivity : Activity() {
         super.onResume(); foreground = true
         if (openingSettings) { openingSettings = false; updatePip() }
         if (leftLive) leftLive = false
-        if (live != null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (startOnResume) { startOnResume = false; badge.post { if (foreground) startLive() } }
+        if (live != null) { window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); scheduleDim() }
+        if (startOnResume) { startOnResume = false; badge.post { if (foreground) { if (screenMode) askScreen() else startLive() } } }
         runCatching { getSystemService(PowerManager::class.java).addThermalStatusListener(heatListener) }  // also reports the current status
         if (orientation.canDetectOrientation()) orientation.enable()
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { if (options.isEmpty()) scan() }
@@ -782,18 +1038,21 @@ class MainActivity : Activity() {
         super.onConfigurationChanged(newConfig)
         // Live sessions keep running; the Mac re-orients from the per-frame rotation tag.
         arrange()
+        if (screenLive) ScreenSource.displaySize(this).let { (w, h) -> ScreenSource.scaled(w, h, 1920).let { (sw, sh) -> live?.resizeScreen(sw, sh) } }
     }
     override fun onPause() {
         foreground = false
         runCatching { getSystemService(PowerManager::class.java).removeThermalStatusListener(heatListener) }
         if (!isInPictureInPictureMode) window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        brighten()
         super.onPause()
     }
     /** Not visible any more (picture-in-picture is still visible): background live keeps going, otherwise live stops. */
     override fun onStop() {
         if (openingSettings) { super.onStop(); return }
         val session = live
-        if (session != null && backgroundLive && LiveService.running) leftLive = true  // keeps running; rotation still followed
+        // Screen sharing is for other apps, so it always keeps going (its service is required anyway).
+        if (session != null && (backgroundLive || screenLive) && LiveService.running) leftLive = true  // keeps running; rotation still followed
         else {
             orientation.disable()
             session?.stop(if (backgroundLive) "Android didn't allow live in the background, so it stopped when PhoneCam left the screen."

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Quality: "HD" in a rounded frame (drawn for PhoneCam). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="1.6" android:fillColor="#00000000"
+        android:pathData="M5,5h14a2,2 0,0 1,2 2v10a2,2 0,0 1,-2 2h-14a2,2 0,0 1,-2 -2v-10a2,2 0,0 1,2 -2z" />
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"
+        android:pathData="M6.8,8.8v6.4M10.2,8.8v6.4M6.8,12h3.4M13.2,8.8v6.4h1.6a3.2,3.2 0,0 0,0 -6.4z" />
+</vector>

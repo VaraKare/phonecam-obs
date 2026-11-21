@@ -58,13 +58,13 @@ Most laptop users run Windows, so Windows support is required, delivered in phas
 - Same phone app; same pairing and automatic connection as on the Mac, then the v0.3 wireless connection.
 - **Proof:** the code can be written now and built and tested automatically on GitHub's Windows machines (CI) with synthetic video. It is released only after a real Windows PC with OBS and a real phone pass the checks, either the owner's or a volunteer tester's device report.
 
-### v0.4.1 — Faster switching and fixes
+### v0.4.1 — Faster switching and fixes (released 21 Nov 2026)
 
 Camera and quality changes keep the connection to OBS. Audit fixes 010 to 014 and 017 are included. Tested on the phone and Mac on 20–21 Nov 2026.
 
 ### v0.5 — Live when you leave the app (owner, 21 November 2026)
 
-**Status:** built and tested on the vivo V2437 on 21 Nov: background live, picture-in-picture, the record button and Settings during live ([version guide](versions/v0.5.md), [results](research/VIVO_V2437_BACKGROUND_LIVE.md)). Phone app only; ready to release as 0.5.0-alpha.1 with the owner's yes.
+**Status:** built and tested on the vivo V2437 on 21 Nov: background live, picture-in-picture, the record button and Settings during live ([version guide](versions/v0.5.md), [results](research/VIVO_V2437_BACKGROUND_LIVE.md)). Released as 0.5.0-alpha.1 on 21 Nov 2026 (phone app only).
 
 - **Background live, on by default.** Leaving PhoneCam (another app, the home screen, the screen off) keeps sending to OBS.
   - A notification stays in the status bar the whole time: "● PhoneCam is live to OBS · 05:23" with **Stop**. Android's own green camera dot also shows.
@@ -73,27 +73,21 @@ Camera and quality changes keep the connection to OBS. Audit fixes 010 to 014 an
 - **vivo and other phones that close background apps:** a short hint on how to allow PhoneCam to keep running, shown when the phone stops it.
 - **Picture-in-picture (an option, on by default):** leaving the app during live shows the phone preview in a small floating window, like YouTube. Closing the window leaves live running in the background.
 
-### Next feature: share the phone's screen to OBS (owner idea, 21 November 2026)
+### v0.6 — OBS controls, microphone, screen sharing (owner, 21 November 2026)
 
-- A second mode beside the camera: the phone's screen goes to OBS through the same pipeline. Uses cases: mobile games, app demos, tutorials.
-- Android asks the user for permission every time screen sharing starts. A notification and Android's own indicator show while sharing.
-- Recording and storage happen on the computer, in OBS. The phone stays a camera or screen source and keeps nothing.
+Built and tested on the vivo V2437 and the Mac on 21–22 Nov ([version guide](versions/v0.6.md)):
+- **Control from OBS:** a Phone section in the source's Properties (camera, quality, torch, mirror, stop) and OBS hotkeys. Only the phone starts live.
+- **Phone microphone,** off unless turned on, in sync with the picture.
+- **Screen sharing** instead of the camera, after Android's consent each time.
+- **Heat and battery warnings** with Lower quality; an alert when live ends while away; USB preferred when plugged in; the screen dims while live; faster start.
+- **Icons** on the main screen, with names on a long press and a "What the buttons do" page.
 
-### Owner-approved ideas (21 November 2026), order to be planned
+### Later (owner, 21–22 November 2026)
 
-1. **Control the phone from OBS:** switch camera, change quality and zoom from the source's Properties.
-2. **Several phones as several cameras:** each phone as its own OBS source, for multi-angle streams. Builds on the one-source rule (AUDIT-011).
-3. **Phone microphone,** off unless the user turns it on (see "Later: optional audio").
-4. **Heat and battery warnings, the user decides:**
-   - a notification when the phone gets hot, with a one-tap "Lower quality";
-   - battery notifications at 20, 15, 10 and 5 %.
-   If the user ignores them, live continues until the phone itself stops it. Each warning is an option in Settings.
-
-### v0.6 — Polish
-
-- Several phones as separate OBS sources; choosing or switching the phone camera from OBS.
-- Windows phase 2: installer.
-- Mac installer package (unsigned; see below) and a universal plugin that also runs on Intel Macs.
+- **Several phones as several cameras:** each phone as its own OBS source, for multi-angle streams. After one phone works well for everyone (the owner: people start with one phone). Builds on the one-source rule (AUDIT-011).
+- **Screen sharing: choose the entire screen or one app** from PhoneCam (Android 14+ lets the user pick in its own prompt; some phones hide the choice), and the phone's own sound with the screen.
+- **Windows phase 2:** installer, and a Windows PC test of the 0.6 plugin.
+- **Mac installer package** (unsigned; see below) and a universal plugin that also runs on Intel Macs.
 
 ### v1.0 — Stable
 

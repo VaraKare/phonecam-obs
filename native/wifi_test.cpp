@@ -1,5 +1,6 @@
 #include "wifi_crypto.hpp"
 #include "wifi_store.hpp"
+#include "protocol.hpp"
 #include <cassert>
 #include <cstdio>
 // Expected values come from an independent Python + openssl computation (see docs/WIFI.md); the phone's
@@ -28,6 +29,12 @@ int main() {
     assert(k.encryption == hex("a9172d591c753806e60a4c25c159d4513e75695c919562ecdb3186f46f70a19c"));
     assert(k.authentication == hex("b3e93ce8193295b2c4cbe362e80d66e22cd3cf7861eff256c3cb8653aa59dc27"));
     assert(k.longTerm == hex("3d74719c074ee80437347c9d848fa0b545a50394dfd903d43a16357519d53e8b"));
+    SessionKeys r = h.replyKeys();  // computer → phone (0.6)
+    assert(r.encryption == hex("c8390e2b28d492f13c1e771bff4eea63ad63e21dbd9e4a359fe72e6affd020e5"));
+    assert(r.authentication == hex("238b86ab56ddd84d1414b1adeeb0ff07e0d865ee39ced95dbeed91f349c593ad"));
+    Bytes hello = bytes(phonecam::pluginHello);
+    Bytes sealedHello = sealRecord(r, 0, hello);
+    assert(openRecord(r, 0, Bytes(sealedHello.begin() + 4, sealedHello.end() - 16), Bytes(sealedHello.end() - 16, sealedHello.end())) == hello);
 
     Bytes plain = bytes("PhoneCam test record, longer than one AES block.");
     Bytes record = sealRecord(k, 5, plain);

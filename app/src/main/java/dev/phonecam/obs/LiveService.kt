@@ -24,10 +24,17 @@ import android.util.Log
  * Swiping PhoneCam away from recent apps stops live.
  */
 class LiveService : Service() {
+    /** What the session uses: the camera or the screen, and the microphone. */
+    data class Uses(val screen: Boolean, val microphone: Boolean)
     companion object {
         private const val CHANNEL = "live"
         private const val ID = 1
         const val STOP = "dev.phonecam.obs.STOP"
+        const val LOWER = "dev.phonecam.obs.LOWER"
+        /** Told once Android accepted (true) or refused (false) the service; screen sharing waits for it. */
+        @Volatile var onForeground: ((Boolean) -> Unit)? = null
+        /** The heat or battery warning's Lower quality button; set by MainActivity while live. */
+        @Volatile var lower: (() -> Unit)? = null
         /** Stops the user's session (with a reason); set at Start and cleared when it stops. */
         @Volatile var stop: ((String) -> Unit)? = null
         /** True once Android accepted the foreground service, so leaving the app may keep live running. */
@@ -37,8 +44,10 @@ class LiveService : Service() {
         private var radio: WifiManager.WifiLock? = null
 
         /** Starts the service for [live]. False when Android refuses; live then stops when the app is left. */
-        fun start(context: Context, stopLive: (String) -> Unit): Boolean {
-            stop = stopLive; shown = null
+        /** What the session uses in the background: the camera or the screen, and the microphone (Android 11+ types). */
+        @Volatile private var uses = Uses(screen = false, microphone = false)
+        fun start(context: Context, stopLive: (String) -> Unit, use: Uses = Uses(false, false)): Boolean {
+            stop = stopLive; shown = null; uses = use
             return runCatching { context.startForegroundService(Intent(context, LiveService::class.java)) }
                 .onFailure { Log.w("PhoneCam", "Background live unavailable: ${it.message}") }.isSuccess
         }
@@ -55,7 +64,7 @@ class LiveService : Service() {
 
         /** The session stopped: remove the notification and let the process rest. */
         fun end(context: Context) {
-            stop = null; shown = null
+            stop = null; lower = null; shown = null
             context.stopService(Intent(context, LiveService::class.java))
         }
 
@@ -101,6 +110,10 @@ class LiveService : Service() {
             stop?.invoke("Stopped by you") ?: stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == LOWER) {
+            lower?.let { android.os.Handler(mainLooper).post(it) } ?: stopSelf()
+            return START_NOT_STICKY
+        }
         // Android requires startForeground after startForegroundService, even when the session already ended.
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "Live to OBS", NotificationManager.IMPORTANCE_LOW).apply {
@@ -109,14 +122,18 @@ class LiveService : Service() {
             })
         try {
             // Android 11+ needs the camera type to keep using the camera in the background; Android 10 has no types.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) startForeground(ID, build(this, shown), ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) startForeground(ID, build(this, shown),
+                (if (uses.screen) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) or
+                    (if (uses.microphone) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0))
             else startForeground(ID, build(this, shown))
         } catch (e: Exception) {
             Log.w("PhoneCam", "Background live refused: ${e.message}")
+            onForeground?.invoke(false); onForeground = null
             stopSelf(); return START_NOT_STICKY
         }
         if (stop == null) { stopSelf(); return START_NOT_STICKY }
         running = true
+        onForeground?.invoke(true); onForeground = null
         if (wake == null) wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PhoneCam:live")
             .apply { setReferenceCounted(false); acquire(12 * 60 * 60 * 1000L) }  // released on Stop; bounded in case of a bug
         return START_NOT_STICKY  // never restarted by Android: live starts only when the user taps Start

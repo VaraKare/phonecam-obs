@@ -7,6 +7,11 @@
     <!-- Background live (owner, 21 Nov 2026): a camera-type foreground service with a Stop notification, only during a session the user started. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Phone microphone (0.6): off unless the user turns it on; RECORD_AUDIO is asked only then. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Screen sharing (0.6): Android asks the user's consent every time. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
@@ -24,7 +29,7 @@
         <activity android:name=".SettingsActivity" android:exported="false" android:label="Settings" />
         <activity android:name=".BenchmarkActivity" android:exported="false" android:label="Research tools"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboard|keyboardHidden|navigation|fontScale|density|locale|layoutDirection" />
-        <service android:name=".LiveService" android:exported="false" android:foregroundServiceType="camera" />
+        <service android:name=".LiveService" android:exported="false" android:foregroundServiceType="camera|microphone|mediaProjection" />
         <!-- Answers only Android's shell user (an authorized ADB connection); see PairingProvider. -->
         <provider android:name=".PairingProvider" android:authorities="dev.phonecam.obs.pairing"
             android:exported="true" android:grantUriPermissions="false" />

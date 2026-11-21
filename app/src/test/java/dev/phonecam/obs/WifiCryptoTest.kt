@@ -30,6 +30,14 @@ class WifiCryptoTest {
         assertArrayEquals(hex("a9172d591c753806e60a4c25c159d4513e75695c919562ecdb3186f46f70a19c"), k.encryption)
         assertArrayEquals(hex("b3e93ce8193295b2c4cbe362e80d66e22cd3cf7861eff256c3cb8653aa59dc27"), k.authentication)
         assertArrayEquals(hex("3d74719c074ee80437347c9d848fa0b545a50394dfd903d43a16357519d53e8b"), k.longTerm)
+        // 0.6: computer → phone records have their own keys (same numbers as native/wifi_test.cpp).
+        val r = k.reply!!
+        assertArrayEquals(hex("c8390e2b28d492f13c1e771bff4eea63ad63e21dbd9e4a359fe72e6affd020e5"), r.encryption)
+        assertArrayEquals(hex("238b86ab56ddd84d1414b1adeeb0ff07e0d865ee39ced95dbeed91f349c593ad"), r.authentication)
+        val back = ByteArrayOutputStream()
+        WifiCrypto.Sealer(r).seal(back, "hello".toByteArray())
+        val opened = WifiCrypto.Opener(r).open(java.io.DataInputStream(back.toByteArray().inputStream()))
+        assertArrayEquals("hello".toByteArray(), opened)
 
         val sealer = WifiCrypto.Sealer(k)
         val sink = ByteArrayOutputStream()

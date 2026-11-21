@@ -80,7 +80,17 @@ ciphertext = AES-256-CTR(encryption key, IV = record number (u64) || 8 zero byte
 tag        = first 16 bytes of HMAC(MAC key, record number (u64) || length (u32) || ciphertext)
 ```
 
-Record numbers start at 0 and count up, so a dropped, repeated, reordered or altered record fails the tag and ends the session. The Mac sends nothing after the handshake.
+Record numbers start at 0 and count up, so a dropped, repeated, reordered or altered record fails the tag and ends the session.
+
+### Computer → phone records (0.6)
+
+A 0.6 computer sends control messages back (the hello right after the handshake, then commands; see [USB live](USB_LIVE.md#two-way-link-06)), as records in the same format with their own keys and their own record numbers from 0:
+
+```
+reply keys = HKDF-Expand(PRK, "pcam reply keys" || H, 64)   (encryption key, then MAC key)
+```
+
+`H` and `PRK` are the values used for the video keys. Separate keys mean the two directions never reuse a key and record number (AES-CTR counter). Older phones never read these records. Reference numbers are in `native/wifi_test.cpp` and the phone's `WifiCryptoTest`, computed independently in Python.
 
 ### Stored data
 

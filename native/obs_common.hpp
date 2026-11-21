@@ -1,9 +1,15 @@
 #pragma once
+#include <atomic>
 #include <cstring>
+#include <map>
+#include <memory>
 #include <mutex>
+#include <sstream>
+#include <vector>
 // OBS-side helpers shared by the macOS and Windows plugins (each plugin is one translation unit):
 // fitting the picture to the canvas, Wireless debugging pairing, and the OBS log sink.
 #include <obs-module.h>
+#include <util/platform.h>
 #include "adb.hpp"
 #include <string>
 #include <thread>
@@ -134,5 +140,200 @@ void addStatus(obs_properties_t *props, const std::string &status, const std::st
     // No long description: OBS would show it beside the status and squeeze both (20 Nov). Each status says the next step.
     if (!lastEnded.empty() && status.find(lastEnded) == std::string::npos)
         obs_properties_add_text(props, "last_ended", ("Last session ended: " + lastEnded).c_str(), OBS_TEXT_INFO);
+}
+
+// ---- 0.6: the phone talks back (controls, status, microphone) ----
+
+// A PhoneCam source made before 0.6 had no sound, so OBS saved it with no audio tracks: the microphone then shows
+// in the mixer as "unassigned" and is missing from recordings (21 Nov). On the first sound, once per source, give it
+// the tracks a new OBS source gets (1-6). A later choice of the user's is kept (remembered in the source settings).
+void assignAudioTracks(void *weakSource) {
+    auto *weak = static_cast<obs_weak_source_t *>(weakSource);
+    obs_source_t *strong = obs_weak_source_get_source(weak);
+    obs_weak_source_release(weak);
+    if (!strong) return;
+    obs_data_t *settings = obs_source_get_settings(strong);
+    if (!obs_data_get_bool(settings, "audio_tracks_checked")) {
+        obs_data_set_bool(settings, "audio_tracks_checked", true);
+        if (obs_source_get_audio_mixers(strong) == 0) {
+            obs_source_set_audio_mixers(strong, 0x3F);
+            blog(LOG_INFO, "[phonecam] The phone microphone had no audio tracks in OBS; turned on tracks 1-6 so recordings include it.");
+        }
+    }
+    obs_data_release(settings);
+    obs_source_release(strong);
+}
+void refreshProperties(void *weakSource) {
+    auto *weak = static_cast<obs_weak_source_t *>(weakSource);
+    obs_source_t *strong = obs_weak_source_get_source(weak);
+    obs_weak_source_release(weak);
+    if (!strong) return;
+    obs_source_update_properties(strong);
+    obs_source_release(strong);
+}
+std::vector<std::string> splitList(const std::string &text, char by) {
+    std::vector<std::string> out; std::string part; std::istringstream in(text);
+    while (std::getline(in, part, by)) if (!part.empty()) out.push_back(part);
+    return out;
+}
+// One per source. The USB channel is shared with the connection thread (which may outlive the source); its
+// callbacks are cleared before this object goes away.
+struct PhoneControls {
+    obs_source_t *source;
+    std::shared_ptr<phonecam::Channel> usb = std::make_shared<phonecam::Channel>(), wifi = std::make_shared<phonecam::Channel>();
+    std::mutex lock;
+    std::map<std::string, std::string> info;  // the phone's last status; empty without a 0.6 phone
+    phonecam::ClockMap clock;                 // under lock
+    std::atomic<uint64_t> audioUntil{0};      // OBS clock (ns): the microphone sent audio recently
+    std::atomic<bool> tracksChecked{false};
+    explicit PhoneControls(obs_source_t *value) : source(value) {
+        phonecam::Channel::Callbacks callbacks{
+            [this](const std::string &text) { received(text); },
+            [this](const phonecam::AudioChunk &chunk, uint64_t pts) { sound(chunk, pts); },
+            [this] { ended(); }};
+        usb->setCallbacks(callbacks); wifi->setCallbacks(callbacks);
+    }
+    ~PhoneControls() { usb->setCallbacks({}); wifi->setCallbacks({}); }
+    PhoneControls(const PhoneControls &) = delete;
+    bool send(const std::string &command) {
+        bool sent = usb->send(command) || wifi->send(command);
+        blog(LOG_INFO, "[phonecam] Phone command \"%s\"%s", command.c_str(), sent ? "" : " not sent: no PhoneCam 0.6 phone is live");
+        return sent;
+    }
+    std::map<std::string, std::string> snapshot() { std::lock_guard<std::mutex> guard(lock); return info; }
+    // "status\nkey=value\n…" from the phone replaces the shown values; "hello…" starts a session.
+    void received(const std::string &text) {
+        auto lines = splitList(text, '\n');
+        if (lines.empty()) return;
+        if (lines[0] == "hello") {
+            { std::lock_guard<std::mutex> guard(lock); info.clear(); clock.reset(); }
+            blog(LOG_INFO, "[phonecam] The phone app talks to OBS: camera controls are in this source's Properties → Phone.");
+            return;
+        }
+        if (lines[0] == "timings") { blog(LOG_INFO, "[phonecam] Phone start timings: %s", text.substr(8).c_str()); return; }
+        if (lines[0] != "status") return;
+        std::map<std::string, std::string> next;
+        for (size_t i = 1; i < lines.size(); ++i) {
+            auto eq = lines[i].find('=');
+            if (eq != std::string::npos && eq > 0 && next.size() < 32) next[lines[i].substr(0, eq)] = lines[i].substr(eq + 1, 200);
+        }
+        bool changed;
+        { std::lock_guard<std::mutex> guard(lock); changed = next != info; info = std::move(next); }
+        if (changed) queueOnUi(source, refreshProperties);
+    }
+    void ended() {
+        { std::lock_guard<std::mutex> guard(lock); info.clear(); clock.reset(); }
+        audioUntil = 0;
+        queueOnUi(source, refreshProperties);
+    }
+    // A picture's OBS timestamp: arrival time, or the phone's own time mapped to this clock while the microphone
+    // is on, so sound and picture line up.
+    uint64_t stamp(uint64_t phonePts) {
+        uint64_t now = os_gettime_ns();
+        if (now >= audioUntil) return now;
+        std::lock_guard<std::mutex> guard(lock);
+        return clock.map(phonePts, now);
+    }
+    void sound(const phonecam::AudioChunk &chunk, uint64_t pts) {
+        uint64_t now = os_gettime_ns(), at;
+        { std::lock_guard<std::mutex> guard(lock); at = clock.map(pts, now); }
+        audioUntil = now + 1'000'000'000ull;
+        if (!tracksChecked.exchange(true)) queueOnUi(source, assignAudioTracks);
+        struct obs_source_audio out{};
+        out.data[0] = chunk.pcm;
+        out.frames = uint32_t(chunk.bytes / (2u * chunk.channels));
+        out.speakers = chunk.channels == 2 ? SPEAKERS_STEREO : SPEAKERS_MONO;
+        out.format = AUDIO_FORMAT_16BIT;
+        out.samples_per_sec = chunk.rate;
+        out.timestamp = at;
+        obs_source_output_audio(source, &out);
+    }
+};
+
+bool phoneStop(obs_properties_t *, obs_property_t *, void *data) {
+    if (data) static_cast<PhoneControls *>(data)->send("stop");
+    return false;
+}
+// A Phone control changed in Properties: send it only when it differs from what the phone reports, so opening or
+// refreshing Properties (which re-applies every value) never sends anything.
+bool phoneChanged(void *data, obs_properties_t *, obs_property_t *property, obs_data_t *settings) {
+    if (!data) return false;
+    auto *phone = static_cast<PhoneControls *>(data);
+    auto info = phone->snapshot();
+    std::string name = obs_property_name(property);
+    if (name == "phone_camera") {
+        std::string value = obs_data_get_string(settings, "phone_camera");
+        if (!value.empty() && value != info["camera"]) phone->send("camera " + value);
+    } else if (name == "phone_quality") {
+        std::string value = obs_data_get_string(settings, "phone_quality");
+        if (!value.empty() && value != info["quality"]) phone->send("quality " + value);
+    } else if (name == "phone_torch") {
+        bool on = obs_data_get_bool(settings, "phone_torch");
+        if (on != (info["torch"] == "on")) phone->send(on ? "torch on" : "torch off");
+    } else if (name == "phone_mirror") {
+        bool on = obs_data_get_bool(settings, "phone_mirror");
+        if (on != (info["mirror"] == "on")) phone->send(on ? "mirror on" : "mirror off");
+    }
+    return false;  // the phone's status refreshes Properties once the change has happened
+}
+// "Phone" section: shown while a PhoneCam 0.6 phone is live, as compact as OBS allows (it lays controls out one
+// per row): two drop-down lists, two tick boxes and Stop. Starting stays on the phone (owner's rule).
+// UI thread (properties() runs there): the values are set to what the phone reports before OBS shows them.
+void addPhoneSection(obs_properties_t *props, PhoneControls *phone) {
+    if (!phone) return;
+    auto info = phone->snapshot();
+    if (info.empty()) return;
+    obs_data_t *settings = obs_source_get_settings(phone->source);
+    obs_data_set_string(settings, "phone_camera", info["camera"].c_str());
+    obs_data_set_string(settings, "phone_quality", info["quality"].c_str());
+    obs_data_set_bool(settings, "phone_torch", info["torch"] == "on");
+    obs_data_set_bool(settings, "phone_mirror", info["mirror"] == "on");
+    obs_data_release(settings);
+
+    obs_properties_t *group = obs_properties_create();
+    std::string line = info["mode"] == "screen" ? "Sharing the phone screen" : info["camera"] + " camera";
+    if (!info["route"].empty()) line += " · " + info["route"];
+    if (!info["battery"].empty()) line += " · battery " + info["battery"] + " %" + (info["charging"] == "yes" ? " (charging)" : "");
+    if (info["mic"] == "on") line += " · microphone on";
+    obs_properties_add_text(group, "phone_info", line.c_str(), OBS_TEXT_INFO);
+    if (!info["warning"].empty()) {
+        obs_property_t *warning = obs_properties_add_text(group, "phone_warning", info["warning"].c_str(), OBS_TEXT_INFO);
+        obs_property_text_set_info_type(warning, OBS_TEXT_INFO_WARNING);
+    }
+    auto cameras = splitList(info["cameras"], ',');
+    if (cameras.size() > 1 && info["mode"] != "screen") {
+        obs_property_t *list = obs_properties_add_list(group, "phone_camera", "Camera", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+        for (const auto &camera : cameras) obs_property_list_add_string(list, camera.c_str(), camera.c_str());
+        obs_property_set_modified_callback2(list, phoneChanged, phone);
+    }
+    auto qualities = splitList(info["qualities"], ',');
+    if (!qualities.empty()) {
+        obs_property_t *list = obs_properties_add_list(group, "phone_quality", "Quality", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+        for (const auto &quality : qualities) obs_property_list_add_string(list, quality.c_str(), quality.c_str());
+        obs_property_set_modified_callback2(list, phoneChanged, phone);
+    }
+    if (info["torch"] == "on" || info["torch"] == "off")
+        obs_property_set_modified_callback2(obs_properties_add_bool(group, "phone_torch", "Torch"), phoneChanged, phone);
+    if (!info["mirror"].empty())
+        obs_property_set_modified_callback2(obs_properties_add_bool(group, "phone_mirror", "Mirror"), phoneChanged, phone);
+    obs_properties_add_button2(group, "phone_stop", "Stop live on the phone", phoneStop, phone);
+    obs_properties_add_group(props, "phone", "Phone", OBS_GROUP_NORMAL, group);
+}
+// OBS hotkeys (Settings → Hotkeys) for each PhoneCam source.
+void registerPhoneHotkeys(obs_source_t *source, PhoneControls *phone) {
+    auto hotkey = [&](const char *name, const char *description, obs_hotkey_func func) {
+        obs_hotkey_register_source(source, name, description, func, phone);
+    };
+    hotkey("phonecam.switch_camera", "PhoneCam: switch phone camera", [](void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) {
+        if (pressed) static_cast<PhoneControls *>(data)->send("camera next");
+    });
+    hotkey("phonecam.torch", "PhoneCam: torch on/off", [](void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) {
+        if (!pressed) return;
+        auto *phone = static_cast<PhoneControls *>(data);
+        phone->send(phone->snapshot()["torch"] == "on" ? "torch off" : "torch on");
+    });
+    hotkey("phonecam.stop", "PhoneCam: stop live on the phone", [](void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) {
+        if (pressed) static_cast<PhoneControls *>(data)->send("stop");
+    });
 }
 }

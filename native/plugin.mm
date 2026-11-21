@@ -62,7 +62,8 @@ struct Source {
     std::atomic<bool> visible{false}, keepLive{false}, waitingForPhone{false};
     std::atomic<int64_t> forgetArmedUntil{0};
     std::recursive_mutex runLock;
-    explicit Source(obs_source_t *value) : source(value) {}
+    PhoneControls phone;  // 0.6: commands to the phone, its status and microphone
+    explicit Source(obs_source_t *value) : source(value), phone(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
     std::string currentStatus() { std::lock_guard<std::mutex> guard(lock); return status; }
     std::string lastEnding() { std::lock_guard<std::mutex> guard(lock); return lastEnded; }
@@ -76,7 +77,7 @@ struct Source {
         queueOnUi(source, refreshOnUi);
     }
     // One picture path for every connection: hardware-decoded NV12 from USB or Wi-Fi.
-    void showFrame(CVPixelBufferRef image) {
+    void showFrame(CVPixelBufferRef image, uint64_t phonePts) {
         if (stop) return;
         if (CVPixelBufferLockBaseAddress(image, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return;
         card = false;
@@ -88,8 +89,8 @@ struct Source {
             frame.data[i] = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(image, i));
             frame.linesize[i] = uint32_t(CVPixelBufferGetBytesPerRowOfPlane(image, i));
         }
-        // Arrival-based OBS clock. Sender PTS is carried for diagnostics, not subtracted across clocks.
-        frame.timestamp = os_gettime_ns(); frame.full_range = false;
+        // Arrival time, or the phone's time mapped to this clock while its microphone is on (sound in sync).
+        frame.timestamp = phone.stamp(phonePts); frame.full_range = false;
         video_format_get_parameters(VIDEO_CS_709, VIDEO_RANGE_PARTIAL, frame.color_matrix, frame.color_range_min, frame.color_range_max);
         obs_source_output_video(source, &frame);
         CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
@@ -141,7 +142,8 @@ struct Source {
         auto shared = std::make_shared<Link>();
         shared->owner = this; shared->adb = adb;
         { std::lock_guard<std::mutex> guard(linkLock); link = shared; }
-        worker = std::thread([shared] {
+        auto channel = phone.usb;  // outlives this source if the thread is left behind
+        worker = std::thread([shared, channel] {
             auto report = [shared](const std::string &value) {
                 std::lock_guard<std::timed_mutex> guard(shared->lock);
                 if (shared->owner) shared->owner->setStatus(value);
@@ -150,10 +152,10 @@ struct Source {
             try {
                 phonecam::autoReceive(shared->stop,
                     [shared] { std::lock_guard<std::mutex> guard(shared->adb->lock); return shared->adb->path; }, report,
-                    [shared](CVPixelBufferRef image, uint64_t, uint64_t) {
+                    [shared](CVPixelBufferRef image, uint64_t, uint64_t pts) {
                         std::lock_guard<std::timed_mutex> guard(shared->lock);
-                        if (shared->owner) shared->owner->showFrame(image);
-                    });
+                        if (shared->owner) shared->owner->showFrame(image, pts);
+                    }, nullptr, channel.get());
             } catch (const std::exception &error) { try { report(std::string("USB connection stopped: ") + error.what()); } catch (...) {} }
             catch (...) { try { report("USB connection stopped after an unexpected error. Hide and show this source to retry."); } catch (...) {} }
             {
@@ -205,8 +207,8 @@ struct Source {
         wifiStop = false;
         wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
             setStatus(value, value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0);
-        }, [this](CVPixelBufferRef image, uint64_t, uint64_t) { showFrame(image); },
-        [](const std::string &value) { blog(LOG_INFO, "[phonecam] %s", value.c_str()); });
+        }, [this](CVPixelBufferRef image, uint64_t, uint64_t pts) { showFrame(image, pts); },
+        [](const std::string &value) { blog(LOG_INFO, "[phonecam] %s", value.c_str()); }, phone.wifi.get());
         auto *server = wifi.get();
         wifiWorker = std::thread([server, this] {
             try { server->run(wifiStop); }  // run() reports its own problems; this is the last line of defence
@@ -272,6 +274,7 @@ void update(void *value, obs_data_t *settings) {
 void *create(obs_data_t *settings, obs_source_t *source) {
     obs_source_set_async_unbuffered(source, true);
     auto *self = new Source(source);
+    registerPhoneHotkeys(source, &self->phone);
     update(self, settings);
     return self;
 }
@@ -292,6 +295,8 @@ obs_properties_t *properties(void *value) {
     auto *p = obs_properties_create();
     addStatus(p, value ? static_cast<Source *>(value)->currentStatus() : "Not running",
               value ? static_cast<Source *>(value)->lastEnding() : std::string());
+
+    if (value) addPhoneSection(p, &static_cast<Source *>(value)->phone);
 
     obs_properties_t *connection = obs_properties_create();
     obs_property_set_long_description(obs_properties_add_bool(connection, "wifi_direct", "Allow paired phones over Wi-Fi"),
@@ -342,7 +347,7 @@ obs_properties_t *properties(void *value) {
         return false;
     }, value);
     obs_property_set_long_description(obs_properties_add_bool(picture, "keep_live", "Keep the phone live while this source is hidden"),
-        "Normally, hiding this source stops the phone and you tap Start live again.\nTick this to keep it sending while hidden, so switching back is instant.\nThe phone gets warmer and uses more battery.");
+        "Normally, hiding this source stops the phone and you tap the record button again.\nTick this to keep it sending while hidden, so switching back is instant.\nThe phone gets warmer and uses more battery.");
     obs_properties_add_group(p, "picture", "Picture", OBS_GROUP_NORMAL, picture);
 
     obs_properties_t *advanced = obs_properties_create();
@@ -368,7 +373,7 @@ MODULE_EXPORT bool obs_module_load(void) {
     obs_source_info info{};
     // The id stays stable so existing scenes keep their source.
     info.id = "phonecam_usb_v1"; info.type = OBS_SOURCE_TYPE_INPUT;
-    info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
+    info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE;
     info.get_name = name; info.create = create; info.destroy = destroy; info.update = update;
     info.get_defaults = defaults; info.video_tick = tick; info.show = show; info.hide = hide; info.get_properties = properties;
     info.icon_type = OBS_ICON_TYPE_CAMERA;

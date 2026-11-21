@@ -263,7 +263,7 @@ void Server::loop(std::atomic<bool> &stop) {
         doing(Connecting);
         try { handle(std::uintptr_t(fd), stop); }
         catch (const NotStreaming &) {}
-        catch (const std::exception &error) { if (!stop) status(std::string("Wi-Fi live ended: ") + error.what() + ". Tap Start live on the phone to go live again."); }
+        catch (const std::exception &error) { if (!stop) status(std::string("Wi-Fi live ended: ") + error.what() + ". Tap the record button on the phone to go live again."); }
         doing(Withdrawing);  // closing the connection can wait for the network
         net::closeFd(fd);
         doing(Waiting);
@@ -355,11 +355,17 @@ void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
         { std::lock_guard<std::mutex> guard(lock); pairings = updated; }
         writeAll(fd, Bytes{0});
         closePairing();
-        status("Paired with " + phoneName + " over Wi-Fi. Tap Start live on the phone.");
+        status("Paired with " + phoneName + " over Wi-Fi. Tap the record button on the phone.");
         return;
     }
     writeAll(fd, Bytes{0});
     doing(Streaming);
+    // 0.6: a hello, then commands, as records with the reply keys. Older phones never read them.
+    SessionKeys reply = shake.replyKeys();
+    uint64_t replyRecord = 0;
+    auto write = [fd, reply, &replyRecord](const std::vector<uint8_t> &message) { writeAll(fd, sealRecord(reply, replyRecord++, message)); };
+    if (channel) write(control(pluginHello));
+    Attached attached(channel, write);
     RecordReader reader(fd, keys, stop);
     bool announced = false;
     decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { reader.read(p, n, seconds); },
@@ -369,6 +375,6 @@ void Server::handle(std::uintptr_t socketHandle, std::atomic<bool> &stop) {
                 status("Live over direct Wi-Fi: " + std::to_string(imageWidth(image)) + "×" + std::to_string(imageHeight(image)) + ", " + decoderName() + ".");
             }
             output(image, sequence, pts);
-        });
+        }, channel);
 }
 }
