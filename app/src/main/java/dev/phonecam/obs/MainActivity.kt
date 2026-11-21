@@ -193,7 +193,7 @@ class MainActivity : Activity() {
     /** An icon-only chip: what it does is in its description (screen readers) and shows on a long press. */
     private fun TextView.iconOnly(res: Int, label: String) {
         text = ""; icon(res); contentDescription = label; tooltipText = label
-        setPadding(dp(14), dp(8), dp(14), dp(8))
+        setPadding(dp(13), dp(9), dp(13), dp(9))
     }
     private fun rounded(color: Int, radius: Int = 10) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
     private fun chip(gravity: Int) = TextView(this).apply {
@@ -251,21 +251,21 @@ class MainActivity : Activity() {
         qualityChip = pill { chooseQuality() }
         mirrorChip = pill { toggleMirror() }
         micChip = pill { toggleMic() }
-        cameraModeChip = pill { chooseSource(false) }.apply { minHeight = dp(36); iconOnly(R.drawable.ic_videocam, "Camera: send the phone camera") }
-        screenModeChip = pill { chooseSource(true) }.apply { minHeight = dp(36); iconOnly(R.drawable.ic_screen_share, "Screen: share the phone screen") }
+        cameraModeChip = pill { chooseSource(false) }.apply { iconOnly(R.drawable.ic_videocam, "Camera: send the phone camera") }
+        screenModeChip = pill { chooseSource(true) }.apply { iconOnly(R.drawable.ic_screen_share, "Screen: share the phone screen") }
         qualityChip.iconOnly(R.drawable.ic_quality, "Quality")
         mirrorChip.iconOnly(R.drawable.ic_mirror, "Mirror in OBS")
-        panel.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, 0, 0, dp(10))
-            addView(cameraModeChip); addView(screenModeChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
-        })
-        // Scrolls sideways on narrow phones rather than squeezing the chips.
+        // One row: the source (camera, screen), a thin divider, then quality, mirror and microphone.
+        // Scrolls sideways on very narrow phones rather than squeezing the icons.
         panel.addView(HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false; isFillViewport = true
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-                addView(qualityChip); addView(mirrorChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
-                addView(micChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+                fun gap(view: View, start: Int) = addView(view, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(start) })
+                gap(cameraModeChip, 0); gap(screenModeChip, 6)
+                addView(View(this@MainActivity).apply { setBackgroundColor(0xFF3A3A3A.toInt()) },
+                    LinearLayout.LayoutParams(dp(1), dp(28)).apply { marginStart = dp(10); marginEnd = dp(10) })
+                gap(qualityChip, 0); gap(mirrorChip, 6); gap(micChip, 6)
             })
         })
         detail = TextView(this).apply { setTextColor(0xFF7A7A7A.toInt()); textSize = 12f; gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) }
@@ -400,8 +400,8 @@ class MainActivity : Activity() {
         mirrorChip.background = rounded(if (mirror) BLUE else 0xFF1E1E1E.toInt(), 20)
         mirrorChip.contentDescription = "Mirror the picture in OBS, ${if (mirror) "on" else "off"}"
         val screen = screenMode
-        cameraModeChip.background = rounded(if (!screen) BLUE else 0xFF1E1E1E.toInt(), 17)
-        screenModeChip.background = rounded(if (screen) BLUE else 0xFF1E1E1E.toInt(), 17)
+        cameraModeChip.background = rounded(if (!screen) BLUE else 0xFF1E1E1E.toInt(), 20)
+        screenModeChip.background = rounded(if (screen) BLUE else 0xFF1E1E1E.toInt(), 20)
         cameraModeChip.isEnabled = live == null; screenModeChip.isEnabled = live == null
         qualityChip.visibility = if (screen) View.GONE else View.VISIBLE
         mirrorChip.visibility = if (screen) View.GONE else View.VISIBLE

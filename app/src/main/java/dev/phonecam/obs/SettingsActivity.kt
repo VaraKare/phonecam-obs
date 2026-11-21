@@ -116,6 +116,10 @@ class SettingsActivity : Activity() {
                 android.widget.LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)))
             addView(TextView(this@SettingsActivity).apply { this.text = text; setTextColor(android.graphics.Color.WHITE); textSize = 15f; setPadding(ui.dp(14), 0, 0, 0) })
         })
+        list.addView(TextView(this).apply {
+            text = "Tip: press and hold any icon on the main screen to see its name."
+            setTextColor(Ui.MUTED); textSize = 14f; setPadding(0, ui.dp(12), 0, ui.dp(4))
+        })
         AlertDialog.Builder(this).setTitle("What the buttons do").setView(android.widget.ScrollView(this).apply { addView(list) })
             .setPositiveButton("OK", null).show()
     }
