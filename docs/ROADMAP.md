@@ -58,6 +58,25 @@ Most laptop users run Windows, so Windows support is required, delivered in phas
 - Same phone app; same pairing and automatic connection as on the Mac, then the v0.3 wireless connection.
 - **Proof:** the code can be written now and built and tested automatically on GitHub's Windows machines (CI) with synthetic video. It is released only after a real Windows PC with OBS and a real phone pass the checks, either the owner's or a volunteer tester's device report.
 
+### v0.4.1 — Faster switching and fixes
+
+Camera and quality changes keep the connection to OBS. Audit fixes 010 to 014 and 017 are included. Tested on the phone and Mac on 20–21 Nov 2026.
+
+### v0.5 — Live when you leave the app (owner, 21 November 2026)
+
+- **Background live, on by default.** Leaving PhoneCam (another app, the home screen, the screen off) keeps sending to OBS.
+  - A notification stays in the status bar the whole time: "● PhoneCam is live to OBS · 05:23" with **Stop**. Android's own green camera dot also shows.
+  - Swiping PhoneCam away from recents, or "clear all", stops live. Nothing is saved on the phone.
+  - This replaces the original "camera only while the app is on screen" rule, by the owner's decision.
+- **vivo and other phones that close background apps:** a short hint on how to allow PhoneCam to keep running, shown when the phone stops it.
+- **Picture-in-picture (an option, on by default):** leaving the app during live shows the phone preview in a small floating window, like YouTube. Closing the window leaves live running in the background.
+
+### Next feature: share the phone's screen to OBS (owner idea, 21 November 2026)
+
+- A second mode beside the camera: the phone's screen goes to OBS through the same pipeline. Uses cases: mobile games, app demos, tutorials.
+- Android asks the user for permission every time screen sharing starts. A notification and Android's own indicator show while sharing.
+- Recording and storage happen on the computer, in OBS. The phone stays a camera or screen source and keeps nothing.
+
 ### v0.6 — Polish
 
 - Several phones as separate OBS sources; choosing or switching the phone camera from OBS.
