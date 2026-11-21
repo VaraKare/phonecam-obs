@@ -58,9 +58,9 @@ Most laptop users run Windows, so Windows support is required, delivered in phas
 - Same phone app; same pairing and automatic connection as on the Mac, then the v0.3 wireless connection.
 - **Proof:** the code can be written now and built and tested automatically on GitHub's Windows machines (CI) with synthetic video. It is released only after a real Windows PC with OBS and a real phone pass the checks, either the owner's or a volunteer tester's device report.
 
-### v0.4.1 — Faster switching and fixes
+### v0.4.1 — Faster switching and fixes (released 21 Nov 2026)
 
-Camera and quality changes keep the connection to OBS. Audit fixes 010 to 014 and 017 are included. Tested on the phone and Mac on 20–21 Nov 2026.
+Camera and quality changes keep the connection to OBS. Audit fixes 010 to 014 and 017 are included, plus a fix for an OBS crash on Forget paired phones. Tested on the phone and Mac on 20–21 Nov 2026. Phone and Mac only; Windows stays on the v0.4.0 plugin until a Windows PC test.
 
 ### v0.5 — Live when you leave the app (owner, 21 November 2026)
 
