@@ -43,7 +43,26 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                    /** Commands from OBS (0.6 plugins), on the main thread. */
                    private val onCommand: (String) -> Unit = {},
                    /** Send the phone microphone too (0.6 plugins only; off unless the user turned it on). */
-                   microphone: Boolean = false) {
+                   microphone: Boolean = false,
+                   /** Screen sharing (0.6): the user's consent for this session; the camera is not used. */
+                   private val screen: android.media.projection.MediaProjection? = null) {
+    private var virtual: android.hardware.display.VirtualDisplay? = null
+    /** Screen sharing: the screen changed shape (turned); the encoder restarts at the new size on the same connection. */
+    fun resizeScreen(width: Int, height: Int) {
+        handler.post {
+            if (finished || screen == null || (width == profile.width && height == profile.height)) return@post
+            val next = ScreenSource.profile(width, height) ?: return@post
+            if (next.width == profile.width && next.height == profile.height) return@post
+            generation++
+            handler.removeCallbacks(startDeadline)
+            releaseCapture()
+            transport.restart()
+            profile = next
+            bitrate = BitrateController(next.bitrate); stats = FrameStats()
+            lastFrameAt = 0; switchedAt = SystemClock.elapsedRealtime()
+            prepare()
+        }
+    }
     @Volatile private var micWanted = microphone
     private var audio: AudioSender? = null
     /** The camera stamps frames with elapsedRealtime (boot time) rather than the monotonic clock. */
@@ -192,10 +211,12 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         if (finished) return
         val gen = generation
         try {
-            val characteristics = context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)
-            requestKeys = characteristics.availableCaptureRequestKeys.toSet()
-            boottime = characteristics[CC.SENSOR_INFO_TIMESTAMP_SOURCE] == CC.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
-            continuousFocus = CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in characteristics[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
+            if (screen == null) {
+                val characteristics = context.getSystemService(CameraManager::class.java).getCameraCharacteristics(profile.cameraId)
+                requestKeys = characteristics.availableCaptureRequestKeys.toSet()
+                boottime = characteristics[CC.SENSOR_INFO_TIMESTAMP_SOURCE] == CC.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
+                continuousFocus = CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in characteristics[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
+            }
             handler.postDelayed(startDeadline, 15_000)
             val encoder = MediaCodec.createByCodecName(profile.encoder)
             codec = encoder
@@ -218,6 +239,8 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                 setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
                 setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
                 setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+                // A still screen sends no new pictures; repeating the last one keeps OBS fed (and the stall check quiet).
+                if (screen != null) setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
             }
             encoder.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(c: MediaCodec, index: Int) = Unit
@@ -273,6 +296,7 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
             }, handler)
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             input = encoder.createInputSurface(); encoder.start()
+            if (screen != null) { showScreen(); return }
             context.getSystemService(CameraManager::class.java).openCamera(profile.cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     // The main looper outlives the capture worker. A late open must still close its device.
@@ -288,6 +312,21 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                 override fun onError(device: CameraDevice, error: Int) { device.close(); handler.post { if (gen == generation) finish("Camera error $error") } }
             }, main)
         } catch (e: Exception) { finish("Could not start live: ${e.message}. No settings silently substituted.") }
+    }
+
+    /** Screen sharing: Android draws the screen into the encoder's surface (created once, then given new surfaces). */
+    private fun showScreen() {
+        val projection = screen ?: return
+        val surface = input ?: error("No encoder surface")
+        val existing = virtual
+        if (existing != null) { existing.resize(profile.width, profile.height, context.resources.displayMetrics.densityDpi); existing.surface = surface; return }
+        // Android 14 requires the callback before the display; it also reports the user ending sharing and turns.
+        projection.registerCallback(object : android.media.projection.MediaProjection.Callback() {
+            override fun onStop() { handler.post { finish("Screen sharing ended.") } }
+            override fun onCapturedContentResize(width: Int, height: Int) { resizeScreen(ScreenSource.scaled(width, height, 1920).first, ScreenSource.scaled(width, height, 1920).second) }
+        }, handler)
+        virtual = projection.createVirtualDisplay("PhoneCam screen", profile.width, profile.height, context.resources.displayMetrics.densityDpi,
+            android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, handler)
     }
 
     @Suppress("DEPRECATION")
@@ -385,6 +424,7 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         runCatching { capture?.stopRepeating() }; runCatching { capture?.close() }; capture = null
         runCatching { camera?.close() }; camera = null
         runCatching { codec?.stop() }; runCatching { codec?.release() }; codec = null
+        runCatching { virtual?.surface = null }
         runCatching { input?.release() }; input = null; viewSurface = null  // the SurfaceView owns its surface
     }
 
@@ -395,6 +435,8 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         audio?.stop(); audio = null
         transport.close()
         releaseCapture()
+        runCatching { virtual?.release() }; virtual = null
+        runCatching { screen?.stop() }
         post(LiveState(LiveState.Phase.STOPPED, reason, stats.fps, sequence, transport.dropped, rotation))
         thread.quitSafely()
     }

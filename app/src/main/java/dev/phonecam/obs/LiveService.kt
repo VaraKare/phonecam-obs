@@ -31,6 +31,8 @@ class LiveService : Service() {
         private const val ID = 1
         const val STOP = "dev.phonecam.obs.STOP"
         const val LOWER = "dev.phonecam.obs.LOWER"
+        /** Told once Android accepted (true) or refused (false) the service; screen sharing waits for it. */
+        @Volatile var onForeground: ((Boolean) -> Unit)? = null
         /** The heat or battery warning's Lower quality button; set by MainActivity while live. */
         @Volatile var lower: (() -> Unit)? = null
         /** Stops the user's session (with a reason); set at Start and cleared when it stops. */
@@ -126,10 +128,12 @@ class LiveService : Service() {
             else startForeground(ID, build(this, shown))
         } catch (e: Exception) {
             Log.w("PhoneCam", "Background live refused: ${e.message}")
+            onForeground?.invoke(false); onForeground = null
             stopSelf(); return START_NOT_STICKY
         }
         if (stop == null) { stopSelf(); return START_NOT_STICKY }
         running = true
+        onForeground?.invoke(true); onForeground = null
         if (wake == null) wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PhoneCam:live")
             .apply { setReferenceCounted(false); acquire(12 * 60 * 60 * 1000L) }  // released on Stop; bounded in case of a bug
         return START_NOT_STICKY  // never restarted by Android: live starts only when the user taps Start
