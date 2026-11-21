@@ -46,5 +46,6 @@ std::string pairWifi(const std::string &adb, const std::string &address, const s
 // After the phone link drops mid-session (unplugging), the link is removed and the phone found again, as at
 // start. Two adb calls in a row without an answer restart the adb server.
 void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &adbSetting,
-                 const Status &status, const Output &output, Activity *activity = nullptr);
+                 const Status &status, const Output &output, Activity *activity = nullptr,
+                 Channel *channel = nullptr);
 }

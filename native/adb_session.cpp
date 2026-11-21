@@ -44,7 +44,7 @@ const char *Activity::name(int value) {
 }
 
 void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &adbSetting,
-                 const Status &status, const Output &output, Activity *activity) {
+                 const Status &status, const Output &output, Activity *activity, Channel *channel) {
     std::string adb, serial, token, last;
     int port = 0, stalls = 0;
     auto tokenFetched = std::chrono::steady_clock::time_point{};
@@ -106,7 +106,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                     }
                     say(devices.unauthorized ? "Unlock the phone, tick \"Always allow from this computer\" and tap Allow on the USB debugging prompt."
                         : devices.offline ? "The phone is offline. Reconnect the USB cable, or turn Wireless debugging off and on."
-                        : "Ready. Tap Start live on a phone paired over Wi-Fi, or connect one with a USB data cable (USB debugging on).");
+                        : "Ready. Tap the record button on a phone paired over Wi-Fi, or connect one with a USB data cable (USB debugging on).");
                     wait(2000); continue;
                 }
                 doing(Activity::ReadingKey);
@@ -143,7 +143,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                 if (!port) { serial.clear(); token.clear(); say("Could not create the link to the phone. Reconnect the cable or Wi-Fi."); wait(2000); continue; }
                 stalls = 0;
             }
-            say("Ready. Tap Start live on the phone.");
+            say("Ready. Tap the record button on the phone.");
             bool announced = false;
             doing(Activity::Linked);
             receive(stop, {port, token}, [&](Image image, uint64_t sequence, uint64_t pts) {
@@ -152,7 +152,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
                     say(std::string(isWireless(serial) ? "Live over Wi-Fi: " : "Live over USB: ") + std::to_string(imageWidth(image)) + "×" + std::to_string(imageHeight(image)) + ", " + decoderName() + ".");
                 }
                 output(image, sequence, pts);
-            });
+            }, channel);
         } catch (const ConnectionRefused &) {
             port = 0; serial.clear(); token.clear();  // ADB already removed the forward.
             wait(300); continue;
@@ -161,7 +161,7 @@ void autoReceive(std::atomic<bool> &stop, const std::function<std::string()> &ad
             if (std::chrono::steady_clock::now() - tokenFetched > std::chrono::seconds(15)) dropForward();
         } catch (const std::exception &error) {
             if (stop) break;  // Source hidden or removed: nothing to report.
-            say(std::string("Live ended: ") + error.what() + ". Tap Start live on the phone to go live again.");
+            say(std::string("Live ended: ") + error.what() + ". Tap the record button on the phone to go live again.");
             // The cable may have been unplugged: find the phone and create the link again, as at start,
             // rather than retrying a link adb may have dropped or kept half-alive.
             dropForward();

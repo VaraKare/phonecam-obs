@@ -103,6 +103,13 @@ struct Handshake {
         return {Bytes(material.begin(), material.begin() + 32), Bytes(material.begin() + 32, material.end()),
                 hkdfExpand(prk, join(bytes("pcam pairing"), h), 32)};
     }
+    // Computer → phone records (0.6: hello and commands). Their own keys, so the two directions never share
+    // a key and record number (AES-CTR counter).
+    SessionKeys replyKeys() const {
+        Bytes h = sha256(join(t1, tagM, tagP));
+        Bytes material = hkdfExpand(prk, join(bytes("pcam reply keys"), h), 64);
+        return {Bytes(material.begin(), material.begin() + 32), Bytes(material.begin() + 32, material.end()), Bytes()};
+    }
 };
 
 inline Bytes recordTag(const Bytes &authKey, uint64_t record, const Bytes &ciphertext) {

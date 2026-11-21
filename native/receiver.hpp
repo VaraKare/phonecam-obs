@@ -26,11 +26,13 @@ struct Endpoint { int port = 0; std::string token; };
 // Nothing listens on the Mac port: the ADB forward is gone (unplugged, USB reset, adb restarted).
 struct ConnectionRefused : std::runtime_error { using std::runtime_error::runtime_error; };
 // Decodes PCAM v3 messages (configuration, then frames) from any transport until stop or an error.
-void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output);
+// With a channel, audio and control messages go to it (0.6).
+void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output, Channel *channel = nullptr);
 // Reads tools/live.py settings (diagnostic CLI path). Validates port range and 64-hex token.
 Endpoint loadEndpoint(const std::string &configPath);
 // Each run owns its socket and synchronous hardware decoder. Destruction follows run exit.
-void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output);
+// With a channel, sends the 0.6 hello after the key and lets the plugin answer the phone (commands).
+void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output, Channel *channel = nullptr);
 std::string defaultConfigPath();
 // How the last session decodes, for the status line ("hardware decoding" or "software decoding").
 std::string decoderName();

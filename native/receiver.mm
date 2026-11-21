@@ -209,15 +209,15 @@ Endpoint loadEndpoint(const std::string &configPath) {
         return {port, token};
     }
 }
-void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output) {
+void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output, Channel *channel) {
     @autoreleasepool {
         Decoder decoder(output);
-        decodeMessages(stop, read, decoder, logSink.load(), "Mac");
+        decodeMessages(stop, read, decoder, logSink.load(), "Mac", channel);
     }
 }
 void setLog(void (*sink)(const char *)) { logSink = sink; }
 std::string decoderName() { return "hardware decoding"; }  // software fallback is disabled on the Mac
-void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output) {
+void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output, Channel *channel) {
     @autoreleasepool {
         int port = endpoint.port;
         std::string token = endpoint.token;
@@ -231,7 +231,19 @@ void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &ou
         if (connect(socket.fd, reinterpret_cast<sockaddr *>(&address), sizeof(address))) throw ConnectionRefused("No USB link to the phone");
         token += '\n';
         if (send(socket.fd, token.data(), token.size(), 0) != ssize_t(token.size())) throw std::runtime_error("USB authentication write failed");
-        decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { readExact(socket.fd, p, n, stop, seconds); }, output);
+        int fd = socket.fd;
+        auto write = [fd](const std::vector<uint8_t> &bytes) {
+            size_t sent = 0;
+            while (sent < bytes.size()) {
+                ssize_t n = send(fd, bytes.data() + sent, bytes.size() - sent, 0);
+                if (n <= 0) throw std::runtime_error("USB write failed");
+                sent += size_t(n);
+            }
+        };
+        // ADB accepts locally even when the phone isn't listening; then this write lands in a closing link.
+        if (channel) { try { write(control(pluginHello)); } catch (...) { throw NotStreaming("Waiting for the record button on the phone"); } }
+        Attached attached(channel, write);
+        decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { readExact(socket.fd, p, n, stop, seconds); }, output, channel);
     }
 }
 }

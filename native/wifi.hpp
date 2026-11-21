@@ -34,8 +34,9 @@ class Server {
 public:
     using Status = std::function<void(const std::string &)>;
     // note: log-only lines that must not replace the status line (for example ignored outside connections).
-    Server(Status status, Output output, Status note = nullptr)
-        : status(std::move(status)), output(std::move(output)), note(std::move(note)) {}
+    // channel (0.6): the phone's audio and control messages, and commands back to it. Must outlive the server.
+    Server(Status status, Output output, Status note = nullptr, Channel *channel = nullptr)
+        : status(std::move(status)), output(std::move(output)), note(std::move(note)), channel(channel) {}
     // Until stop: listens only while a phone is paired or a pairing window is open, one connection at a time
     // (pairing or live video). Never throws: problems are reported through status.
     void run(std::atomic<bool> &stop);
@@ -58,6 +59,7 @@ private:
     Status status;
     Output output;
     Status note;
+    Channel *channel;
     std::mutex lock;
     Pairings pairings;                             // the pairings file, read once; changed only through the server
     Bytes secret;                                  // current pairing window; empty when closed

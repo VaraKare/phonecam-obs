@@ -1,5 +1,7 @@
 package dev.phonecam.obs
 
+import java.io.DataInputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.math.BigInteger
 import java.security.KeyFactory
@@ -79,7 +81,8 @@ object WifiCrypto {
         private fun fixed(v: BigInteger): ByteArray { val b = v.toByteArray(); return ByteArray(32).also { System.arraycopy(b, maxOf(0, b.size - 32), it, maxOf(0, 32 - b.size), minOf(32, b.size)) } }
     }
 
-    class Keys(val encryption: ByteArray, val authentication: ByteArray, val longTerm: ByteArray)
+    /** [reply]: the computer → phone direction (0.6 hello and commands), with its own keys. */
+    class Keys(val encryption: ByteArray, val authentication: ByteArray, val longTerm: ByteArray, val reply: Keys? = null)
     /** t1 = ClientHello || ServerHello without tagM. */
     class Handshake(key: ByteArray, z: ByteArray, private val t1: ByteArray) {
         private val prk = hmac(key, z)
@@ -88,7 +91,9 @@ object WifiCrypto {
         fun keys(): Keys {
             val h = sha256(t1, tagM, tagP)
             val material = hkdfExpand(prk, "pcam keys".toByteArray() + h, 64)
-            return Keys(material.copyOfRange(0, 32), material.copyOfRange(32, 64), hkdfExpand(prk, "pcam pairing".toByteArray() + h, 32))
+            val back = hkdfExpand(prk, "pcam reply keys".toByteArray() + h, 64)
+            return Keys(material.copyOfRange(0, 32), material.copyOfRange(32, 64), hkdfExpand(prk, "pcam pairing".toByteArray() + h, 32),
+                Keys(back.copyOfRange(0, 32), back.copyOfRange(32, 64), ByteArray(0)))
         }
     }
 
@@ -110,6 +115,25 @@ object WifiCrypto {
             }
             out.write(mac.doFinal(), 0, 16)
             record++
+        }
+    }
+
+    /** Reads the computer's records (length || AES-256-CTR || tag), checking the tag before decrypting. */
+    class Opener(private val keys: Keys) {
+        private var record = 0L
+        private val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+        private val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(keys.authentication, "HmacSHA256")) }
+        fun open(input: DataInputStream): ByteArray {
+            val length = input.readInt()
+            if (length <= 0 || length > 8192) throw IOException("Wi-Fi record from the computer has an invalid length")
+            val encrypted = ByteArray(length).also(input::readFully)
+            val tag = ByteArray(16).also(input::readFully)
+            mac.update(java.nio.ByteBuffer.allocate(12).putLong(record).putInt(length).array())
+            if (!equal(mac.doFinal(encrypted).copyOf(16), tag)) throw IOException("Wi-Fi record from the computer failed its integrity check")
+            val iv = ByteArray(16).also { b -> for (i in 0 until 8) b[i] = (record ushr (56 - 8 * i)).toByte() }
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keys.encryption, "AES"), IvParameterSpec(iv))
+            record++
+            return cipher.doFinal(encrypted)
         }
     }
 }

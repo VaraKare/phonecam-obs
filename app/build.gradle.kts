@@ -18,8 +18,8 @@ android {
         applicationId = "dev.phonecam.obs"
         minSdk = 29
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.5.0-alpha.1"
+        versionCode = 14
+        versionName = "0.6.0-alpha.1"
     }
     signingConfigs {
         if (signing.getProperty("storeFile") != null) create("release") {
@@ -39,6 +39,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    buildFeatures { buildConfig = true }
     lint { abortOnError = true; warningsAsErrors = false }
     testOptions { unitTests.isReturnDefaultValues = false }
 }

@@ -232,12 +232,12 @@ public:
 };
 }
 
-void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output) {
+void decodeStream(std::atomic<bool> &stop, const Reader &read, const Output &output, Channel *channel) {
     Decoder decoder(output);
-    decodeMessages(stop, read, decoder, logSink.load(), "PC");
+    decodeMessages(stop, read, decoder, logSink.load(), "PC", channel);
 }
 
-void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output) {
+void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &output, Channel *channel) {
     startWinsock();
     if (endpoint.port < 1 || endpoint.port > 65535 || endpoint.token.size() != 64 ||
         endpoint.token.find_first_not_of("0123456789abcdef") != std::string::npos) throw std::runtime_error("Invalid USB port/token");
@@ -263,7 +263,19 @@ void receive(std::atomic<bool> &stop, const Endpoint &endpoint, const Output &ou
     setsockopt(socket.fd, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&sendLimit), sizeof(sendLimit));
     std::string token = endpoint.token + "\n";
     if (send(socket.fd, token.data(), int(token.size()), 0) != int(token.size())) throw std::runtime_error("USB authentication write failed");
-    decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { readExact(socket.fd, p, n, stop, seconds); }, output);
+    SOCKET fd = socket.fd;
+    auto write = [fd](const std::vector<uint8_t> &bytes) {
+        size_t sent = 0;
+        while (sent < bytes.size()) {
+            int n = ::send(fd, reinterpret_cast<const char *>(bytes.data() + sent), int(bytes.size() - sent), 0);
+            if (n <= 0) throw std::runtime_error("USB write failed");
+            sent += size_t(n);
+        }
+    };
+    // ADB accepts locally even when the phone isn't listening; then this write lands in a closing link.
+    if (channel) { try { write(control(pluginHello)); } catch (...) { throw NotStreaming("Waiting for the record button on the phone"); } }
+    Attached attached(channel, write);
+    decodeStream(stop, [&](uint8_t *p, size_t n, int seconds) { readExact(socket.fd, p, n, stop, seconds); }, output, channel);
 }
 
 void setLog(void (*sink)(const char *)) { logSink = sink; }
