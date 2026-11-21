@@ -8,7 +8,11 @@ Use your Android phone's camera as a high-quality video source in [OBS Studio](h
 - **Any orientation:** portrait or landscape, and turning the phone during a session keeps the picture upright in OBS.
 - **Cable or Wi-Fi:** plug in, or pair once over Wi-Fi by scanning a QR code in OBS. Then open OBS and tap the red record button on the phone. No commands to type.
 - **Keeps going when you leave the app:** switch apps, go Home or lock the phone and OBS keeps the picture, with a notification that has **Stop**. Going Home shows the phone preview in a small floating window (picture-in-picture). Both can be turned off in the phone's Settings.
-- **Private:** the phone saves nothing during live sessions. Wi-Fi video is encrypted and stays on your local network. No microphone, no accounts, no analytics.
+- **Control it from OBS:** switch camera, change quality, torch and mirror from the source's Properties or with OBS hotkeys.
+- **Phone microphone (optional):** off unless you turn it on; its sound arrives in OBS in sync with the picture.
+- **Share the phone screen** instead of the camera, for game and app demos. Android asks your permission every time.
+- **Looks after the phone:** warnings when it gets hot (with one-tap Lower quality) and at 20, 15, 10 and 5 % battery; a notification if live ends while you're in another app.
+- **Private:** the phone saves nothing during live sessions. Wi-Fi video is encrypted and stays on your local network. The microphone is off unless you turn it on. No accounts, no analytics.
 
 ## What you need
 
@@ -73,6 +77,8 @@ Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on t
 <!-- IMAGE: docs/images/phone-live.png — the phone showing LIVE -->
 <!-- IMAGE: docs/images/obs-bounding-box.png — Edit Transform, Bounding Box Type -->
 <!-- IMAGE: docs/images/obs-filters-mask.png — adding an Image Mask/Blend filter -->
+
+**On the phone,** the row of icons above the record button is, from the left: camera, screen sharing, quality, mirror and microphone (blue means on). Press and hold any icon to see its name; Settings → **What the buttons do** lists them all. While live, the PhoneCam source's **Properties → Phone** section in OBS can switch camera, change quality, and turn the torch and mirror on or off. OBS → Settings → **Hotkeys** has keys for switching camera, the torch and stopping.
 
 To use the phone in Zoom, Meet or Teams, add it to an OBS scene and click **Start Virtual Camera** in OBS.
 
@@ -146,6 +152,8 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | "Install the PhoneCam app" | Install the phone app (step 3). |
 | "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |
 | Live stops when you switch apps | Check **Settings → Keep live when you leave the app** is on. Some phones (vivo, Xiaomi, OPPO and others) close background apps anyway: allow PhoneCam to run in the background in Android's battery settings for the app. Swiping PhoneCam away from recent apps always stops live. |
+| OBS says the PhoneCam source "is not assigned to any audio tracks" | PhoneCam 0.6 turns its tracks on by itself the first time the phone microphone sends sound. If you unticked them, tick them again in **Edit → Advanced Audio Properties → Tracks**. |
+| Screen sharing shows only one app | Android 14 and later asks "A single app" or "Entire screen" at the top of its permission prompt; choose **Entire screen**. Some phones hide this choice. |
 | Phone says "Warm" or "Hot" | Choose **High** or **Balanced**, take the case off, or keep the phone out of the sun. |
 | Only the middle of the picture shows in OBS | The source was moved or resized by hand. Open its **Properties** → **Fit to canvas now** (or right-click → **Transform → Reset Transform**, then Start live again). |
 | Phone says "OBS stopped receiving" | Normal when you hide the source, quit OBS or unplug. Show the source and tap the record button again. |
