@@ -63,6 +63,7 @@ struct Source {
     // "Keep the phone live while this source is hidden": hide leaves USB and Wi-Fi running. start/end are
     // serialised because hide runs on OBS's video thread and the switch on the UI thread.
     std::atomic<bool> visible{false}, keepLive{false}, waitingForPhone{false};
+    std::atomic<int64_t> forgetArmedUntil{0};
     std::recursive_mutex runLock;
     explicit Source(obs_source_t *value) : source(value) {}
     std::shared_ptr<Link> current() { std::lock_guard<std::mutex> guard(linkLock); return link; }
@@ -73,7 +74,7 @@ struct Source {
     // blocked that thread until OBS closed (17 Nov laptop: the Wi-Fi thread after "Paired with…", the USB
     // thread after "Unlock the phone…").
     void setStatus(const std::string &value) { postStatus(value, false); }
-    void refreshProperties() { obs_queue_task(OBS_TASK_UI, refreshOnUi, obs_source_get_weak_source(source), false); }
+    void refreshProperties() { queueOnUi(source, refreshOnUi); }
     // A watchdog warning replaces the status line until progress resumes; then the status it replaced comes
     // back (the connection thread does not repeat an unchanged status; audit/FINDINGS.md AUDIT-022a).
     void warn(const std::string &value) {
@@ -352,6 +353,14 @@ obs_properties_t *properties(void *value) {
     obs_properties_add_button2(connection, "wifi_forget", "Forget paired phones", [](obs_properties_t *, obs_property_t *, void *data) {
         if (!data) return false;
         auto *self = static_cast<Source *>(data);
+        // Two clicks within 5 s: one stray click forgot every pairing (21 Nov). The second click confirms.
+        const int64_t now = steadyMs();
+        if (now > self->forgetArmedUntil) {
+            self->forgetArmedUntil = now + 5000;
+            self->setStatus("Click Forget paired phones again within 5 seconds to forget every paired phone. They will need to pair again for Wi-Fi.");
+            return true;
+        }
+        self->forgetArmedUntil = 0;
         try {
             {
                 std::lock_guard<std::mutex> guard(self->wifiLock);

@@ -77,6 +77,16 @@ Camera and quality changes keep the connection to OBS. Audit fixes 010 to 014 an
 - Android asks the user for permission every time screen sharing starts. A notification and Android's own indicator show while sharing.
 - Recording and storage happen on the computer, in OBS. The phone stays a camera or screen source and keeps nothing.
 
+### Owner-approved ideas (21 November 2026), order to be planned
+
+1. **Control the phone from OBS:** switch camera, change quality and zoom from the source's Properties.
+2. **Several phones as several cameras:** each phone as its own OBS source, for multi-angle streams. Builds on the one-source rule (AUDIT-011).
+3. **Phone microphone,** off unless the user turns it on (see "Later: optional audio").
+4. **Heat and battery warnings, the user decides:**
+   - a notification when the phone gets hot, with a one-tap "Lower quality";
+   - battery notifications at 20, 15, 10 and 5 %.
+   If the user ignores them, live continues until the phone itself stops it. Each warning is an option in Settings.
+
 ### v0.6 — Polish
 
 - Several phones as separate OBS sources; choosing or switching the phone camera from OBS.

@@ -87,6 +87,15 @@ void startWifiPairing(obs_source_t *source) {
     }).detach();
 }
 void logLine(const char *line) { blog(LOG_INFO, "[phonecam] %s", line); }
+// Runs task(weak source) on OBS's UI thread, but never inside the current call. On the UI thread obs_queue_task
+// runs the task at once, and a Properties refresh inside a button click deletes the button OBS is still handling:
+// OBS crashed on "Forget paired phones" (21 Nov 2026, Mac, twice). From the UI thread it hops through a short-lived
+// thread, so OBS queues the task behind the click instead.
+void queueOnUi(obs_source_t *source, void (*task)(void *)) {
+    obs_weak_source_t *weak = obs_source_get_weak_source(source);
+    if (!obs_in_task_thread(OBS_TASK_UI)) { obs_queue_task(OBS_TASK_UI, task, weak, false); return; }
+    std::thread([task, weak] { obs_queue_task(OBS_TASK_UI, task, weak, false); }).detach();
+}
 // The status box at the top of the source's Properties: yellow when something needs the user, with help on hover.
 bool needsAttention(const std::string &status) {
     for (const char *word : {"Not responding", "not found", "stopped", "failed", "unavailable", "ould not", "Unlock the phone",
