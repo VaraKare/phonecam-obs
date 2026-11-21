@@ -156,6 +156,11 @@ class MainActivity : Activity() {
     private var startOnResume = false
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    /** A small white icon before a chip's words (icons drawn for PhoneCam, like the switch-camera one). */
+    private fun TextView.icon(res: Int) {
+        val drawable = getDrawable(res)?.mutate()?.apply { setTint(Color.WHITE); setBounds(0, 0, dp(18), dp(18)) }
+        setCompoundDrawablesRelative(drawable, null, null, null); compoundDrawablePadding = dp(6)
+    }
     private fun rounded(color: Int, radius: Int = 10) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
     private fun chip(gravity: Int) = TextView(this).apply {
         setTextColor(Color.WHITE); textSize = 13f; background = rounded(CHIP, 6); setPadding(dp(8), dp(4), dp(8), dp(4))
@@ -212,8 +217,9 @@ class MainActivity : Activity() {
         qualityChip = pill { chooseQuality() }
         mirrorChip = pill { toggleMirror() }
         micChip = pill { toggleMic() }
-        cameraModeChip = pill { chooseSource(false) }.apply { text = "Camera"; textSize = 13f; minHeight = dp(34) }
-        screenModeChip = pill { chooseSource(true) }.apply { text = "Screen"; textSize = 13f; minHeight = dp(34) }
+        cameraModeChip = pill { chooseSource(false) }.apply { text = "Camera"; textSize = 13f; minHeight = dp(34); icon(R.drawable.ic_videocam); contentDescription = "Send the camera" }
+        screenModeChip = pill { chooseSource(true) }.apply { text = "Screen"; textSize = 13f; minHeight = dp(34); icon(R.drawable.ic_screen_share); contentDescription = "Share the phone screen" }
+        qualityChip.icon(R.drawable.ic_quality); mirrorChip.icon(R.drawable.ic_mirror)
         panel.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, 0, 0, dp(10))
             addView(cameraModeChip); addView(screenModeChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
@@ -350,11 +356,11 @@ class MainActivity : Activity() {
         switchButton.alpha = if (switchButton.isEnabled) 1f else 0.4f
         switchButton.contentDescription = if (next != null) "Switch to the $next camera" else "Only one camera"
         val profile = selected()
-        qualityChip.text = "${choice.label.substringBefore(" (")} · ${profile?.let { Quality.short(it) } ?: "not available"}  ▾"
+        qualityChip.text = "${choice.label.substringBefore(" (")} · ${profile?.let { Quality.short(it) } ?: "not available"} ▾"
         qualityChip.background = rounded(0xFF1E1E1E.toInt(), 20)
         qualityChip.contentDescription = "Quality: ${choice.label}. Tap to change"
         val mirror = cameraId?.let { prefs.getBoolean("ctl.$it.mirror", false) } ?: false
-        mirrorChip.text = if (mirror) "Mirror on" else "Mirror off"
+        mirrorChip.text = "Mirror"
         mirrorChip.background = rounded(if (mirror) BLUE else 0xFF1E1E1E.toInt(), 20)
         mirrorChip.contentDescription = "Mirror the picture in OBS, ${if (mirror) "on" else "off"}"
         val screen = screenMode
@@ -364,7 +370,8 @@ class MainActivity : Activity() {
         qualityChip.visibility = if (screen) View.GONE else View.VISIBLE
         mirrorChip.visibility = if (screen) View.GONE else View.VISIBLE
         if (screen) { switchButton.isEnabled = false; switchButton.alpha = 0.4f }
-        micChip.text = if (micOn) "Mic on" else "Mic off"
+        micChip.text = "Mic"
+        micChip.icon(if (micOn) R.drawable.ic_mic else R.drawable.ic_mic_off)
         micChip.background = rounded(if (micOn) BLUE else 0xFF1E1E1E.toInt(), 20)
         micChip.contentDescription = "Phone microphone to OBS, ${if (micOn) "on" else "off"}"
         detail.text = when {

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Camera source: a video camera (drawn for PhoneCam). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M4.5,7h9a2,2 0,0 1,2 2v6a2,2 0,0 1,-2 2h-9a2,2 0,0 1,-2 -2v-6a2,2 0,0 1,2 -2z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M16.5,10.6l4.2,-2.6c0.4,-0.2 0.8,0 0.8,0.5v7c0,0.5 -0.4,0.7 -0.8,0.5l-4.2,-2.6z" />
+</vector>
