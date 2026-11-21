@@ -4,7 +4,7 @@ For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.m
 
 ## State
 
-- **Released:** v0.4.0-alpha.1 on 20 Nov 2026 (pre-release), merged into `main`. The Mac plugin and APK are built from 1e84305. The Windows plugin is the laptop-tested build from 0b53c03. Ask the owner before every merge, tag or release.
+- **Released:** v0.5.0-alpha.1 on 21 Nov 2026 (pre-release, phone app only), `main` merged at f72e2d3; the phone ran the exact APK. Mac plugin: v0.4.1-alpha.1 (21 Nov, built from 624e110). Windows plugin: v0.4.0-alpha.1 (laptop-tested build from 0b53c03). Ask the owner before every merge, tag or release.
 - **Proven on hardware:**
   - **Windows laptop, plugin from 0b53c03 (17 Nov):** USB live, replug, hide/show, Wi-Fi pairing twice, Wi-Fi live, LAN noise, a 13-minute run and a clean exit. See [WINDOWS_THIRD_LAPTOP_TEST.md](research/WINDOWS_THIRD_LAPTOP_TEST.md).
   - **Mac (18–19 Nov):** USB live, keep live while hidden, Wi-Fi pairing after the deadlock fix (07b6c52), quick exit, and the design v1 phone screens. Switching camera or quality during live restarts in about 3 s.
@@ -14,15 +14,20 @@ For a new chat or another computer: read this file, then [AGENTS.md](../AGENTS.m
 - **Rule for tomorrow (owner, 19 Nov):** test, and when something fails, fix it following this plan without deviating. Rebuild, retest the failed check, then continue.
 - **Product direction (owner, 19 Nov):** a niche product, the best phone camera for OBS. No 3D. The earning ideas wait until there are users.
 
-## 21 November: v0.4.1 ready to release
+## 21 November: v0.5.0-alpha.1 released (phone app only)
+
+- **What's in it:** background live (camera foreground service, Stop notification, swipe-away stops), picture-in-picture, a record button with no text, Settings during live, and the background-battery hint. All passed on the vivo V2437; see [versions/v0.5.md](versions/v0.5.md).
+- **New rule (owner):** every version gets its own document in `docs/versions/`, as well as the usual release notes, README, roadmap and hand-off.
+- **Rule change recorded:** background live in AGENTS.md and docs/PLAN.md.
+- **Next:**
+  1. OBS plugin wording: "Start live" → "the record button" (next plugin update, needs an OBS check).
+  2. Then the owner's ideas: screen sharing, control from OBS, several phones, microphone, heat and battery warnings.
+
+## 21 November: v0.4.1-alpha.1 released (phone and Mac)
 
 - **Hardware looks passed (phone + Mac):** the "Last session ended" line, dark mode while live, and the two-source walkthrough (wait, hand over on hide with keep-live off, wait again on show, take back on remove).
 - **Fixed on the way:** OBS crashed on Forget paired phones (f71cc5a; one click now asks again), and the second source's message now says exactly when it takes over (bf02ea9).
-- **Release candidate:** `dist/0.4.1-alpha.1/` (outside Git) from `python3 tools/release.py`; notes in [releases/v0.4.1-alpha.1.md](releases/v0.4.1-alpha.1.md). Phone and Mac only: the Windows build has not run on a Windows PC, so v0.4.1 points Windows users to the v0.4.0 plugin.
-- **Next:**
-  1. Install the candidate files and do one short live (exact-file check).
-  2. With the owner's yes: merge to `main`, tag `v0.4.1-alpha.1`, publish the pre-release.
-  3. v0.5: background live (on by default, notification with Stop, swipe-away stops, vivo battery hint), then picture-in-picture. Record the rule change in AGENTS.md and docs/PLAN.md.
+- **Released** from `dist/0.4.1-alpha.1/` (built from 624e110, checked live with the exact files), `main` merged at 858a5ef. The Windows build has not run on a Windows PC, so v0.4.1 points Windows users to the v0.4.0 plugin.
 
 ## 20 November, after the v0.4 release
 

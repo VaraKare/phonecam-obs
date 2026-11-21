@@ -58,13 +58,13 @@ Most laptop users run Windows, so Windows support is required, delivered in phas
 - Same phone app; same pairing and automatic connection as on the Mac, then the v0.3 wireless connection.
 - **Proof:** the code can be written now and built and tested automatically on GitHub's Windows machines (CI) with synthetic video. It is released only after a real Windows PC with OBS and a real phone pass the checks, either the owner's or a volunteer tester's device report.
 
-### v0.4.1 — Faster switching and fixes
+### v0.4.1 — Faster switching and fixes (released 21 Nov 2026)
 
 Camera and quality changes keep the connection to OBS. Audit fixes 010 to 014 and 017 are included. Tested on the phone and Mac on 20–21 Nov 2026.
 
 ### v0.5 — Live when you leave the app (owner, 21 November 2026)
 
-**Status:** built and tested on the vivo V2437 on 21 Nov: background live, picture-in-picture, the record button and Settings during live ([version guide](versions/v0.5.md), [results](research/VIVO_V2437_BACKGROUND_LIVE.md)). Phone app only; ready to release as 0.5.0-alpha.1 with the owner's yes.
+**Status:** built and tested on the vivo V2437 on 21 Nov: background live, picture-in-picture, the record button and Settings during live ([version guide](versions/v0.5.md), [results](research/VIVO_V2437_BACKGROUND_LIVE.md)). Released as 0.5.0-alpha.1 on 21 Nov 2026 (phone app only).
 
 - **Background live, on by default.** Leaving PhoneCam (another app, the home screen, the screen off) keeps sending to OBS.
   - A notification stays in the status bar the whole time: "● PhoneCam is live to OBS · 05:23" with **Stop**. Android's own green camera dot also shows.
