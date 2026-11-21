@@ -357,7 +357,6 @@ class MainActivity : Activity() {
             else if (phase == LiveState.Phase.STOPPED && !switching && foreground && lastPhase != null && lastPhase != LiveState.Phase.STOPPED)
                 feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
             lastPhase = phase
-            updatePip()
         }
         // The computer used most recently (pairings are kept in order of use), plus how many others are paired.
         val paired = if (phase == LiveState.Phase.STOPPED) WifiConnector(this).pairings.macs.lastOrNull()?.let { last ->
@@ -374,7 +373,9 @@ class MainActivity : Activity() {
         stats.visibility = if (phase == LiveState.Phase.LIVE && p != null) View.VISIBLE else View.GONE
         if (state != null && p != null) stats.text = "${Quality.short(p).substringBefore(" ")} · ${"%.0f".format(state.fps)} fps · ${state.drops} dropped" +
             if (state.bitrate in 1 until state.requestedBitrate) "\nLink busy: ${state.bitrate / 1_000_000} of ${state.requestedBitrate / 1_000_000} Mb/s" else ""
+        val changed = shownPhase != phase
         shownPhase = phase
+        if (changed) updatePip()  // after shownPhase, which decides whether Home opens the small window
         showHeat(runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0))
         stageControls.visibility = if (phase == LiveState.Phase.LIVE && !inPip) View.VISIBLE else View.GONE
         if (inPip) stats.visibility = View.GONE
