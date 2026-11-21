@@ -78,7 +78,8 @@ class MainActivity : Activity() {
     /** A camera or quality change while live: the session stops and starts again; the timer keeps counting. */
     private var switching = false
     private var keepTimer = false
-    private fun liveBadge() = "● Live  ${elapsed()}" + if (liveRoute.isNotEmpty()) " · $liveRoute" else ""
+    // The small picture-in-picture window gets a compact badge: the red dot and the timer only.
+    private fun liveBadge() = if (inPip) "● ${elapsed()}" else "● Live  ${elapsed()}" + if (liveRoute.isNotEmpty()) " · $liveRoute" else ""
     private fun elapsed(): String {
         val seconds = ((SystemClock.elapsedRealtime() - liveSince) / 1000).coerceAtLeast(0)
         val h = seconds / 3600; val m = seconds / 60 % 60; val s = seconds % 60
@@ -138,6 +139,8 @@ class MainActivity : Activity() {
     private val pipWanted get() = prefs.getBoolean("pip", true) && showPreview &&
         packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
     private var inPip = false
+    /** PhoneCam's own Settings is on top: live keeps running even with background live off. */
+    private var openingSettings = false
     /** Start after the notification permission prompt closes (the prompt pauses this screen). */
     private var startOnResume = false
 
@@ -291,6 +294,10 @@ class MainActivity : Activity() {
         inPip = isInPictureInPictureMode
         // Only the picture and the live badge in the small window; everything returns when it opens full screen.
         panelScroll.visibility = if (inPip) View.GONE else View.VISIBLE
+        badge.textSize = if (inPip) 10f else 13f
+        badge.setPadding(dp(if (inPip) 5 else 8), dp(if (inPip) 2 else 4), dp(if (inPip) 5 else 8), dp(if (inPip) 2 else 4))
+        (badge.layoutParams as FrameLayout.LayoutParams).setMargins(dp(if (inPip) 6 else 12), dp(if (inPip) 6 else 12), dp(12), dp(12))
+        if (shownPhase == LiveState.Phase.LIVE) badge.text = liveBadge()
         if (inPip) { stageControls.visibility = View.GONE; stats.visibility = View.GONE; thermal.visibility = View.GONE; focusMark.visibility = View.GONE }
         else refresh()
     }
@@ -326,7 +333,7 @@ class MainActivity : Activity() {
             profile == null -> "$name camera: this quality isn't available. Choose another."
             else -> "$name camera · ${Quality.describe(profile).substringAfter(" · ")}" + if (highQuality && profile.highQuality) " · sharpening" else ""
         }
-        settingsButton.isEnabled = live == null; settingsButton.alpha = if (live == null) 1f else 0.4f
+        settingsButton.isEnabled = !switching; settingsButton.alpha = if (switching) 0.4f else 1f
         fun button(label: String, fill: Int, text: Int, enabled: Boolean) {
             startButton.text = label; startButton.background = rounded(fill, 27); startButton.setTextColor(text); startButton.isEnabled = enabled
         }
@@ -602,9 +609,14 @@ class MainActivity : Activity() {
         updateControls(controls.copy(focusX = sx, focusY = sy), refocus = true)
     }
 
+    /** Settings open during live too; options that need the camera or restart the session wait until Stop. */
     private fun openSettings() {
-        if (live != null) return
-        @Suppress("DEPRECATION") startActivityForResult(Intent(this, SettingsActivity::class.java), SETTINGS_REQUEST)
+        if (switching) return
+        if (live != null) {
+            openingSettings = true
+            if (Build.VERSION.SDK_INT >= 31) runCatching { setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()) }
+        }
+        @Suppress("DEPRECATION") startActivityForResult(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_LIVE, live != null), SETTINGS_REQUEST)
     }
 
     private fun typePairingCode() {
@@ -740,6 +752,7 @@ class MainActivity : Activity() {
     }
     override fun onResume() {
         super.onResume(); foreground = true
+        if (openingSettings) { openingSettings = false; updatePip() }
         if (leftLive) leftLive = false
         if (live != null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (startOnResume) { startOnResume = false; badge.post { if (foreground) startLive() } }
@@ -767,6 +780,7 @@ class MainActivity : Activity() {
     }
     /** Not visible any more (picture-in-picture is still visible): background live keeps going, otherwise live stops. */
     override fun onStop() {
+        if (openingSettings) { super.onStop(); return }
         val session = live
         if (session != null && backgroundLive && LiveService.running) leftLive = true  // keeps running; rotation still followed
         else {

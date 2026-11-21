@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.TextView
+import android.widget.Toast
 
 /**
  * Settings as short grouped rows. Switches save immediately; actions that need the home screen
@@ -18,10 +19,18 @@ import android.widget.TextView
 class SettingsActivity : Activity() {
     companion object {
         const val EXTRA_ACTION = "action"
+        /** Opened during live: options that need the camera, or would restart the session, wait until Stop. */
+        const val EXTRA_LIVE = "live"
         const val SCAN = "scan"; const val TYPE_CODE = "type"; const val CUSTOM = "custom"; const val RESCAN = "rescan"
     }
     private val prefs by lazy { getSharedPreferences("settings", MODE_PRIVATE) }
     private val ui by lazy { Ui(this) }
+    private val live by lazy { intent.getBooleanExtra(EXTRA_LIVE, false) }
+    /** A row that needs the camera (or restarts live): during live it explains instead of acting. */
+    private fun cameraRow(title: String, subtitle: String?, action: () -> Unit) =
+        ui.row(title, if (live) "After you stop live" else subtitle) {
+            if (live) Toast.makeText(this, "Stop live first: this uses the camera.", Toast.LENGTH_SHORT).show() else action()
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,14 +41,23 @@ class SettingsActivity : Activity() {
     // Back from Android's app or notification settings: show the current notification state.
     override fun onRestart() { super.onRestart(); build() }
 
+    /** Leaving PhoneCam from here during live follows the same rule as the home screen. */
+    override fun onStop() {
+        if (live && !isFinishing && !isChangingConfigurations) {
+            if (prefs.getBoolean("background", true)) prefs.edit().putBoolean("left_live", true).apply()
+            else LiveService.stop?.invoke("PhoneCam left the screen, so live stopped. To keep live running, turn on Settings → Keep live when you leave the app.")
+        }
+        super.onStop()
+    }
+
     private fun build() {
         ui.list.removeAllViews()
-        ui.title("Settings")
+        ui.title("Settings", if (live) "Live continues while you're here." else null)
 
         ui.section("Connection")
         val count = WifiConnector(this).pairings.macs.size
         ui.row("Paired computers", if (count == 0) "None yet" else "For direct Wi-Fi", value = count.toString()) { showPaired() }
-        ui.row("Pair a computer", "Scan the QR code shown in OBS") { finishWith(SCAN) }
+        cameraRow("Pair a computer", "Scan the QR code shown in OBS") { finishWith(SCAN) }
         ui.row("Type a pairing code", "If scanning doesn't work") { finishWith(TYPE_CODE) }
 
         ui.section("While live")
@@ -55,10 +73,10 @@ class SettingsActivity : Activity() {
             }
 
         ui.section("Video")
-        toggle("Phone preview while live", null, "preview")
-        toggle("Extra sharpening", "Clearer detail; may lower the frame rate", "hq")
-        ui.row("Custom quality", "Pick an exact size and bitrate") { finishWith(CUSTOM) }
-        ui.row("Check cameras again") { finishWith(RESCAN) }
+        toggle("Phone preview while live", if (live) "Changes from the next live" else null, "preview")
+        toggle("Extra sharpening", if (live) "Changes from the next live" else "Clearer detail; may lower the frame rate", "hq")
+        cameraRow("Custom quality", "Pick an exact size and bitrate") { finishWith(CUSTOM) }
+        cameraRow("Check cameras again", null) { finishWith(RESCAN) }
 
         ui.section("Sounds")
         toggle("Sounds", "When going live, stopping and pairing. Silent mode always wins.", "sounds")
@@ -70,7 +88,7 @@ class SettingsActivity : Activity() {
                 "Nothing is saved on the phone while live. No microphone, accounts, analytics or Internet servers.")
                 .setPositiveButton("OK", null).show()
         }
-        ui.row("Research tools", "Benchmark recordings for testing") { startActivity(Intent(this, BenchmarkActivity::class.java)) }
+        cameraRow("Research tools", "Benchmark recordings for testing") { startActivity(Intent(this, BenchmarkActivity::class.java)) }
         ui.list.addView(TextView(this).apply {
             text = "PhoneCam ${packageManager.getPackageInfo(packageName, 0).versionName}"
             setTextColor(Ui.MUTED); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, ui.dp(28), 0, 0)
