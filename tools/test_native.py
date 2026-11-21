@@ -128,7 +128,7 @@ esac
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(received, [(token + "\n").encode()])
             self.assertEqual(json.loads(result.stdout)["decodedFrames"], 12)
-            self.assertIn("Ready. Tap Start live on the phone.", result.stderr)
+            self.assertIn("Ready. Tap the record button on the phone.", result.stderr)
             calls = log.read_text()
             self.assertIn("-s FAKE1 shell content query --uri content://dev.phonecam.obs.pairing/token", calls)
             self.assertIn("-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1", calls)
@@ -266,6 +266,50 @@ esac
             self.assertEqual(result.returncode, 1, result.stderr)  # an orderly failure, not an abort signal
             self.assertIn("could not be read", result.stderr)
             self.assertEqual(store.read_bytes(), b"{not json")
+
+    def test_two_way_link_hello_status_audio_and_command(self):
+        """0.6: the plugin says hello after the key, the phone answers, sends status and audio, and gets a command."""
+        token = "d" * 64
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as server:
+            server.bind(("127.0.0.1", 0)); server.listen(1); server.settimeout(10)
+            config = Path(directory) / "live.json"
+            config.write_text(json.dumps({"port": server.getsockname()[1], "token": token}))
+            seen = {}
+
+            def read_message(client):
+                head = b""
+                while len(head) < 32: head += client.recv(32 - len(head))
+                length = struct.unpack(">I", head[8:12])[0]
+                body = b""
+                while len(body) < length: body += client.recv(length - len(body))
+                return struct.unpack(">H", head[6:8])[0], body
+
+            def phone():
+                with server.accept()[0] as client:
+                    client.settimeout(10)
+                    auth = b""
+                    while len(auth) < 65: auth += client.recv(65 - len(auth))
+                    seen["auth"] = auth == (token + "\n").encode()
+                    seen["hello"] = read_message(client)
+                    client.sendall(packet(4, b"hello\nfeatures=control,audio,screen\napp=test\n"))
+                    client.sendall(packet(4, b"status\ncamera=Rear\nquality=High\n"))
+                    pcm = struct.pack(">IHH", 48000, 1, 1) + bytes(960)
+                    client.sendall(packet(3, pcm, sequence=0, pts=1000))
+                    seen["command"] = read_message(client)
+                    for data in self.encoded_packets(): client.sendall(data)
+
+            worker = threading.Thread(target=phone, daemon=True); worker.start()
+            result = subprocess.run([str(RECEIVER), str(config), "12"], capture_output=True, text=True, timeout=20,
+                                    env={**os.environ, "PHONECAM_TALK": "1"})
+            worker.join(10)
+            self.assertTrue(seen.get("auth"))
+            self.assertEqual(seen["hello"][0], 4)
+            self.assertTrue(seen["hello"][1].startswith(b"hello\nfeatures=control,audio"))
+            self.assertEqual(seen["command"], (4, b"camera next"))
+            self.assertIn("Control: hello", result.stderr)
+            self.assertIn("Control: status", result.stderr)
+            self.assertIn("Audio: 960 bytes at 48000 Hz, pts 1000", result.stderr)
+            self.assertIn("Command sent: 1", result.stderr)
 
     def test_avc_hardware_decode(self): self.exchange(self.encoded_packets(width=1920, height=1080), 12)
     def test_hevc_hardware_decode(self): self.exchange(self.encoded_packets(True, width=1920, height=1080), 12)

@@ -114,7 +114,7 @@ def install(args):
     if not apk.is_file():
         raise ResearchError(f"APK missing: {apk}. Build with ./gradlew assembleDebug first.")
     print(run(select_device(args.serial) + ["install", "-r", str(apk)], timeout=120))
-    print("Open PhoneCam on the phone and allow camera access. Live capture starts only when you tap Start live.")
+    print("Open PhoneCam on the phone and allow camera access. Live capture starts only when you tap the record button.")
     return 0
 
 

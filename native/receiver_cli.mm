@@ -47,6 +47,17 @@ int main(int argc, char **argv) {
             ++frames; lastPts = pts; lastSeq = seq;
             if (frames >= uint64_t(requested)) stopped = true;
         };
+        // PHONECAM_TALK=1 (tests): the 0.6 two-way link. Prints the phone's control text and audio, and answers the
+        // phone's hello with "camera next".
+        phonecam::Channel channel;
+        bool talk = getenv("PHONECAM_TALK") != nullptr;
+        if (talk) channel.setCallbacks({
+            [&channel](const std::string &text) {
+                fprintf(stderr, "Control: %s\n", text.substr(0, text.find('\n')).c_str());
+                if (text.rfind("hello", 0) == 0) fprintf(stderr, "Command sent: %d\n", channel.send("camera next") ? 1 : 0);
+            },
+            [](const phonecam::AudioChunk &chunk, uint64_t pts) { fprintf(stderr, "Audio: %zu bytes at %u Hz, pts %llu\n", chunk.bytes, chunk.rate, (unsigned long long)pts); },
+            [] { fprintf(stderr, "Session ended\n"); }});
         if (wifi) {
             auto say = [](const std::string &value) { fprintf(stderr, "%s\n", value.c_str()); };
             phonecam::wifi::Server server(say, onFrame, say);
@@ -67,7 +78,7 @@ int main(int argc, char **argv) {
         } else if (automatic) {
             std::string adb = argc == 4 ? argv[3] : "";
             phonecam::autoReceive(stopped, [&] { return adb; }, [](const std::string &value) { fprintf(stderr, "%s\n", value.c_str()); }, onFrame);
-        } else phonecam::receive(stopped, phonecam::loadEndpoint(argv[1]), onFrame);
+        } else phonecam::receive(stopped, phonecam::loadEndpoint(argv[1]), onFrame, talk ? &channel : nullptr);
         double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
         printf("{\"decodedFrames\":%llu,\"firstSequence\":%llu,\"lastSequence\":%llu,\"firstPhonePtsUs\":%llu,\"lastPhonePtsUs\":%llu,\"receiveSpanSeconds\":%.6f,\"lastWidth\":%zu,\"lastHeight\":%zu,\"sizeChanges\":%llu,\"leftLuma\":%.2f,\"rightLuma\":%.2f,\"hardwareDecode\":%s,\"opticalLatency\":\"not_measured\"}\n",
             (unsigned long long)frames, (unsigned long long)firstSeq, (unsigned long long)lastSeq,

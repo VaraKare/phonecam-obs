@@ -270,7 +270,7 @@ def native_tests(runtime, receiver, fake_adb):
         assert "-s FAKE1 shell content query --uri content://dev.phonecam.obs.pairing/token" in calls, calls
         assert "-s FAKE1 forward tcp:0 localabstract:phonecam-live-v1" in calls, calls
         assert f"-s FAKE1 forward --remove tcp:{server.getsockname()[1]}" in calls, calls
-        assert "Ready. Tap Start live on the phone." in result.stderr, result.stderr
+        assert "Ready. Tap the record button on the phone." in result.stderr, result.stderr
         # No adb server was running, so the receiver started one in foreground mode, once, and it ended
         # with the receiver (job object).
         assert calls.count(f"-L tcp:{adb_port} server nodaemon") == 1, calls
