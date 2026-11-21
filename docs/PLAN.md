@@ -24,7 +24,11 @@ Advertised profiles stay unverified until captured; this direction does not pass
 
 ## Background live — 21 November 2026
 
-The owner replaced the rule "camera only while the app is on screen". A live session the user started keeps sending to OBS when they leave PhoneCam (another app, the home screen, the screen off), on by default with a Settings switch to turn it off. Android's foreground service of type camera keeps it running, with a notification that has Stop, and Android's own camera indicator. Swiping PhoneCam away from recent apps stops live. Capture never starts in the background, nothing is saved on the phone, and the camera, encoder and connection are released on Stop exactly as before. The phone preview is detached while the screen is hidden and attached again on return. See the [roadmap](ROADMAP.md) (v0.5). Versions, release scope and platform order (Windows required, phased) are in the [roadmap](ROADMAP.md).
+The owner replaced the rule "camera only while the app is on screen". A live session the user started keeps sending to OBS when they leave PhoneCam (another app, the home screen, the screen off), on by default with a Settings switch to turn it off. Android's foreground service of type camera keeps it running, with a notification that has Stop, and Android's own camera indicator. Swiping PhoneCam away from recent apps stops live. Capture never starts in the background, nothing is saved on the phone, and the camera, encoder and connection are released on Stop exactly as before. The phone preview is detached while the screen is hidden and attached again on return. See the [roadmap](ROADMAP.md) (v0.5).
+
+## OBS control, microphone and screen sharing — 21 November 2026
+
+The owner chose (v0.6): OBS may control a live session (switch camera, quality, torch, mirror, stop; OBS hotkeys) but only the phone's record button starts one. The phone microphone stays off unless the user turns it on; RECORD_AUDIO is asked only then, and with an older plugin the phone refuses rather than dropping sound. Screen sharing sends the phone's screen through the same encoder and connection, only after Android's consent each time, with the notification. Several phones as several cameras waits for a later version (the owner: one phone first). Protocol details: [USB live](USB_LIVE.md#two-way-link-06) and [Wi-Fi](WIFI.md). Versions, release scope and platform order (Windows required, phased) are in the [roadmap](ROADMAP.md).
 
 ## Phase gates
 
