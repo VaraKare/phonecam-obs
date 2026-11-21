@@ -144,6 +144,25 @@ void addStatus(obs_properties_t *props, const std::string &status, const std::st
 
 // ---- 0.6: the phone talks back (controls, status, microphone) ----
 
+// A PhoneCam source made before 0.6 had no sound, so OBS saved it with no audio tracks: the microphone then shows
+// in the mixer as "unassigned" and is missing from recordings (21 Nov). On the first sound, once per source, give it
+// the tracks a new OBS source gets (1-6). A later choice of the user's is kept (remembered in the source settings).
+void assignAudioTracks(void *weakSource) {
+    auto *weak = static_cast<obs_weak_source_t *>(weakSource);
+    obs_source_t *strong = obs_weak_source_get_source(weak);
+    obs_weak_source_release(weak);
+    if (!strong) return;
+    obs_data_t *settings = obs_source_get_settings(strong);
+    if (!obs_data_get_bool(settings, "audio_tracks_checked")) {
+        obs_data_set_bool(settings, "audio_tracks_checked", true);
+        if (obs_source_get_audio_mixers(strong) == 0) {
+            obs_source_set_audio_mixers(strong, 0x3F);
+            blog(LOG_INFO, "[phonecam] The phone microphone had no audio tracks in OBS; turned on tracks 1-6 so recordings include it.");
+        }
+    }
+    obs_data_release(settings);
+    obs_source_release(strong);
+}
 void refreshProperties(void *weakSource) {
     auto *weak = static_cast<obs_weak_source_t *>(weakSource);
     obs_source_t *strong = obs_weak_source_get_source(weak);
@@ -166,6 +185,7 @@ struct PhoneControls {
     std::map<std::string, std::string> info;  // the phone's last status; empty without a 0.6 phone
     phonecam::ClockMap clock;                 // under lock
     std::atomic<uint64_t> audioUntil{0};      // OBS clock (ns): the microphone sent audio recently
+    std::atomic<bool> tracksChecked{false};
     explicit PhoneControls(obs_source_t *value) : source(value) {
         phonecam::Channel::Callbacks callbacks{
             [this](const std::string &text) { received(text); },
@@ -218,6 +238,7 @@ struct PhoneControls {
         uint64_t now = os_gettime_ns(), at;
         { std::lock_guard<std::mutex> guard(lock); at = clock.map(pts, now); }
         audioUntil = now + 1'000'000'000ull;
+        if (!tracksChecked.exchange(true)) queueOnUi(source, assignAudioTracks);
         struct obs_source_audio out{};
         out.data[0] = chunk.pcm;
         out.frames = uint32_t(chunk.bytes / (2u * chunk.channels));
