@@ -27,7 +27,7 @@ class LiveService : Service() {
     companion object {
         private const val CHANNEL = "live"
         private const val ID = 1
-        private const val STOP = "dev.phonecam.obs.STOP"
+        const val STOP = "dev.phonecam.obs.STOP"
         /** Stops the user's session (with a reason); set at Start and cleared when it stops. */
         @Volatile var stop: ((String) -> Unit)? = null
         /** True once Android accepted the foreground service, so leaving the app may keep live running. */

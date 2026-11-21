@@ -32,6 +32,11 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.*
 import android.os.Build
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.graphics.drawable.Icon
+import android.util.Rational
 import java.util.concurrent.Executors
 
 /** Centers one child at a fixed aspect ratio (letterboxed), like a camera viewfinder. */
@@ -129,6 +134,10 @@ class MainActivity : Activity() {
     private val backgroundLive get() = prefs.getBoolean("background", true)
     /** Set while live runs with PhoneCam off screen; if the process dies there, the next launch explains why. */
     private var leftLive: Boolean get() = prefs.getBoolean("left_live", false); @Suppress("ApplySharedPref") set(v) { prefs.edit().putBoolean("left_live", v).commit() }  // must reach disk before the phone can close the app
+    /** Picture-in-picture (v0.5, on by default): leaving the app while live shows the preview in a small window. */
+    private val pipWanted get() = prefs.getBoolean("pip", true) && showPreview &&
+        packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    private var inPip = false
     /** Start after the notification permission prompt closes (the prompt pauses this screen). */
     private var startOnResume = false
 
@@ -252,6 +261,38 @@ class MainActivity : Activity() {
         val p = liveProfile ?: selected()
         stage.aspect = if (p == null) (if (portrait) 9f / 16f else 16f / 9f)
             else if (portrait) p.height.toFloat() / p.width else p.width.toFloat() / p.height
+        updatePip()
+    }
+
+    /**
+     * Picture-in-picture follows the session: it opens by itself on Home only while live (Android 12+;
+     * older versions use [onUserLeaveHint]), with the preview's shape and a Stop button.
+     */
+    private fun pipParams(): PictureInPictureParams {
+        val aspect = stage.aspect.coerceIn(0.43f, 2.3f)  // Android allows 1:2.39 to 2.39:1
+        val stop = PendingIntent.getService(this, 1, Intent(this, LiveService::class.java).setAction(LiveService.STOP), PendingIntent.FLAG_IMMUTABLE)
+        return PictureInPictureParams.Builder()
+            .setAspectRatio(Rational((aspect * 1000).toInt(), 1000))
+            .setActions(listOf(RemoteAction(Icon.createWithResource(this, R.drawable.ic_stop), "Stop", "Stop live", stop)))
+            .apply { if (Build.VERSION.SDK_INT >= 31) setAutoEnterEnabled(pipWanted && shownPhase == LiveState.Phase.LIVE && live != null) }
+            .build()
+    }
+    private fun updatePip() {
+        if (!::stage.isInitialized || !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        runCatching { setPictureInPictureParams(pipParams()) }
+    }
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < 31 && pipWanted && live != null && shownPhase == LiveState.Phase.LIVE)
+            runCatching { enterPictureInPictureMode(pipParams()) }
+    }
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPip = isInPictureInPictureMode
+        // Only the picture and the live badge in the small window; everything returns when it opens full screen.
+        panelScroll.visibility = if (inPip) View.GONE else View.VISIBLE
+        if (inPip) { stageControls.visibility = View.GONE; stats.visibility = View.GONE; thermal.visibility = View.GONE; focusMark.visibility = View.GONE }
+        else refresh()
     }
 
     private fun qualityChoices() = listOfNotNull(Quality.BEST, Quality.HIGH, Quality.BALANCED,
@@ -303,7 +344,7 @@ class MainActivity : Activity() {
     private fun showHeat(heat: Int) {
         thermal.text = when { heat >= PowerManager.THERMAL_STATUS_SEVERE -> "Hot — consider stopping"; heat >= PowerManager.THERMAL_STATUS_MODERATE -> "Warm"; else -> "Cool" }
         thermal.background = rounded(if (heat >= PowerManager.THERMAL_STATUS_SEVERE) RED else if (heat >= PowerManager.THERMAL_STATUS_MODERATE) AMBER else CHIP, 6)
-        thermal.visibility = if (shownPhase == LiveState.Phase.LIVE || heat >= PowerManager.THERMAL_STATUS_MODERATE) View.VISIBLE else View.GONE
+        thermal.visibility = if (!inPip && (shownPhase == LiveState.Phase.LIVE || heat >= PowerManager.THERMAL_STATUS_MODERATE)) View.VISIBLE else View.GONE
     }
 
     private fun showState(state: LiveState?) {
@@ -316,6 +357,7 @@ class MainActivity : Activity() {
             else if (phase == LiveState.Phase.STOPPED && !switching && foreground && lastPhase != null && lastPhase != LiveState.Phase.STOPPED)
                 feedback.play(if (state?.message == "Stopped by you") Feedback.Event.STOPPED else Feedback.Event.ERROR, badge)
             lastPhase = phase
+            updatePip()
         }
         // The computer used most recently (pairings are kept in order of use), plus how many others are paired.
         val paired = if (phase == LiveState.Phase.STOPPED) WifiConnector(this).pairings.macs.lastOrNull()?.let { last ->
@@ -334,7 +376,8 @@ class MainActivity : Activity() {
             if (state.bitrate in 1 until state.requestedBitrate) "\nLink busy: ${state.bitrate / 1_000_000} of ${state.requestedBitrate / 1_000_000} Mb/s" else ""
         shownPhase = phase
         showHeat(runCatching { getSystemService(PowerManager::class.java).currentThermalStatus }.getOrDefault(0))
-        stageControls.visibility = if (phase == LiveState.Phase.LIVE) View.VISIBLE else View.GONE
+        stageControls.visibility = if (phase == LiveState.Phase.LIVE && !inPip) View.VISIBLE else View.GONE
+        if (inPip) stats.visibility = View.GONE
         val previewing = phase != LiveState.Phase.STOPPED && showPreview
         placeholder.visibility = if (phase == LiveState.Phase.LIVE && previewing) View.GONE else View.VISIBLE
         placeholder.text = when (phase) {
@@ -434,7 +477,8 @@ class MainActivity : Activity() {
                 refresh()
             }
         }.also { it.start() }
-        if (backgroundLive) live?.let { session -> LiveService.start(app) { reason -> session.stop(reason) } }
+        // The notification's and the picture-in-picture window's Stop reach the session through LiveService.
+        live?.let { session -> val stop = { reason: String -> session.stop(reason) }; if (backgroundLive) LiveService.start(app, stop) else LiveService.stop = stop }
         arrange(); refresh()
     }
 
@@ -717,6 +761,11 @@ class MainActivity : Activity() {
     override fun onPause() {
         foreground = false
         runCatching { getSystemService(PowerManager::class.java).removeThermalStatusListener(heatListener) }
+        if (!isInPictureInPictureMode) window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        super.onPause()
+    }
+    /** Not visible any more (picture-in-picture is still visible): background live keeps going, otherwise live stops. */
+    override fun onStop() {
         val session = live
         if (session != null && backgroundLive && LiveService.running) leftLive = true  // keeps running; rotation still followed
         else {
@@ -724,8 +773,7 @@ class MainActivity : Activity() {
             session?.stop(if (backgroundLive) "Android didn't allow live in the background, so it stopped when PhoneCam left the screen."
                 else "PhoneCam left the screen, so live stopped. To keep live running, turn on Settings → Keep live when you leave the app.")
         }
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        super.onPause()
+        super.onStop()
     }
     override fun onDestroy() {
         destroyed = true; orientation.disable()

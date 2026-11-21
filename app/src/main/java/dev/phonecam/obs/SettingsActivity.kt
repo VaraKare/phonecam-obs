@@ -44,6 +44,8 @@ class SettingsActivity : Activity() {
 
         ui.section("While live")
         toggle("Keep live when you leave the app", "A notification with Stop shows while live. Swiping PhoneCam away from recent apps stops it.", "background")
+        if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE))
+            toggle("Picture-in-picture when you leave", "The phone preview stays in a small window. Closing the window keeps live running in the background (if the switch above is on).", "pip")
         ui.row("Let PhoneCam run in the background", backgroundHint()) {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
         }
