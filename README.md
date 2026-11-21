@@ -1,6 +1,8 @@
 # PhoneCam OBS
 
-Use your Android phone's camera as a high-quality video source in [OBS Studio](https://obsproject.com) on your Mac, over a USB cable or Wi-Fi. Choose the rear or front camera and the quality on the phone, then add masks, filters and overlays and record or stream in OBS.
+**Use your Android phone as a camera in OBS Studio: free, open source, no account, no watermark.** Over a USB cable or Wi-Fi, up to 4K, with the phone's microphone or screen if you want them. Choose the rear or front camera and the quality on the phone (or from OBS), then add masks, filters and overlays and record or stream in OBS. Works on Mac (Apple Silicon) today; Windows is in preview.
+
+**[Download the latest release](https://github.com/VaraKare/phonecam-obs/releases)**: the phone app (APK) and the OBS plugin, then follow [Install](#install-one-time).
 
 > **Preview release.** It has been tested on one phone (vivo V2437, Android 16) and one Mac (Apple M1, OBS 33.0.1). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. Windows support is in testing for the next release; see [which phones and computers work](docs/COMPATIBILITY.md) and the [roadmap](docs/ROADMAP.md).
 
@@ -159,6 +161,16 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | Phone says "OBS stopped receiving" | Normal when you hide the source, quit OBS or unplug. Show the source and tap the record button again. |
 
 Still stuck? Open an issue with your phone model, Android version, OBS version and the Status text. If it works, a **Device report** issue helps others with the same phone.
+
+## Questions people ask
+
+- **How do I use my Android phone as a webcam in OBS for free?** Install the PhoneCam app on the phone and the PhoneCam plugin in OBS ([Install](#install-one-time)), add the **PhoneCam (phone camera)** source, and tap the red record button on the phone.
+- **Does it need an account, a subscription or Wi-Fi?** No account and no subscription. A USB cable is enough; Wi-Fi is optional and stays on your local network, encrypted.
+- **Is there a watermark or a time limit?** No. The video is your phone's hardware-encoded H.264 or H.265, up to 4K where the phone offers it.
+- **Can I use it in Zoom, Meet or Teams?** Yes, through OBS's **Start Virtual Camera**.
+- **Can I share my phone's screen to OBS?** Yes (0.6): tap the screen icon, then the record button. Android asks your permission every time.
+- **Does it work on Windows or iPhone?** Windows is in preview (see the releases). iPhone isn't supported.
+- **How is it different from other phone-webcam apps (DroidCam, Iriun, Camo and others)?** PhoneCam is built only for OBS, is fully open source (GPL), has no paid tier, account or analytics, decodes in hardware, and lets OBS control the phone. Check the other apps' current features and terms yourself; they change.
 
 ## Privacy
 
