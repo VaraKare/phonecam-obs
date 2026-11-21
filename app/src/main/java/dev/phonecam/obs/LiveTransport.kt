@@ -29,11 +29,14 @@ class LiveTransport(private val token: String, private val connected: (String) -
         /** One whole message from OBS (0.6: hello and commands); [timeoutMs] 0 waits until the connection closes. */
         abstract fun receive(timeoutMs: Int): ByteArray
         abstract fun close()
+        /** After the hello wait: no read timeout left on the connection. */
+        open fun endHelloWait() {}
     }
     private class UsbSink(private val socket: LocalSocket) : Sink("USB", 750) {
         private val output = socket.outputStream
         private val input = java.io.DataInputStream(socket.inputStream)
         override fun write(header: ByteArray, payload: ByteArray) { output.write(header); output.write(payload); output.flush() }
+        override fun endHelloWait() { runCatching { socket.soTimeout = 0 } }
         override fun receive(timeoutMs: Int): ByteArray {
             socket.soTimeout = timeoutMs
             val head = ByteArray(32).also(input::readFully)
@@ -182,6 +185,8 @@ class LiveTransport(private val token: String, private val connected: (String) -
     private fun pump(sink: Sink) {
         // A 0.6 plugin says hello right after connecting; older ones send nothing after the key.
         talks = runCatching { sink.receive(500) }.getOrNull()?.let { controlText(it)?.startsWith("hello") } == true
+        // On a LocalSocket the read timeout also limits writes; frames must not fail after 0.5 s. Stalls are the watchdog's job.
+        sink.endHelloWait()
         if (talks) {
             sendControl(HELLO)
             Thread({
@@ -211,6 +216,8 @@ class LiveTransport(private val token: String, private val connected: (String) -
     }
     /** A control message for OBS (status); ignored unless a 0.6 plugin is connected. Older statuses are dropped first. */
     fun sendControl(text: String) {
+        // An older plugin ends the connection on any message type it doesn't know ("Invalid PCAM type", 21 Nov).
+        if (!talks) return
         val bytes = text.toByteArray(Charsets.UTF_8)
         if (bytes.size > MAX_CONTROL) return
         synchronized(signal) {
