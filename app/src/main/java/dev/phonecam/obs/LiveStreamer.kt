@@ -218,6 +218,9 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                 continuousFocus = CR.CONTROL_AF_MODE_CONTINUOUS_VIDEO in characteristics[CC.CONTROL_AF_AVAILABLE_MODES]?.toSet().orEmpty()
             }
             handler.postDelayed(startDeadline, 15_000)
+            // Faster start (21 Nov timings: the camera opened 0.57 s after OBS connected): ask for the camera first and
+            // set up the encoder while it opens. The camera's answer waits in this thread's queue until the encoder is ready.
+            if (screen == null) openCamera(gen)
             val encoder = MediaCodec.createByCodecName(profile.encoder)
             codec = encoder
             val constantBitrate = runCatching {
@@ -296,22 +299,26 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
             }, handler)
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             input = encoder.createInputSurface(); encoder.start()
-            if (screen != null) { showScreen(); return }
-            context.getSystemService(CameraManager::class.java).openCamera(profile.cameraId, object : CameraDevice.StateCallback() {
-                override fun onOpened(device: CameraDevice) {
-                    // The main looper outlives the capture worker. A late open must still close its device.
-                    if (!handler.post {
-                        if (finished || gen != generation) device.close()
-                        else {
-                            camera = device; cameraAt = SystemClock.elapsedRealtime()
-                            try { configureCamera(device) } catch (e: Exception) { finish("Camera session failed: ${e.message}") }
-                        }
-                    }) device.close()
-                }
-                override fun onDisconnected(device: CameraDevice) { device.close(); handler.post { if (gen == generation) finish("Camera disconnected") } }
-                override fun onError(device: CameraDevice, error: Int) { device.close(); handler.post { if (gen == generation) finish("Camera error $error") } }
-            }, main)
+            if (screen != null) showScreen()
         } catch (e: Exception) { finish("Could not start live: ${e.message}. No settings silently substituted.") }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun openCamera(gen: Int) {
+        context.getSystemService(CameraManager::class.java).openCamera(profile.cameraId, object : CameraDevice.StateCallback() {
+            override fun onOpened(device: CameraDevice) {
+                // The main looper outlives the capture worker. A late open must still close its device.
+                if (!handler.post {
+                    if (finished || gen != generation) device.close()
+                    else {
+                        camera = device; cameraAt = SystemClock.elapsedRealtime()
+                        try { configureCamera(device) } catch (e: Exception) { finish("Camera session failed: ${e.message}") }
+                    }
+                }) device.close()
+            }
+            override fun onDisconnected(device: CameraDevice) { device.close(); handler.post { if (gen == generation) finish("Camera disconnected") } }
+            override fun onError(device: CameraDevice, error: Int) { device.close(); handler.post { if (gen == generation) finish("Camera error $error") } }
+        }, main)
     }
 
     /** Screen sharing: Android draws the screen into the encoder's surface (created once, then given new surfaces). */
