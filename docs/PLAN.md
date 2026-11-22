@@ -28,7 +28,11 @@ The owner replaced the rule "camera only while the app is on screen". A live ses
 
 ## OBS control, microphone and screen sharing — 21 November 2026
 
-The owner chose (v0.6): OBS may control a live session (switch camera, quality, torch, mirror, stop; OBS hotkeys) but only the phone's record button starts one. The phone microphone stays off unless the user turns it on; RECORD_AUDIO is asked only then, and with an older plugin the phone refuses rather than dropping sound. Screen sharing sends the phone's screen through the same encoder and connection, only after Android's consent each time, with the notification. Several phones as several cameras waits for a later version (the owner: one phone first). Protocol details: [USB live](USB_LIVE.md#two-way-link-06) and [Wi-Fi](WIFI.md). Versions, release scope and platform order (Windows required, phased) are in the [roadmap](ROADMAP.md).
+The owner chose (v0.6): OBS may control a live session (switch camera, quality, torch, mirror, stop; OBS hotkeys) but only the phone's record button starts one. The phone microphone stays off unless the user turns it on; RECORD_AUDIO is asked only then, and with an older plugin the phone refuses rather than dropping sound. Screen sharing sends the phone's screen through the same encoder and connection, only after Android's consent each time, with the notification. Several phones as several cameras waits for a later version (the owner: one phone first). Protocol details: [USB live](USB_LIVE.md#two-way-link-06) and [Wi-Fi](WIFI.md).
+
+## Clients and v0.7 — 22 November 2026
+
+The owner wants PhoneCam for every setup: Android with Mac or Windows, tablets, and later iPhone (after v1.0). Several phones stays last. Anything without a test device gets a branch, a checklist in `docs/tests/` and a GitHub issue, so later work follows the docs. v0.7 adds the choice of entire screen or one app for screen sharing, the phone's own sound (off unless turned on), installers, and reliability work toward v1.0. Versions, release scope and platform order (Windows required, phased) are in the [roadmap](ROADMAP.md).
 
 ## Phase gates
 
