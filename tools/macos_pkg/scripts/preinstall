@@ -1,0 +1,12 @@
+#!/bin/sh
+# Removes an earlier PhoneCam plugin first, so files a hand-copied or older version had (and this one does not)
+# cannot linger inside the bundle and break its signature. Only a bundle with PhoneCam's identifier is touched.
+# $2 is the install destination (…/obs-studio/plugins in the user's home). Never fails the install.
+target="$2/phonecam-usb.plugin"
+if [ -n "$2" ] && [ -d "$target" ]; then
+    id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$target/Contents/Info.plist" 2>/dev/null)
+    if [ "$id" = "dev.phonecam.obs.usb" ]; then
+        /bin/rm -rf "$target"
+    fi
+fi
+exit 0

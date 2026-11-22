@@ -52,8 +52,9 @@ jobs:
         with:
           path: |
             native/build/*.tar.gz
+            native/build/*.dmg
             ~/obs-dmg
-          key: mac-downloads-obs-33.0.1-v1
+          key: mac-downloads-obs-33.0.1-v2
       - name: Install OBS 33.0.1 (official download, checksum checked)
         run: |
           mkdir -p ~/obs-dmg
@@ -74,10 +75,39 @@ jobs:
           cmdline-tools-version: '13114758'
           packages: 'platform-tools'
       - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
-      - run: python3 tools/build_native.py
+      # --universal: also an Apple Silicon + Intel plugin, its x86_64 slice built against the official Intel OBS
+      # 33.0.1 (checksum checked by build_native.py). A test artifact only: no Intel Mac has run it.
+      - run: python3 tools/build_native.py --universal
       - run: python3 tools/test_native.py -v
         env:
           PHONECAM_ALLOW_NO_HW: '1'
+      - name: Package the Mac plugin (zip and unsigned .pkg, as tools/release.py does)
+        run: python3 tools/macos_package.py native/build/phonecam-usb.plugin native/build/mac-packages
+      - name: Install the .pkg on this throwaway runner (current user, no sudo) and load the installed plugin
+        run: |
+          plugins="$HOME/Library/Application Support/obs-studio/plugins"
+          # An older copy with a file this version does not have: the installer must replace it, not merge into it.
+          mkdir -p "$plugins"
+          ditto native/build/phonecam-usb.plugin "$plugins/phonecam-usb.plugin"
+          echo stale > "$plugins/phonecam-usb.plugin/Contents/MacOS/stale.txt"
+          installer -pkg native/build/mac-packages/PhoneCam-OBS-plugin-macos-arm64-*.pkg -target CurrentUserHomeDirectory -verboseR
+          installed="$plugins/phonecam-usb.plugin"
+          test ! -e "$installed/Contents/MacOS/stale.txt"
+          codesign --verify --strict --verbose=2 "$installed"
+          if xattr -lr "$installed" | grep -q com.apple.quarantine; then echo "installed plugin is quarantined"; exit 1; fi
+          test -d native/build/phonecam-usb.plugin  # not "upgraded" in place in the build folder
+          native/build/obs-smoke "$installed/Contents/MacOS/phonecam-usb"
+          rm -rf "$installed"
+      - name: Zip the universal test build (keeps permissions and the signature)
+        run: ditto -c -k --keepParent native/build/universal/phonecam-usb.plugin native/build/PhoneCam-OBS-plugin-macos-universal-test.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phonecam-obs-plugin-macos-arm64-test
+          path: native/build/mac-packages/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phonecam-obs-plugin-macos-universal-test
+          path: native/build/PhoneCam-OBS-plugin-macos-universal-test.zip
   windows-plugin:
     # Test build only: nothing here proves a real Windows PC, phone and OBS (docs/WINDOWS.md).
     runs-on: windows-latest
@@ -105,6 +135,31 @@ jobs:
       - run: python tools/build_windows.py
         env:
           PHONECAM_WINDOWS_INTEROP: '1'
+      - run: choco install innosetup -y --no-progress
+      - run: python tools/build_windows.py --package
+      - name: Install silently on this throwaway runner, load the installed plugin, uninstall
+        shell: pwsh
+        run: |
+          $setup = Get-Item native/build/windows/installer/PhoneCam-OBS-plugin-windows-x64-*-setup.exe
+          $app = Join-Path $env:ProgramData 'obs-studio\plugins\phonecam-obs'
+          New-Item -ItemType Directory -Force (Join-Path $app 'bin\64bit') | Out-Null
+          Set-Content (Join-Path $app 'bin\64bit\stale.txt') 'left by an older copy'
+          $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=installer.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content installer.log; throw "setup exit $($p.ExitCode)" }
+          $dll = Join-Path $app 'bin\64bit\phonecam-obs.dll'
+          foreach ($f in @($dll, (Join-Path $app 'data\COPYING-GPL-2.0.txt'), (Join-Path $app 'data\THIRD_PARTY_NOTICES.txt'))) {
+            if (-not (Test-Path $f)) { throw "missing after install: $f" } }
+          if (Test-Path (Join-Path $app 'bin\64bit\stale.txt')) { throw 'stale file kept' }
+          Push-Location native/build/windows/obs-bin
+          ./phonecam-smoke.exe $dll
+          if ($LASTEXITCODE -ne 0) { throw "installed plugin did not load: $LASTEXITCODE" }
+          Pop-Location
+          $u = Start-Process (Join-Path $app 'uninstall\unins000.exe') -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($u.ExitCode -ne 0) { throw "uninstall exit $($u.ExitCode)" }
+          # The uninstaller hands over to a copy of itself in TEMP: wait for it to finish.
+          for ($i = 0; $i -lt 60 -and (Test-Path $app); $i++) { Start-Sleep 1 }
+          if (Test-Path $app) { Get-ChildItem -Recurse $app; throw 'plugin folder left after uninstall' }
+          Write-Output 'PASS: installer installs, OBS loads the installed plugin, uninstaller removes it'
       - uses: actions/upload-artifact@v4
         with:
           name: phonecam-obs-windows-test
@@ -114,3 +169,7 @@ jobs:
             native/build/windows/pairing-card.bmp
             native/build/windows/THIRD_PARTY_NOTICES.txt
             docs/WINDOWS_TEST.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phonecam-obs-windows-installer-test
+          path: native/build/windows/installer/*.exe
