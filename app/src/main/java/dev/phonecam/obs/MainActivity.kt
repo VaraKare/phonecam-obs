@@ -63,6 +63,8 @@ class MainActivity : Activity() {
         var lastStop: String? = null
         const val SETTINGS_REQUEST = 8
         const val SCREEN_REQUEST = 9
+        const val SCREEN_AUDIO_REQUEST = 10
+        const val CAMERA_AUDIO_REQUEST = 11
     }
     private lateinit var prefs: SharedPreferences
     private lateinit var root: LinearLayout
@@ -185,6 +187,7 @@ class MainActivity : Activity() {
     private var openingSettings = false
     /** Start after the notification permission prompt closes (the prompt pauses this screen). */
     private var startOnResume = false
+    private var startScreenNext = false
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     /** A small white icon before a chip's words (icons drawn for PhoneCam, like the switch-camera one). */
@@ -537,10 +540,7 @@ class MainActivity : Activity() {
 
     private fun startLive() {
         if (!foreground || live != null) return
-        if (micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            message.text = "The microphone is on, but PhoneCam isn't allowed to use it. Tap Mic to allow it, or turn it off."
-            micOn = false; refresh(); return
-        }
+        if (micOn && askAudio(CAMERA_AUDIO_REQUEST)) return
         val profile = selected() ?: run { message.text = "This quality isn't available on this camera."; return }
         if (device == Orientation.UNKNOWN) device = Orientation.fromDisplay(displayDegrees())
         val rotation = Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device)
@@ -599,6 +599,19 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---- Sound permission ----
+
+    /**
+     * Asks for RECORD_AUDIO when it's missing (true: asked; the answer continues the start). It says to pick
+     * "While using the app": Android takes "Only this time" back once PhoneCam leaves the screen.
+     */
+    private fun askAudio(request: Int): Boolean {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return false
+        message.text = "Allow audio, and choose \"While using the app\": \"Only this time\" stops the sound when you leave PhoneCam."
+        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), request)
+        return true
+    }
+
     // ---- Screen sharing (v0.6) ----
 
     private fun chooseSource(screen: Boolean) {
@@ -611,14 +624,9 @@ class MainActivity : Activity() {
     /** Android's own consent, every time (AGENTS.md). */
     private fun askScreen() {
         if (live != null) return
-        if (micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            message.text = "The microphone is on, but PhoneCam isn't allowed to use it. Tap Mic to allow it, or turn it off."
-            micOn = false; refresh(); return
-        }
-        if (soundOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            message.text = "Phone sound is on, but PhoneCam isn't allowed to record audio. Tap the speaker to allow it, or turn it off."
-            soundOn = false; refresh(); return
-        }
+        // "Only this time" ends when PhoneCam leaves the screen, which screen sharing always does: ask again here
+        // rather than quietly dropping the sound (22 Nov: the phone sent no sound at all).
+        if ((micOn || soundOn) && askAudio(SCREEN_AUDIO_REQUEST)) return
         // Android 14+ can share one app or the entire screen; PhoneCam asks first (or uses the Settings choice).
         if (Build.VERSION.SDK_INT >= 34) when (prefs.getString("screen_scope", "ask")) {
             "entire" -> requestScreen(entire = true)
@@ -640,10 +648,11 @@ class MainActivity : Activity() {
     /** Phone sound while screen sharing. Android files it under audio recording, so that permission is asked first. */
     private fun togglePhoneSound() {
         if (!soundOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            message.text = "Android asks for audio permission because it counts the phone's own sound as recording. PhoneCam sends it only to OBS."
+            message.text = "Android counts the phone's own sound as recording. Allow audio and choose \"While using the app\"; PhoneCam sends it only to OBS."
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 5); return
         }
         soundOn = !soundOn; live?.setPhoneSound(soundOn)
+        serviceStop?.let { stop -> if (screenLive) LiveService.start(applicationContext, stop, LiveService.Uses(screen = true, microphone = micOn || soundOn)) }
         if (soundOn && live != null && live?.talks == false) message.text = "The PhoneCam plugin in OBS is older than this app and can't take sound from the phone."
         refresh()
     }
@@ -655,7 +664,8 @@ class MainActivity : Activity() {
         LiveService.onForeground = { ok -> runOnUiThread { if (ok) createScreenSession(code, data, profile) else message.text = "Android didn't allow screen sharing to start. Try again." } }
         val stop = { reason: String -> live?.stop(reason) ?: LiveService.end(applicationContext) }
         serviceStop = stop
-        if (!LiveService.start(applicationContext, stop, LiveService.Uses(screen = true, microphone = micOn))) {
+        // Android counts the phone's own sound as recording too: it keeps the microphone type in the background.
+        if (!LiveService.start(applicationContext, stop, LiveService.Uses(screen = true, microphone = micOn || soundOn))) {
             LiveService.onForeground = null
             message.text = "Android didn't allow screen sharing to start. Try again."
         }
@@ -975,6 +985,7 @@ class MainActivity : Activity() {
     /** Phone microphone on or off, also while live. Turning it on asks for the permission the first time. */
     private fun toggleMic() {
         if (!micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            message.text = "Allow the microphone and choose \"While using the app\": \"Only this time\" stops it when you leave PhoneCam."
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 3); return
         }
         setMic(!micOn)
@@ -983,7 +994,8 @@ class MainActivity : Activity() {
         micOn = on; live?.setMicrophone(on)
         // Background live needs Android's microphone type to keep hearing when PhoneCam is off screen.
         val stop = serviceStop
-        if (live != null && backgroundLive && stop != null) LiveService.start(applicationContext, stop, LiveService.Uses(screen = false, microphone = on))
+        if (live != null && (backgroundLive || screenLive) && stop != null)
+            LiveService.start(applicationContext, stop, LiveService.Uses(screen = screenLive, microphone = on || (screenLive && soundOn)))
         if (on && live != null && live?.talks == false) message.text = "The PhoneCam plugin in OBS is older than this app and can't take the microphone."
         refresh()
     }
@@ -1036,6 +1048,15 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == SCREEN_AUDIO_REQUEST || requestCode == CAMERA_AUDIO_REQUEST) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                startOnResume = true; startScreenNext = requestCode == SCREEN_AUDIO_REQUEST
+            } else {
+                micOn = false; soundOn = false; refresh()
+                message.text = "Audio wasn't allowed, so the microphone and phone sound are off. Tap the record button to go live without sound."
+            }
+            return
+        }
         if (requestCode == 5) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) { soundOn = true; live?.setPhoneSound(true); refresh() }
             else message.text = "Audio permission wasn't allowed, so the phone's sound stays off. The screen is shared as before."
@@ -1060,7 +1081,7 @@ class MainActivity : Activity() {
         if (openingSettings) { openingSettings = false; updatePip() }
         if (leftLive) leftLive = false
         if (live != null) { window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); scheduleDim() }
-        if (startOnResume) { startOnResume = false; badge.post { if (foreground) { if (screenMode) askScreen() else startLive() } } }
+        if (startOnResume) { startOnResume = false; badge.post { if (foreground) { if (screenMode || startScreenNext) askScreen() else startLive() } } }
         runCatching { getSystemService(PowerManager::class.java).addThermalStatusListener(heatListener) }  // also reports the current status
         if (orientation.canDetectOrientation()) orientation.enable()
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { if (options.isEmpty()) scan() }

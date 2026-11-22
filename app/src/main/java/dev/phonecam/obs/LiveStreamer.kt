@@ -297,7 +297,8 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                             if (sequence == 1L) {
                                 handler.post(status)
                                 val now = SystemClock.elapsedRealtime()
-                                transport.sendControl("timings\ntap to OBS connected ${connectedAt - tappedAt} ms, camera open ${cameraAt - tappedAt} ms, " +
+                                transport.sendControl("timings\ntap to OBS connected ${connectedAt - tappedAt} ms, " +
+                                    (if (cameraAt > 0) "camera open ${cameraAt - tappedAt} ms, " else "screen sharing, ") +
                                     "first frame ${now - tappedAt} ms (over $route)")
                             }
                             // At most one early keyframe a second: keyframes are the largest frames, so asking

@@ -77,7 +77,7 @@ int main() {
     minute.gap(3); minute.skipped(); minute.skipped();
     auto line = minute.line("Mac", 60.2, health);
     assert(line == "Live summary (Mac, last 60 s): 1790 frames shown, 1 sequence gaps (3 frames missing, 2 skipped until a keyframe), "
-                   "3 of 1790 over 33 ms to decode, slowest 42 ms; phone battery 76 % (charging), heat normal.");
+                   "3 of 1790 over 33 ms to decode, slowest 42 ms; phone battery 76 % (charging), heat normal; phone mic off.");
     assert(LiveSummary().line("PC", 5, PhoneHealth()) == "Live summary (PC, last 5 s): 0 frames shown, 0 sequence gaps (0 frames missing, "
                                                          "0 skipped until a keyframe), 0 of 0 over 33 ms to decode, slowest 0 ms.");
     PhoneHealth heatOnly; heatOnly.heat = "warm";

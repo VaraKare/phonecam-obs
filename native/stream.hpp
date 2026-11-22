@@ -27,6 +27,7 @@ using LogSink = void (*)(const char *);
 struct PhoneHealth {
     int battery = -1; bool charging = false; std::string heat;
     int soundPeak = -1;  // loudest phone sound since the last summary, % of full scale; -1: no sound received
+    std::string mic, sound;  // what the phone says is switched on ("on"/"off"; empty: not reported)
     static PhoneHealth fromStatus(const std::string &text) {
         PhoneHealth out; out.heat = "normal";
         std::string warning; bool heatGiven = false;
@@ -42,6 +43,7 @@ struct PhoneHealth {
             if (key == "battery" && !value.empty() && value.size() <= 3 && value.find_first_not_of("0123456789") == std::string::npos)
                 out.battery = std::stoi(value);
             else if (key == "charging") out.charging = value == "yes";
+            else if ((key == "mic" || key == "sound") && (value == "on" || value == "off")) (key == "mic" ? out.mic : out.sound) = value;
             else if (key == "warning") warning = value;
             else if (key == "heat" && !value.empty() && value.size() <= 16 && value.find_first_not_of("abcdefghijklmnopqrstuvwxyz") == std::string::npos) {
                 out.heat = value; heatGiven = true;
@@ -71,7 +73,10 @@ public:
         std::string out(text, n > 0 ? std::min(size_t(n), sizeof(text) - 1) : 0);
         if (phone.battery >= 0) out += "; phone battery " + std::to_string(phone.battery) + " %" + (phone.charging ? " (charging)" : "");
         if (!phone.heat.empty()) out += (phone.battery >= 0 ? ", heat " : "; phone heat ") + phone.heat;
+        if (!phone.mic.empty()) out += "; phone mic " + phone.mic;
+        if (!phone.sound.empty()) out += ", phone sound " + phone.sound;
         // Tells silence (an app that doesn't allow capture, a muted phone) from an OBS mixer setting (22 Nov).
+        if ((phone.mic == "on" || phone.sound == "on") && phone.soundPeak < 0) out += "; but no sound arrived from the phone";
         if (phone.soundPeak == 0) out += "; phone sound received but silent";
         else if (phone.soundPeak > 0) out += "; phone sound peak " + std::to_string(phone.soundPeak) + " %";
         return out + ".";
