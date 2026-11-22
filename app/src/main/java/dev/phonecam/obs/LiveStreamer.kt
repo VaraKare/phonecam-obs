@@ -45,7 +45,9 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                    /** Send the phone microphone too (0.6 plugins only; off unless the user turned it on). */
                    microphone: Boolean = false,
                    /** Screen sharing (0.6): the user's consent for this session; the camera is not used. */
-                   private val screen: android.media.projection.MediaProjection? = null) {
+                   private val screen: android.media.projection.MediaProjection? = null,
+                   /** Screen sharing (0.7): send the phone's own sound too. */
+                   phoneSound: Boolean = false) {
     private var virtual: android.hardware.display.VirtualDisplay? = null
     /** Screen sharing: the screen changed shape (turned); the encoder restarts at the new size on the same connection. */
     fun resizeScreen(width: Int, height: Int) {
@@ -67,15 +69,25 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
     private var audio: AudioSender? = null
     /** The camera stamps frames with elapsedRealtime (boot time) rather than the monotonic clock. */
     private var boottime = false
+    /** Screen sharing only (0.7): the phone's own sound, off unless the user turns it on. */
+    @Volatile private var phoneSoundWanted = phoneSound
     /** Turns the microphone on or off during live. */
     fun setMicrophone(on: Boolean) { handler.post { micWanted = on; if (connectedAt > 0) applyMicrophone() } }
+    /** Turns the phone's own sound on or off while screen sharing. */
+    fun setPhoneSound(on: Boolean) { handler.post { phoneSoundWanted = on; if (connectedAt > 0) applyMicrophone() } }
+    private var audioMic = false
+    private var audioPhone = false
     private fun applyMicrophone() {
         if (finished) return
-        if (micWanted && audio == null) {
-            // Never drop sound silently: an older plugin can't take it, so say so (AGENTS.md).
-            if (!transport.talks) { finish("The PhoneCam plugin in OBS is older than this app and can't take the phone microphone. Update the plugin, or turn the microphone off."); return }
-            audio = AudioSender(boottime, { body, pts -> transport.offerAudio(body, pts) }, { reason -> handler.post { finish(reason) } }).also { it.start() }
-        } else if (!micWanted) { audio?.stop(); audio = null }
+        val mic = micWanted; val phone = phoneSoundWanted && screen != null
+        if (audio != null && mic == audioMic && phone == audioPhone) return
+        audio?.stop(); audio = null
+        if (!mic && !phone) return
+        // Never drop sound silently: an older plugin can't take it, so say so (AGENTS.md).
+        if (!transport.talks) { finish("The PhoneCam plugin in OBS is older than this app and can't take sound from the phone. Update the plugin, or turn the sound off."); return }
+        audioMic = mic; audioPhone = phone
+        audio = AudioSender(boottime, mic, if (phone) screen else null, { body, pts -> transport.offerAudio(body, pts) },
+            { reason -> handler.post { finish(reason) } }).also { it.start() }
     }
     @Volatile private var rotation = initialRotation
     @Volatile private var controls = initialControls

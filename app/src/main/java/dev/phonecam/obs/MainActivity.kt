@@ -129,6 +129,9 @@ class MainActivity : Activity() {
     private lateinit var qualityChip: TextView
     private lateinit var mirrorChip: TextView
     private lateinit var micChip: TextView
+    private lateinit var soundChip: TextView
+    /** Screen sharing (0.7): the phone's own sound too; off unless turned on (it needs Android's audio permission). */
+    private var soundOn: Boolean get() = prefs.getBoolean("screen_sound", false); set(v) { prefs.edit().putBoolean("screen_sound", v).apply() }
     /** Phone microphone to OBS (0.6): off unless turned on; RECORD_AUDIO is asked only then. */
     private var micOn: Boolean get() = prefs.getBoolean("mic", false); set(v) { prefs.edit().putBoolean("mic", v).apply() }
     private var serviceStop: ((String) -> Unit)? = null
@@ -251,6 +254,7 @@ class MainActivity : Activity() {
         qualityChip = pill { chooseQuality() }
         mirrorChip = pill { toggleMirror() }
         micChip = pill { toggleMic() }
+        soundChip = pill { togglePhoneSound() }
         cameraModeChip = pill { chooseSource(false) }.apply { iconOnly(R.drawable.ic_videocam, "Camera: send the phone camera") }
         screenModeChip = pill { chooseSource(true) }.apply { iconOnly(R.drawable.ic_screen_share, "Screen: share the phone screen") }
         qualityChip.iconOnly(R.drawable.ic_quality, "Quality")
@@ -265,7 +269,7 @@ class MainActivity : Activity() {
                 gap(cameraModeChip, 0); gap(screenModeChip, 6)
                 addView(View(this@MainActivity).apply { setBackgroundColor(0xFF3A3A3A.toInt()) },
                     LinearLayout.LayoutParams(dp(1), dp(28)).apply { marginStart = dp(10); marginEnd = dp(10) })
-                gap(qualityChip, 0); gap(mirrorChip, 6); gap(micChip, 6)
+                gap(qualityChip, 0); gap(mirrorChip, 6); gap(soundChip, 0); gap(micChip, 6)
             })
         })
         detail = TextView(this).apply { setTextColor(0xFF7A7A7A.toInt()); textSize = 12f; gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) }
@@ -405,6 +409,9 @@ class MainActivity : Activity() {
         cameraModeChip.isEnabled = live == null; screenModeChip.isEnabled = live == null
         qualityChip.visibility = if (screen) View.GONE else View.VISIBLE
         mirrorChip.visibility = if (screen) View.GONE else View.VISIBLE
+        soundChip.visibility = if (screen) View.VISIBLE else View.GONE
+        soundChip.iconOnly(if (soundOn) R.drawable.ic_volume else R.drawable.ic_volume_off, "Phone sound ${if (soundOn) "on" else "off"} (screen sharing)")
+        soundChip.background = rounded(if (soundOn) BLUE else 0xFF1E1E1E.toInt(), 20)
         if (screen) { switchButton.isEnabled = false; switchButton.alpha = 0.4f }
         micChip.iconOnly(if (micOn) R.drawable.ic_mic else R.drawable.ic_mic_off, "Phone microphone ${if (micOn) "on" else "off"}")
         micChip.background = rounded(if (micOn) BLUE else 0xFF1E1E1E.toInt(), 20)
@@ -609,8 +616,36 @@ class MainActivity : Activity() {
             message.text = "The microphone is on, but PhoneCam isn't allowed to use it. Tap Mic to allow it, or turn it off."
             micOn = false; refresh(); return
         }
-        @Suppress("DEPRECATION") startActivityForResult(
-            getSystemService(android.media.projection.MediaProjectionManager::class.java).createScreenCaptureIntent(), SCREEN_REQUEST)
+        if (soundOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            message.text = "Phone sound is on, but PhoneCam isn't allowed to record audio. Tap the speaker to allow it, or turn it off."
+            soundOn = false; refresh(); return
+        }
+        // Android 14+ can share one app or the entire screen; PhoneCam asks first (or uses the Settings choice).
+        if (Build.VERSION.SDK_INT >= 34) when (prefs.getString("screen_scope", "ask")) {
+            "entire" -> requestScreen(entire = true)
+            "app" -> requestScreen(entire = false)
+            else -> AlertDialog.Builder(this).setTitle("Share what?")
+                .setItems(arrayOf("Entire screen", "One app")) { _, which -> requestScreen(entire = which == 0) }
+                .setNegativeButton("Cancel", null).show()
+        } else requestScreen(entire = true)  // Android 10–13 always share the entire screen
+    }
+    private fun requestScreen(entire: Boolean) {
+        val manager = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+        val intent = if (Build.VERSION.SDK_INT >= 34) manager.createScreenCaptureIntent(
+            if (entire) android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()
+            else android.media.projection.MediaProjectionConfig.createConfigForUserChoice())
+            else manager.createScreenCaptureIntent()
+        @Suppress("DEPRECATION") startActivityForResult(intent, SCREEN_REQUEST)
+    }
+    /** Phone sound while screen sharing. Android files it under audio recording, so that permission is asked first. */
+    private fun togglePhoneSound() {
+        if (!soundOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            message.text = "Android asks for audio permission because it counts the phone's own sound as recording. PhoneCam sends it only to OBS."
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 5); return
+        }
+        soundOn = !soundOn; live?.setPhoneSound(soundOn)
+        if (soundOn && live != null && live?.talks == false) message.text = "The PhoneCam plugin in OBS is older than this app and can't take sound from the phone."
+        refresh()
     }
     /** Android 14 wants the screen-sharing service running before the projection is made, so it starts first. */
     private fun beginScreen(code: Int, data: Intent) {
@@ -634,7 +669,8 @@ class MainActivity : Activity() {
         abilities = ScreenSource.noAbilities; controls = Controls(); sliding = null
         warnings.reset(); lastStatus = ""
         live = LiveStreamer(this, profile, false, 0, ScreenSource.noAbilities, Controls(), { null },
-            onCommand = { command -> if (!destroyed) obeyObs(command) }, microphone = micOn, screen = projection, notify = ::onLiveState)
+            onCommand = { command -> if (!destroyed) obeyObs(command) }, microphone = micOn, screen = projection, phoneSound = soundOn,
+            notify = ::onLiveState)
             .also { it.start() }
         LiveService.lower = null
         scheduleDim()
@@ -673,6 +709,7 @@ class MainActivity : Activity() {
             append("charging=").append(if (charging) "yes" else "no").append('\n')
             warnings.current?.let { append("warning=").append(it).append('\n') }
             append("mic=").append(if (micOn) "on" else "off").append('\n')
+            if (screenLive) append("sound=").append(if (soundOn) "on" else "off").append('\n')
         }
         if (text != lastStatus) { lastStatus = text; session.sendStatus(text) }
     }
@@ -1003,6 +1040,11 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 5) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) { soundOn = true; live?.setPhoneSound(true); refresh() }
+            else message.text = "Audio permission wasn't allowed, so the phone's sound stays off. The screen is shared as before."
+            return
+        }
         if (requestCode == 3) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) setMic(true)
             else message.text = "Microphone access wasn't allowed, so the microphone stays off. Video works as before."

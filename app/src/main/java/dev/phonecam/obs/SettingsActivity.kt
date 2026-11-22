@@ -66,6 +66,16 @@ class SettingsActivity : Activity() {
             toggle("Picture-in-picture when you leave", "The phone preview stays in a small window. Closing the window keeps live running in the background (if the switch above is on).", "pip")
         toggle("Heat and battery warnings", "A notification when the phone gets hot (with Lower quality) and at 20, 15, 10 and 5 % battery.", "warnings")
         toggle("Dim the screen while live", "After 30 seconds without a touch. Saves battery and heat; the video isn't affected.", "dim")
+        if (Build.VERSION.SDK_INT >= 34) {
+            val scopes = listOf("ask" to "Ask each time", "entire" to "Entire screen", "app" to "One app")
+            val current = prefs.getString("screen_scope", "ask")
+            ui.row("Screen sharing shares", null, scopes.firstOrNull { it.first == current }?.second) {
+                AlertDialog.Builder(this).setTitle("Screen sharing shares")
+                    .setSingleChoiceItems(scopes.map { it.second }.toTypedArray(), scopes.indexOfFirst { it.first == current }) { dialog, which ->
+                        prefs.edit().putString("screen_scope", scopes[which].first).apply(); dialog.dismiss(); build()
+                    }.setNegativeButton("Cancel", null).show()
+            }
+        }
         ui.row("Let PhoneCam run in the background", backgroundHint()) {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
         }
@@ -105,7 +115,8 @@ class SettingsActivity : Activity() {
             R.drawable.ic_screen_share to "Screen: share the phone screen to OBS. Android asks every time.",
             R.drawable.ic_quality to "Quality: Best, High, Balanced or Smooth. The line below the icons shows the current one.",
             R.drawable.ic_mirror to "Mirror: flips the picture in OBS (blue when on). Handy for the front camera.",
-            R.drawable.ic_mic to "Microphone: sends the phone's sound to OBS (blue when on, crossed out when off).",
+            R.drawable.ic_mic to "Microphone: sends the phone's microphone to OBS (blue when on, crossed out when off).",
+            R.drawable.ic_volume to "Phone sound (screen sharing only): sends the sound of the apps on the phone, such as a game, to OBS.",
             R.drawable.ic_switch_camera to "Switch camera: rear, front, and back again. Works while live.",
             R.drawable.ic_tune to "Settings: pairing, background live, warnings and more.",
             R.drawable.ic_stop to "Record button: the red circle goes live; the red square stops.")
