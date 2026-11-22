@@ -1,0 +1,17 @@
+# PhoneCam OBS
+
+> Free, open-source way to use an Android phone as a camera in OBS Studio, over a USB cable or local Wi-Fi. Up to 4K hardware video (H.264/H.265), optional phone microphone, phone screen sharing, and control of the phone from OBS. No account, no watermark, no analytics. Mac (Apple Silicon, OBS 33) supported; Windows in preview. Licence: GPL-2.0-or-later.
+
+## Use it
+
+- [README: install and use](https://github.com/VaraKare/phonecam-obs#readme): phone app (APK) + OBS plugin; add the "PhoneCam (phone camera)" source; tap the red record button on the phone.
+- [Releases](https://github.com/VaraKare/phonecam-obs/releases): ready-made downloads with what was tested on real hardware.
+- [Which phones and computers work](https://github.com/VaraKare/phonecam-obs/blob/main/docs/COMPATIBILITY.md)
+- [Latest version guide (v0.6)](https://github.com/VaraKare/phonecam-obs/blob/main/docs/versions/v0.6.md): OBS controls, microphone, screen sharing, warnings.
+
+## How it works
+
+- [Architecture](https://github.com/VaraKare/phonecam-obs/blob/main/docs/ARCHITECTURE.md)
+- [USB link and wire format](https://github.com/VaraKare/phonecam-obs/blob/main/docs/USB_LIVE.md)
+- [Direct Wi-Fi pairing and encryption](https://github.com/VaraKare/phonecam-obs/blob/main/docs/WIFI.md)
+- [Roadmap](https://github.com/VaraKare/phonecam-obs/blob/main/docs/ROADMAP.md)
