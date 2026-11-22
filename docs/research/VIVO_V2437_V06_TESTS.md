@@ -15,3 +15,9 @@ App and plugin 0.6.0-alpha.1 from `dist/0.6.0-alpha.1/` (rebuilt after each fix 
 | 7 | Warnings, alert when away, USB preferred, dimming | **Pass** (owner: "all the things work"). |
 
 Not run: the 0.6 plugin on Windows; an hour with the microphone; screen sharing of the entire screen.
+
+## Follow-up, 22 November (v0.7 test files)
+
+- **Automatic audio tracks: not working, left as a documented step.** The plugin received the phone's sound (OBS log: "Receiving the phone's sound (48000 Hz, 1 channel)"), but OBS still showed the source as unassigned, and the recording had no phone sound. The plugin saw tracks on the source, so it didn't change them; why OBS still called it unassigned wasn't found. The owner chose to document the manual step (tick tracks 1–6, unmute the source) and move on. The README troubleshooting says so.
+- **Faster start (a47ce38):** first picture 0.81–1.45 s after the tap over USB (was 1.70 s).
+
