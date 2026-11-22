@@ -3,6 +3,7 @@
 // decrypted Wi-Fi records), checks order and keyframes, and hands configuration and frames to the
 // platform decoder. Portable C++17; the decoder supplies configure(body) and frame(body, header).
 #include "protocol.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -21,6 +22,61 @@ struct Closed : std::runtime_error { using std::runtime_error::runtime_error; };
 using Reader = std::function<void(uint8_t *, size_t, int)>;
 using LogSink = void (*)(const char *);
 
+// The phone's battery and heat from its latest 0.6 status, for the live summary. battery -1 and heat empty: not known
+// (an older phone, or no status yet). A phone that sends "heat=" is believed; 0.6 phones put heat into "warning".
+struct PhoneHealth {
+    int battery = -1; bool charging = false; std::string heat;
+    static PhoneHealth fromStatus(const std::string &text) {
+        PhoneHealth out; out.heat = "normal";
+        std::string warning; bool heatGiven = false;
+        size_t start = 0;
+        while (start < text.size()) {
+            size_t end = text.find('\n', start);
+            if (end == std::string::npos) end = text.size();
+            std::string line = text.substr(start, end - start);
+            start = end + 1;
+            auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq), value = line.substr(eq + 1, 200);
+            if (key == "battery" && !value.empty() && value.size() <= 3 && value.find_first_not_of("0123456789") == std::string::npos)
+                out.battery = std::stoi(value);
+            else if (key == "charging") out.charging = value == "yes";
+            else if (key == "warning") warning = value;
+            else if (key == "heat" && !value.empty() && value.size() <= 16 && value.find_first_not_of("abcdefghijklmnopqrstuvwxyz") == std::string::npos) {
+                out.heat = value; heatGiven = true;
+            }
+        }
+        if (!heatGiven && warning.find("hot") != std::string::npos) out.heat = "hot";
+        else if (!heatGiven && warning.find("warm") != std::string::npos) out.heat = "warm";
+        return out;
+    }
+};
+
+// Bounded telemetry while live: one log line a minute (docs: audit/REMEDIATION_LOG.md, v0.7). Decode time is the
+// decode + rotate + hand-off time per frame on this computer; over 33 ms falls behind at 30 fps.
+class LiveSummary {
+public:
+    void shown() { ++frames; }
+    void timed(double ms) { ++timedFrames; if (ms > 33.3) ++slow; if (ms > slowest) slowest = ms; }
+    void gap(uint64_t missing) { ++gaps; lost += missing; }
+    void skipped() { ++waited; }
+    bool empty() const { return !frames && !gaps && !waited; }
+    std::string line(const char *machine, double seconds, const PhoneHealth &phone) const {
+        char text[320];
+        int n = snprintf(text, sizeof(text), "Live summary (%s, last %.0f s): %llu frames shown, %llu sequence gaps (%llu frames missing, "
+                         "%llu skipped until a keyframe), %llu of %llu over 33 ms to decode, slowest %.0f ms", machine, seconds,
+                         (unsigned long long)frames, (unsigned long long)gaps, (unsigned long long)lost, (unsigned long long)waited,
+                         (unsigned long long)slow, (unsigned long long)timedFrames, slowest);
+        std::string out(text, n > 0 ? std::min(size_t(n), sizeof(text) - 1) : 0);
+        if (phone.battery >= 0) out += "; phone battery " + std::to_string(phone.battery) + " %" + (phone.charging ? " (charging)" : "");
+        if (!phone.heat.empty()) out += (phone.battery >= 0 ? ", heat " : "; phone heat ") + phone.heat;
+        return out + ".";
+    }
+private:
+    uint64_t frames = 0, timedFrames = 0, slow = 0, gaps = 0, lost = 0, waited = 0;
+    double slowest = 0;
+};
+
 // The two-way part of a session (0.6): what the phone says besides video, and a way to answer it.
 // One per connection kind (USB, Wi-Fi). The transport attaches a writer while a session is open; the plugin sets
 // the callbacks and sends commands from any thread. Callbacks run on the receiving thread, under cbLock, so
@@ -37,6 +93,7 @@ public:
     void attach(Writer value) { std::lock_guard<std::mutex> guard(writeLock); writer = std::move(value); phone = false; }
     void detach() {
         { std::lock_guard<std::mutex> guard(writeLock); writer = nullptr; phone = false; }
+        { std::lock_guard<std::mutex> guard(healthLock); latest = {}; }
         std::lock_guard<std::mutex> guard(cbLock);
         if (callbacks.ended) callbacks.ended();
     }
@@ -47,10 +104,12 @@ public:
         try { writer(control(text)); return true; } catch (...) { return false; }
     }
     bool phoneTalks() const { return phone; }
+    PhoneHealth health() { std::lock_guard<std::mutex> guard(healthLock); return latest; }
     void received(const Header &h, const std::vector<uint8_t> &body) {
         if (h.type == Control) {
             std::string text(body.begin(), body.end());
-            if (text.rfind("hello", 0) == 0) phone = true;
+            if (text.rfind("hello", 0) == 0) { phone = true; std::lock_guard<std::mutex> guard(healthLock); latest = {}; }
+            if (text.rfind("status\n", 0) == 0) { auto next = PhoneHealth::fromStatus(text); std::lock_guard<std::mutex> guard(healthLock); latest = next; }
             std::lock_guard<std::mutex> guard(cbLock);
             if (callbacks.control) callbacks.control(text);
         } else if (h.type == Audio) {
@@ -60,9 +119,10 @@ public:
         }
     }
 private:
-    std::mutex writeLock, cbLock;
+    std::mutex writeLock, cbLock, healthLock;
     Writer writer;
     Callbacks callbacks;
+    PhoneHealth latest;  // under healthLock
     std::atomic<bool> phone{false};
 };
 // Detaches on every way out of a session.
@@ -100,6 +160,21 @@ void decodeMessages(std::atomic<bool> &stop, const Reader &read, Decoder &decode
     auto windowStart = std::chrono::steady_clock::now();
     unsigned windowFrames = 0, slowFrames = 0; double worstMs = 0;
     bool warmedUp = false;  // the first frame includes decoder start-up; not counted
+    // Once a minute while live, and once more for the part of a minute when the session ends.
+    LiveSummary minute;
+    bool started = false;  // a frame arrived in this session
+    auto minuteStart = std::chrono::steady_clock::now();
+    auto summarise = [&](std::chrono::steady_clock::time_point now) {
+        if (log && !minute.empty()) {
+            const double seconds = std::chrono::duration<double>(now - minuteStart).count();
+            log(minute.line(machine, seconds, channel ? channel->health() : PhoneHealth()).c_str());
+        }
+        minute = LiveSummary(); minuteStart = now;
+    };
+    struct AtEnd {
+        std::function<void()> run;
+        ~AtEnd() { try { run(); } catch (...) {} }  // runs while an exception leaves: must not throw
+    } atEnd{[&] { if (started) summarise(std::chrono::steady_clock::now()); }};
     while (!stop) {
         uint8_t bytes[32];
         if (!configured) {
@@ -123,15 +198,20 @@ void decodeMessages(std::atomic<bool> &stop, const Reader &read, Decoder &decode
             if (channel) channel->received(h, body);  // audio and control; ignored by a plugin without a channel
         } else {
             if (!configured || (seen && (h.sequence <= lastSequence || h.pts <= lastPts))) throw std::runtime_error("Invalid frame order/timing");
-            if (seen && h.sequence != lastSequence + 1) waitingForKey = true;
+            if (seen && h.sequence != lastSequence + 1) { waitingForKey = true; minute.gap(h.sequence - lastSequence - 1); }
+            if (!started) { started = true; minuteStart = std::chrono::steady_clock::now(); }  // from the first frame
             seen = true; lastSequence = h.sequence; lastPts = h.pts;
-            if (waitingForKey && !(h.flags & 1)) continue;
+            if (waitingForKey && !(h.flags & 1)) { minute.skipped(); continue; }
             waitingForKey = false;
             auto began = std::chrono::steady_clock::now();
             decoder.frame(body, h);
             auto now = std::chrono::steady_clock::now();
             double ms = std::chrono::duration<double, std::milli>(now - began).count();
-            if (!warmedUp) { warmedUp = true; windowStart = now; continue; }
+            minute.shown();
+            const bool counted = warmedUp;
+            if (counted) minute.timed(ms);
+            if (now - minuteStart >= std::chrono::minutes(1)) summarise(now);
+            if (!counted) { warmedUp = true; windowStart = now; continue; }
             ++windowFrames; if (ms > 33.3) ++slowFrames; if (ms > worstMs) worstMs = ms;
             if (now - windowStart >= std::chrono::seconds(1)) {
                 if (log && slowFrames) {
