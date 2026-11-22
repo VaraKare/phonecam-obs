@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build release files into dist/<version>/: signed Android app, macOS OBS plugin zip, checksums.
+"""Build release files into dist/<version>/: signed Android app, macOS OBS plugin zip and .pkg, checksums.
 
 Publishing is a separate, manual step after the build has been tested on a real phone and OBS.
   python3 tools/release.py --create-key   # once; back up ~/.phonecam-obs afterwards
@@ -13,25 +13,14 @@ import re
 import secrets
 import shutil
 import subprocess
-import zipfile
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+import macos_package  # noqa: E402
+
 KEY_DIR = Path.home() / ".phonecam-obs"
 PROPERTIES = Path(os.environ.get("PHONECAM_SIGNING", KEY_DIR / "keystore.properties"))
-INSTALL_TEXT = """PhoneCam OBS plugin {version} (macOS, Apple Silicon, OBS 33)
-
-1. Quit OBS.
-2. Copy phonecam-usb.plugin into:
-     ~/Library/Application Support/obs-studio/plugins/
-   (Finder: Go > Go to Folder..., paste the path; create the "plugins" folder if missing.)
-3. This preview is not signed by Apple, so macOS blocks downloaded copies. In Terminal run:
-     xattr -dr com.apple.quarantine ~/Library/Application\\ Support/obs-studio/plugins/phonecam-usb.plugin
-4. Install Android platform-tools (adb), e.g. `brew install android-platform-tools`.
-5. Open OBS, Sources > + > PhoneCam (phone camera).
-
-Full guide, troubleshooting and source code: see the README in the GitHub repository.
-License: GPL-2.0-or-later (COPYING-GPL-2.0.txt). Third-party notices: NOTICE.txt.
-"""
 
 
 def run(command, **kwargs):
@@ -94,14 +83,10 @@ def build():
     shutil.copyfile(apk, out / f"PhoneCam-{name}.apk")
     run(["python3", "tools/build_native.py"])
     plugin = ROOT / "native/build/phonecam-usb.plugin"
-    archive = out / f"PhoneCam-OBS-plugin-macos-arm64-{name}.zip"
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
-        for path in sorted(plugin.rglob("*")):
-            if path.is_file() and not any(part.endswith(".dSYM") for part in path.parts):  # debug symbols stay local
-                info = zipfile.ZipInfo.from_file(path, "phonecam-usb.plugin/" + str(path.relative_to(plugin)))
-                info.compress_type = zipfile.ZIP_DEFLATED
-                bundle.writestr(info, path.read_bytes())
-        bundle.writestr("INSTALL.txt", INSTALL_TEXT.format(version=name))
+    # The zip (manual copy) and the .pkg installer (user's home, no Terminal step), each checked with
+    # codesign --verify --strict on exactly what users unpack or install. The universal (Intel) build is a CI
+    # test artifact only until an Intel Mac has tested it.
+    macos_package.package(plugin, out, name, "arm64")
     sums = "".join(f"{sha256(path)}  {path.name}\n" for path in sorted(out.iterdir()))
     (out / "SHA256SUMS.txt").write_text(sums)
     print(f"Release files in {out}:\n{sums}Nothing was published. Test these exact files on a real phone and OBS first.")

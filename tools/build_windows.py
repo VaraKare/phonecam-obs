@@ -4,8 +4,12 @@
 Downloads are pinned by SHA-256: OBS 33.0.1 source headers and SIMDe (shared with build_native.py) and the
 official OBS 33.0.1 Windows x64 zip, whose obs.dll provides the import library and the libobs used by the
 load test. Finds Visual Studio's x64 tools with vswhere when not run from a Developer Command Prompt.
+
+  python tools/build_windows.py             # build and test
+  python tools/build_windows.py --package   # then: the installer (Inno Setup 6.3+, native/windows/installer.iss)
 """
 from pathlib import Path
+import argparse
 import hashlib
 import json
 import os
@@ -17,7 +21,7 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_native import BUILD, ROOT, dependencies  # noqa: E402
+from build_native import BUILD, PLUGIN_VERSION, ROOT, dependencies  # noqa: E402
 
 OBS_VERSION = "33.0.1"
 OBS_ZIP = ("OBS-Studio-33.0.1-Windows-x64.zip",
@@ -33,6 +37,7 @@ QRCODEGEN = [("qrcodegen.hpp", "https://raw.githubusercontent.com/nayuki/QR-Code
               "1f3b3fcdac6954c32cf583ccd02ec9b5901f756a38c461acedc70be4a77d3757")]
 OUT = BUILD / "windows"
 FIXTURES = ROOT / "native/tests/fixtures"
+PLUGIN = "phonecam-obs"  # OBS loads plugins\<name>\bin\64bit\<name>.dll: folder and DLL names must match
 
 
 def fetch(name, url, expected):
@@ -354,9 +359,69 @@ def replug_checks(runtime, receiver, fake_adb):
     print("PASS: Windows replug: stuck adb server ended and replaced, phone found again, next session received", flush=True)
 
 
+def stage_installer(out=None, stage=None):
+    """The installer's files in OBS 30+'s plugin layout: bin/64bit/<name>.dll and data/ (licences, notices).
+    adb is not bundled; the C++ runtime is OBS's own (OBS's installer ships it)."""
+    out = Path(out or OUT)
+    stage = Path(stage or out / "installer-files")
+    plugin = out / f"{PLUGIN}.dll"
+    notices = out / "THIRD_PARTY_NOTICES.txt"
+    for required in (plugin, notices):
+        if not required.is_file(): raise SystemExit(f"{required} missing: run python tools/build_windows.py first")
+    shutil.rmtree(stage, ignore_errors=True)
+    (stage / "bin/64bit").mkdir(parents=True)
+    (stage / "data").mkdir()
+    shutil.copyfile(plugin, stage / f"bin/64bit/{PLUGIN}.dll")
+    shutil.copyfile(ROOT / "LICENSE", stage / "data/COPYING-GPL-2.0.txt")
+    shutil.copyfile(ROOT / "NOTICE", stage / "data/NOTICE.txt")
+    shutil.copyfile(notices, stage / "data/THIRD_PARTY_NOTICES.txt")
+    shutil.copyfile(BUILD / "simde/COPYING", stage / "data/COPYING-SIMDe.txt")
+    return stage
+
+
+def numeric_version(version):
+    """Windows file versions are numbers only: 0.7.0-alpha.1 -> 0.7.0."""
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+    if not match: raise SystemExit(f"Unexpected version: {version}")
+    return ".".join(match.groups())
+
+
+def iscc_command(iscc, stage, output, version=PLUGIN_VERSION):
+    return [str(iscc), "/Qp", f"/DAppVersion={version}", f"/DNumericVersion={numeric_version(version)}",
+            f"/DStageDir={stage}", f"/DOutputDir={output}", str(ROOT / "native/windows/installer.iss")]
+
+
+def find_iscc():
+    found = shutil.which("ISCC") or shutil.which("iscc")
+    if found: return found
+    for base in (os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), os.environ.get("ProgramFiles", r"C:\Program Files")):
+        candidate = Path(base) / "Inno Setup 6/ISCC.exe"
+        if candidate.is_file(): return candidate
+    raise SystemExit("Inno Setup 6 not found (CI: choco install innosetup -y)")
+
+
+def package():
+    """native/build/windows/installer/PhoneCam-OBS-plugin-windows-x64-<version>-setup.exe (unsigned test build)."""
+    stage = stage_installer()
+    output = OUT / "installer"
+    shutil.rmtree(output, ignore_errors=True)
+    output.mkdir()
+    subprocess.run(iscc_command(find_iscc(), stage, output), check=True)
+    setup = output / f"PhoneCam-OBS-plugin-windows-x64-{PLUGIN_VERSION}-setup.exe"
+    if not setup.is_file(): raise SystemExit(f"Installer missing: {setup}")
+    print(json.dumps({"installer": str(setup), "physicalGate": "not passed: test build only"}))
+    return setup
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--package", action="store_true", help="Make the installer from the plugin already built here")
+    args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("Run on Windows x64 (CI: windows-latest)")
+    if args.package:
+        package()
+        return
     OUT.mkdir(parents=True, exist_ok=True)
     env = msvc_environment()
     sdk = dependencies(OBS_VERSION)
@@ -381,7 +446,7 @@ def main():
               ROOT / "native/wifi_server.cpp", ROOT / "native/windows/wifi_win.cpp", ROOT / "native/windows/pairing_card_win.cpp", qr_object]
     includes = ["/I", ROOT / "native", "/external:I", ffmpeg_include, "/external:I", qr]
     system = ["ws2_32.lib", "iphlpapi.lib", "bcrypt.lib", "dnsapi.lib", "gdi32.lib", "user32.lib"] + ffmpeg_libs
-    plugin = OUT / "phonecam-obs.dll"
+    plugin = OUT / f"{PLUGIN}.dll"
     run(strict + ["/O2", "/LD"] + includes + obs_headers + [ROOT / "native/windows/plugin_win.cpp"] + shared +
         [f"/Fe:{plugin}", f"/Fo:{OUT}\\", "/link", OUT / "obs.lib"] + system, env)
     receiver = runtime / "phonecam-receive.exe"  # next to OBS's FFmpeg DLLs
