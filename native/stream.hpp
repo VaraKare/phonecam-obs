@@ -26,6 +26,7 @@ using LogSink = void (*)(const char *);
 // (an older phone, or no status yet). A phone that sends "heat=" is believed; 0.6 phones put heat into "warning".
 struct PhoneHealth {
     int battery = -1; bool charging = false; std::string heat;
+    int soundPeak = -1;  // loudest phone sound since the last summary, % of full scale; -1: no sound received
     static PhoneHealth fromStatus(const std::string &text) {
         PhoneHealth out; out.heat = "normal";
         std::string warning; bool heatGiven = false;
@@ -70,6 +71,9 @@ public:
         std::string out(text, n > 0 ? std::min(size_t(n), sizeof(text) - 1) : 0);
         if (phone.battery >= 0) out += "; phone battery " + std::to_string(phone.battery) + " %" + (phone.charging ? " (charging)" : "");
         if (!phone.heat.empty()) out += (phone.battery >= 0 ? ", heat " : "; phone heat ") + phone.heat;
+        // Tells silence (an app that doesn't allow capture, a muted phone) from an OBS mixer setting (22 Nov).
+        if (phone.soundPeak == 0) out += "; phone sound received but silent";
+        else if (phone.soundPeak > 0) out += "; phone sound peak " + std::to_string(phone.soundPeak) + " %";
         return out + ".";
     }
 private:
@@ -104,7 +108,13 @@ public:
         try { writer(control(text)); return true; } catch (...) { return false; }
     }
     bool phoneTalks() const { return phone; }
-    PhoneHealth health() { std::lock_guard<std::mutex> guard(healthLock); return latest; }
+    // The phone's latest health, and the loudest sound since the previous call (then reset).
+    PhoneHealth health() {
+        PhoneHealth out;
+        { std::lock_guard<std::mutex> guard(healthLock); out = latest; }
+        out.soundPeak = peak.exchange(-1);
+        return out;
+    }
     void received(const Header &h, const std::vector<uint8_t> &body) {
         if (h.type == Control) {
             std::string text(body.begin(), body.end());
@@ -114,6 +124,13 @@ public:
             if (callbacks.control) callbacks.control(text);
         } else if (h.type == Audio) {
             AudioChunk chunk = audioChunk(body);
+            int loudest = 0;
+            for (size_t i = 0; i + 1 < chunk.bytes; i += 2) {
+                int sample = int16_t(uint16_t(chunk.pcm[i]) | uint16_t(chunk.pcm[i + 1]) << 8);
+                loudest = std::max(loudest, sample < 0 ? -sample : sample);
+            }
+            int percent = loudest * 100 / 32767, seen = peak.load();
+            while (percent > seen && !peak.compare_exchange_weak(seen, percent)) {}
             std::lock_guard<std::mutex> guard(cbLock);
             if (callbacks.audio) callbacks.audio(chunk, h.pts);
         }
@@ -124,6 +141,7 @@ private:
     Callbacks callbacks;
     PhoneHealth latest;  // under healthLock
     std::atomic<bool> phone{false};
+    std::atomic<int> peak{-1};
 };
 // Detaches on every way out of a session.
 struct Attached {

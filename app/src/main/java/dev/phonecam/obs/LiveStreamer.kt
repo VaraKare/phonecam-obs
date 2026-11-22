@@ -256,6 +256,9 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                 setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
                 // A still screen sends no new pictures; repeating the last one keeps OBS fed (and the stall check quiet).
                 if (screen != null) setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
+                // The screen draws at up to 120 Hz on some phones: without a cap the encoder sent ~53 fps, the queue
+                // overflowed (262 frames dropped in 32 s) and delay built up (22 Nov). OBS gets the profile's 30 fps.
+                if (screen != null) setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, profile.fps.toFloat())
             }
             encoder.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(c: MediaCodec, index: Int) = Unit

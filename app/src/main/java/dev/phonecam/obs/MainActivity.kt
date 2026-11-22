@@ -2,7 +2,6 @@ package dev.phonecam.obs
 
 import android.Manifest
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -624,9 +623,10 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 34) when (prefs.getString("screen_scope", "ask")) {
             "entire" -> requestScreen(entire = true)
             "app" -> requestScreen(entire = false)
-            else -> AlertDialog.Builder(this).setTitle("Share what?")
-                .setItems(arrayOf("Entire screen", "One app")) { _, which -> requestScreen(entire = which == 0) }
-                .setNegativeButton("Cancel", null).show()
+            else -> Sheet(this, "Share what?")
+                .option("Entire screen", "Everything on the phone, as you move between apps", R.drawable.ic_screen_share) { requestScreen(entire = true) }
+                .option("One app", "Only the app you pick next", R.drawable.ic_videocam) { requestScreen(entire = false) }
+                .button("Cancel").show()
         } else requestScreen(entire = true)  // Android 10–13 always share the entire screen
     }
     private fun requestScreen(entire: Boolean) {
@@ -902,13 +902,13 @@ class MainActivity : Activity() {
             hint = "e.g. 000G-40R4-0M30-E209"; isSingleLine = true
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
-        AlertDialog.Builder(this).setTitle("Wi-Fi pairing code")
-            .setMessage("In OBS: PhoneCam source → Properties → Pair a phone over Wi-Fi. Type the 16-character code it shows. The phone and computer must be on the same Wi-Fi.")
-            .setView(FrameLayout(this).apply { setPadding(dp(20), 0, dp(20), 0); addView(input) })
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Pair") { _, _ ->
+        input.setTextColor(Color.WHITE); input.setHintTextColor(0xFF6A6A6A.toInt())
+        Sheet(this, "Wi-Fi pairing code", "In OBS: PhoneCam source → Properties → Pair a phone over Wi-Fi. Type the 16-character code it shows. Same Wi-Fi on both.")
+            .view(FrameLayout(this).apply { setPadding(0, dp(8), 0, dp(4)); addView(input) })
+            .button("Cancel")
+            .button("Pair", primary = true) {
                 val code = WifiCrypto.decodeCode(input.text.toString())
-                if (code == null) { message.text = "The code has 16 letters and numbers, like 000G-40R4-0M30-E209. Check it and try again."; return@setPositiveButton }
+                if (code == null) { message.text = "The code has 16 letters and numbers, like 000G-40R4-0M30-E209. Check it and try again."; return@button }
                 message.text = "Looking for OBS on this Wi-Fi…"
                 Thread {
                     val result = runCatching { WifiConnector(this).pair(code) }
@@ -944,25 +944,20 @@ class MainActivity : Activity() {
         if (options.isEmpty() || switching) return
         val id = cameraId ?: return
         val choices = qualityChoices()
-        val labels = choices.map { q -> q.label.substringBefore(" (") + (Quality.pick(options, id, q, customKey)?.let { "  ·  " + Quality.short(it) } ?: "  ·  not on this camera") }
-        AlertDialog.Builder(this).setTitle("Quality")
-            .setSingleChoiceItems(labels.toTypedArray(), choices.indexOf(choice)) { dialog, index ->
-                dialog.dismiss()
-                if (choices[index] == choice) return@setSingleChoiceItems
-                choice = choices[index]; refresh()
+        val hints = mapOf(Quality.BEST to "Sharpest; needs a fast computer", Quality.HIGH to "Best for most streams",
+            Quality.BALANCED to "For busy Wi-Fi", Quality.SMOOTH to "60 fps for motion (experimental)", Quality.CUSTOM to "Your own size and bitrate")
+        val sheet = Sheet(this, "Quality", if (live != null) "Changing it restarts the picture for about a second." else null)
+        for (q in choices) {
+            val profile = Quality.pick(options, id, q, customKey)
+            sheet.option(q.label.substringBefore(" ("), (profile?.let { Quality.short(it) + " · " } ?: "Not on this camera · ") + hints[q],
+                selected = q == choice, enabled = profile != null) {
+                if (q == choice) return@option
+                choice = q; refresh()
                 // Restart only when the picture would change: on some cameras two qualities give the same settings.
                 if (live != null && selected() != liveProfile) restartLive()
             }
-            .setNeutralButton("What's the difference?") { _, _ ->
-                AlertDialog.Builder(this).setTitle("Qualities").setMessage(
-                    "Best: the sharpest picture this camera offers, often 4K. Needs a fast computer; USB is smoothest.\n\n" +
-                    "High: 1080p at a high bitrate. The best choice for most streams.\n\n" +
-                    "Balanced: 1080p at a lower bitrate, for busy Wi-Fi.\n\n" +
-                    "Smooth: 60 frames a second, for motion. Experimental on some phones.\n\n" +
-                    (if (live != null) "While live, changing quality restarts the picture for about 2 seconds." else "You can change quality while live; the picture restarts for about 2 seconds."))
-                    .setPositiveButton("OK", null).show()
-            }
-            .setNegativeButton("Cancel", null).show()
+        }
+        sheet.button("Cancel").show()
     }
 
     /** Next camera (rear, front, …). While live, the session restarts with it. */
@@ -1027,15 +1022,16 @@ class MainActivity : Activity() {
         val id = cameraId ?: return
         val list = options.filter { it.cameraId == id }.sortedWith(compareBy<Profile> { it.limited }.thenByDescending { it.width }.thenByDescending { it.bitrate })
         if (list.isEmpty()) return
-        AlertDialog.Builder(this).setTitle("Custom quality")
-            .setItems(list.map { Quality.describe(it) }.toTypedArray()) { _, index ->
-                val profile = list[index]
-                fun apply() { customKey = Quality.key(profile); choice = Quality.CUSTOM; refresh() }
+        val sheet = Sheet(this, "Custom quality")
+        for (profile in list) {
+            fun apply() { customKey = Quality.key(profile); choice = Quality.CUSTOM; refresh() }
+            sheet.option(Quality.describe(profile), if (profile.limited) "Limited" else null, selected = customKey == Quality.key(profile)) {
                 if (!profile.limited) apply()
-                else AlertDialog.Builder(this).setTitle("Limited profile")
-                    .setMessage("This profile is lower resolution or uses a variable frame rate. Use it only if higher qualities fail on this phone.")
-                    .setNegativeButton("Cancel", null).setPositiveButton("Use it") { _, _ -> apply() }.show()
-            }.show()
+                else Sheet(this, "Limited profile", "Lower resolution or a variable frame rate. Use it only if the usual qualities fail on this phone.")
+                    .button("Cancel").button("Use it", primary = true) { apply() }.show()
+            }
+        }
+        sheet.button("Cancel").show()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

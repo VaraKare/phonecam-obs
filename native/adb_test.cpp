@@ -4,6 +4,7 @@
 #include <cstdio>
 // Header-only parsing checks under sanitizers; runAdb/autoReceive are covered by tools/test_native.py.
 // Also the live summary line and the phone's battery and heat (stream.hpp), which are pure as well.
+static std::vector<uint8_t> message_for_test(const std::vector<uint8_t> &body) { return phonecam::message(phonecam::Audio, body, 0, 1000); }
 int main() {
     using namespace phonecam;
     auto d = parseDevices("* daemon not running; starting now at tcp:5037\n* daemon started successfully\nList of devices attached\nABC123\tdevice\n192.168.1.4:5555\tdevice\nXYZ\tunauthorized\nQQ\toffline\n\n");
@@ -49,6 +50,13 @@ int main() {
 
     // The phone's battery and heat from a 0.6 status, and the once-a-minute live summary.
     auto health = PhoneHealth::fromStatus("status\ncamera=Rear\nbattery=76\ncharging=yes\nmic=off\n");
+    {
+        Channel channel;
+        std::vector<uint8_t> chunk{0, 0, 0xbb, 0x80, 0, 1, 0, 1, 0x00, 0x40, 0x00, 0xc0};  // samples 16384, -16384: 50 %
+        auto message = message_for_test(chunk);
+        channel.received(header(message.data()), chunk);
+        assert(channel.health().soundPeak == 50 && channel.health().soundPeak == -1);  // reported once, then reset
+    }
     assert(health.battery == 76 && health.charging && health.heat == "normal");
     assert(PhoneHealth::fromStatus("status\nbattery=12\ncharging=no\nwarning=The phone is hot. Lower the quality\n").heat == "hot");
     assert(PhoneHealth::fromStatus("status\nwarning=The phone is getting warm.\n").heat == "warm");
