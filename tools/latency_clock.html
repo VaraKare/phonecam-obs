@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhoneCam delay clock</title>
+<!--
+  Camera-to-OBS delay (glass to OBS), for PhoneCam research (docs/ROADMAP.md, v1.0 item).
+  1. Open this file in a browser on the computer and put it on one half of the screen.
+  2. Put OBS on the other half, with the PhoneCam source in the preview.
+  3. Point the phone camera at this clock and start live.
+  4. Take a screenshot of the whole screen (both halves): the clock on the left is "now", the clock seen through
+     OBS is "then". Delay = now − then. Take 10 screenshots a few seconds apart and use the median.
+  The clock counts milliseconds since the page opened and changes every screen refresh. Nothing is sent anywhere.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #000; color: #fff; font: 700 15vmin/1 ui-monospace, Menlo, Consolas, monospace;
+         display: grid; place-items: center; min-height: 100vh; }
+  #clock { letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+  #bar { display: flex; gap: 0.6vmin; margin-top: 4vmin; }
+  #bar span { width: 3vmin; height: 3vmin; background: #333; }
+  #bar span.on { background: #e53935; }
+  p { font: 400 2.2vmin/1.4 system-ui, sans-serif; color: #aaa; text-align: center; margin: 3vmin 4vmin 0; }
+</style>
+</head>
+<body>
+<main>
+  <div id="clock">00.000</div>
+  <div id="bar" aria-hidden="true"></div>
+  <p>PhoneCam delay clock: point the phone at this, put OBS beside it, take a screenshot of both. Delay = this clock − the clock in OBS.</p>
+</main>
+<script>
+  const clock = document.getElementById('clock');
+  const bar = document.getElementById('bar');
+  // Ten squares light in turn every 100 ms: readable even when the digits blur in a fast camera frame.
+  for (let i = 0; i < 10; i++) bar.appendChild(document.createElement('span'));
+  const squares = [...bar.children];
+  const start = performance.now();
+  function tick(now) {
+    const ms = Math.floor(now - start);
+    const seconds = Math.floor(ms / 1000) % 100;
+    clock.textContent = String(seconds).padStart(2, '0') + '.' + String(ms % 1000).padStart(3, '0');
+    const lit = Math.floor(ms / 100) % 10;
+    squares.forEach((s, i) => s.classList.toggle('on', i === lit));
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+</script>
+</body>
+</html>
