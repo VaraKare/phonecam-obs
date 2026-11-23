@@ -198,5 +198,28 @@ class UniversalPinTest(unittest.TestCase):
         self.assertRegex(digest, r"^[0-9a-f]{64}$")
 
 
+class ObsUpdateTest(unittest.TestCase):
+    """OBS updates must not change what the plugin is built against (owner, 23 Nov 2026)."""
+    def test_one_pinned_sdk_baseline_for_every_build(self):
+        self.assertEqual(list(build_native.OBS_ARCHIVES), [build_native.SDK_VERSION])
+        self.assertRegex(build_native.OBS_ARCHIVES[build_native.SDK_VERSION], r"^[0-9a-f]{64}$")
+        windows = (ROOT / "tools/build_windows.py").read_text()
+        self.assertIn("dependencies(SDK_VERSION)", windows)
+        self.assertIn("dependencies(SDK_VERSION)", (ROOT / "tools/build_native.py").read_text())
+
+    def test_versions_compare_by_number(self):
+        v = build_native.obs_version
+        self.assertEqual(v("33.0.2"), (33, 0, 2))
+        self.assertEqual(v("34.0"), (34, 0, 0))
+        self.assertEqual(v("33.1.0-beta1"), (33, 1, 0))
+        self.assertGreater(v("33.10.0"), v("33.9.0"))  # not text order
+
+    def test_weekly_newest_obs_check_exists(self):
+        workflow = (ROOT / ".github/workflows/newest-obs.yml").read_text()
+        self.assertIn("schedule:", workflow)
+        self.assertIn("2MMRE5MTB8", workflow)  # OBS's own Apple signature
+        self.assertIn("--also-load-in", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()

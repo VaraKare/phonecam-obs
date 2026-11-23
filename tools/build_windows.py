@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Build and test the Windows (x64) OBS plugin with MSVC. Test build only (docs/WINDOWS.md).
 
-Downloads are pinned by SHA-256: OBS 33.0.1 source headers and SIMDe (shared with build_native.py) and the
+Downloads are pinned by SHA-256: OBS 33.0.1 source headers (SDK_VERSION, the plugin's minimum OBS) and SIMDe (shared with build_native.py) and the
 official OBS 33.0.1 Windows x64 zip, whose obs.dll provides the import library and the libobs used by the
 load test. Finds Visual Studio's x64 tools with vswhere when not run from a Developer Command Prompt.
 
   python tools/build_windows.py             # build and test
   python tools/build_windows.py --package   # then: the installer (Inno Setup 6.3+, native/windows/installer.iss)
+  python tools/build_windows.py --also-load-in OBS-Studio-<newer>-Windows-x64.zip   # also load it in a newer OBS
 """
 from pathlib import Path
 import argparse
@@ -21,7 +22,7 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_native import BUILD, PLUGIN_VERSION, ROOT, dependencies  # noqa: E402
+from build_native import BUILD, PLUGIN_VERSION, ROOT, SDK_VERSION, dependencies  # noqa: E402
 
 OBS_VERSION = "33.0.1"
 OBS_ZIP = ("OBS-Studio-33.0.1-Windows-x64.zip",
@@ -177,18 +178,34 @@ def run(command, env, cwd=ROOT):
     subprocess.run(command, check=True, env=env, cwd=cwd)
 
 
+def extract_64bit(archive, runtime):
+    """OBS's 64-bit binaries (bin/64bit/*) from an official OBS Windows zip into runtime/."""
+    with zipfile.ZipFile(archive) as bundle:
+        for member in bundle.infolist():
+            parts = Path(member.filename).parts
+            if member.is_dir() or ".." in parts or "64bit" not in parts: continue
+            relative = Path(*parts[parts.index("64bit") + 1:])
+            target = runtime / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(bundle.read(member))
+
+
+def load_in_other_obs(archive, plugin, smoke, env):
+    """The weekly newest-OBS check: the same plugin file, built against the SDK_VERSION baseline, loaded by another
+    OBS's own obs.dll. A missing export or a refused module version fails here before users update."""
+    other = OUT / "obs-other"
+    shutil.rmtree(other, ignore_errors=True)
+    extract_64bit(archive, other)
+    if not (other / "obs.dll").exists(): raise RuntimeError(f"No 64-bit obs.dll in {archive}")
+    shutil.copy2(smoke, other / smoke.name)  # next to that obs.dll so it, not the baseline one, is loaded
+    run([other / smoke.name, plugin], env, cwd=other)
+    print(f"PASS: the plugin loads in {Path(archive).name}", flush=True)
+
+
 def obs_runtime(env):
     """Extracts OBS's 64-bit binaries and makes obs.lib from obs.dll's exports."""
     runtime = OUT / "obs-bin"
-    if not (runtime / "obs.dll").exists():
-        with zipfile.ZipFile(fetch(*OBS_ZIP)) as bundle:
-            for member in bundle.infolist():
-                parts = Path(member.filename).parts
-                if member.is_dir() or ".." in parts or "64bit" not in parts: continue
-                relative = Path(*parts[parts.index("64bit") + 1:])
-                target = runtime / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(bundle.read(member))
+    if not (runtime / "obs.dll").exists(): extract_64bit(fetch(*OBS_ZIP), runtime)
     exports = subprocess.run([tool("dumpbin", env), "/nologo", "/exports", str(runtime / "obs.dll")], capture_output=True, text=True, check=True, env=env).stdout
     names = re.findall(r"^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)", exports, re.M)
     if len(names) < 500: raise RuntimeError(f"Unexpected obs.dll exports ({len(names)})")
@@ -416,6 +433,8 @@ def package():
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--package", action="store_true", help="Make the installer from the plugin already built here")
+    parser.add_argument("--also-load-in", type=Path, metavar="OBS_ZIP",
+                        help="Also load the plugin in another official OBS Windows x64 zip (the weekly newest-OBS check)")
     args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("Run on Windows x64 (CI: windows-latest)")
@@ -424,7 +443,7 @@ def main():
         return
     OUT.mkdir(parents=True, exist_ok=True)
     env = msvc_environment()
-    sdk = dependencies(OBS_VERSION)
+    sdk = dependencies(SDK_VERSION)  # the plugin's minimum OBS (build_native.py)
     strict = ["cl", "/nologo", "/std:c++17", "/EHsc", "/W4", "/WX", "/permissive-", "/utf-8", "/external:W0"]
     # Shared portable parsers, same tests as macOS.
     run(strict + ["/I", ROOT / "native", ROOT / "native/protocol_test.cpp", f"/Fe:{OUT / 'protocol-test.exe'}", f"/Fo:{OUT}\\"], env)
@@ -458,6 +477,7 @@ def main():
     smoke = runtime / "phonecam-smoke.exe"  # next to obs.dll so its dependencies load
     run(strict + obs_headers + [ROOT / "native/windows/smoke_win.cpp", f"/Fe:{smoke}", f"/Fo:{OUT}\\", "/link", OUT / "obs.lib"], env)
     run([smoke, plugin], env, cwd=runtime)
+    if args.also_load_in: load_in_other_obs(args.also_load_in, plugin, smoke, env)
     # Microsoft's C++ runtime, for app-local use in the portable test kit (redistributable per the
     # Visual Studio license), so a PC without the runtime installed can still run portable OBS.
     redist = Path(env.get("VCToolsRedistDir", ""))

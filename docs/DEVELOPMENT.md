@@ -3,7 +3,7 @@
 ## Requirements
 
 - JDK 17+, Android SDK platform 36 and build tools 35.0.0 (Android Studio optional). Gradle is downloaded by the checked-in wrapper and verified by SHA-256. See [Android setup](ANDROID_SETUP.md).
-- For the OBS plugin: Apple Silicon Mac, Apple command-line tools, OBS 33.0.0 or 33.0.1 in `/Applications`. Pinned, checksummed OBS and SIMDe headers are fetched into `native/build/` (ignored by Git). No Xcode or CMake.
+- For the OBS plugin: Apple Silicon Mac, Apple command-line tools, OBS 33.0 or newer in `/Applications` (used only to link and load-test the plugin). The plugin always compiles against the pinned, checksummed OBS 33.0.1 SDK (`SDK_VERSION`) and SIMDe headers, fetched into `native/build/` (ignored by Git), so updating OBS never changes the build. See [OBS versions and updates](COMPATIBILITY.md#obs-versions-and-updates). No Xcode or CMake.
 - Python 3.10+, `adb` and `ffmpeg` for the tools and tests.
 
 ## Build and test

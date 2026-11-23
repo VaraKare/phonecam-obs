@@ -104,6 +104,18 @@ void startWifiPairing(obs_source_t *source) {
     }).detach();
 }
 void logLine(const char *line) { blog(LOG_INFO, "[phonecam] %s", line); }
+// OBS updates (owner, 23 Nov 2026: "be ready for the updates"). The plugin is built against the oldest supported OBS
+// (tools/build_native.py SDK_VERSION) and OBS loads plugins built for its own version or older, so an OBS update
+// keeps PhoneCam loading. The log names both versions, and says so when this OBS is a newer major version than the
+// one PhoneCam was built and tested with, so a problem after an update is easy to spot and report.
+void logObsVersion() {
+    const uint32_t running = obs_get_version();
+    blog(LOG_INFO, "[phonecam] Built for OBS %d.%d and newer; running in OBS %s.", LIBOBS_API_MAJOR_VER, LIBOBS_API_MINOR_VER,
+         obs_get_version_string());
+    if ((running >> 24) > LIBOBS_API_MAJOR_VER)
+        blog(LOG_WARNING, "[phonecam] This OBS (%u) is a newer major version than PhoneCam was tested with (%d). It should work; "
+             "if something doesn't, report it with this log.", running >> 24, LIBOBS_API_MAJOR_VER);
+}
 // Runs task(weak source) on OBS's UI thread, but never inside the current call. On the UI thread obs_queue_task
 // runs the task at once, and a Properties refresh inside a button click deletes the button OBS is still handling:
 // OBS crashed on "Forget paired phones" (21 Nov 2026, Mac, twice). From the UI thread it hops through a short-lived

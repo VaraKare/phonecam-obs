@@ -19,7 +19,7 @@
 ## What you need
 
 - An Android phone with Android 10 or newer, and a USB **data** cable (some cables only charge).
-- A Mac with Apple Silicon (M1 or newer) and [OBS Studio](https://obsproject.com) 33.
+- A Mac with Apple Silicon (M1 or newer) and [OBS Studio](https://obsproject.com) 33 or newer.
 - Android platform-tools (`adb`), a small free tool from Google that lets the Mac talk to the phone over USB.
 
 ## Install (one time)
@@ -169,6 +169,7 @@ Still stuck? Open an issue with your phone model, Android version, OBS version a
 - **Is there a watermark or a time limit?** No. The video is your phone's hardware-encoded H.264 or H.265, up to 4K where the phone offers it.
 - **Can I use it in Zoom, Meet or Teams?** Yes, through OBS's **Start Virtual Camera**.
 - **Can I share my phone's screen to OBS?** Yes (0.6): tap the screen icon, then the record button. Android asks your permission every time.
+- **Will an OBS update break it?** It shouldn't. The plugin is built for the oldest supported OBS (33.0), and OBS keeps loading plugins built for older versions, so you can keep OBS updated. Every week an automatic check loads PhoneCam in the newest OBS for Mac and Windows, so a problem is found before most people update. The OBS log says which OBS PhoneCam is running in (`[phonecam] Built for OBS 33.0 and newer; running in OBS …`); if something breaks after an update, open an issue with that log.
 - **Does it work on Windows or iPhone?** Windows is in preview (see the releases). iPhone isn't supported.
 - **How is it different from other phone-webcam apps (DroidCam, Iriun, Camo and others)?** PhoneCam is built only for OBS, is fully open source (GPL), has no paid tier, account or analytics, decodes in hardware, and lets OBS control the phone. Check the other apps' current features and terms yourself; they change.
 

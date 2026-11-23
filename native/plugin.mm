@@ -413,6 +413,7 @@ obs_properties_t *properties(void *value) {
 }
 }
 MODULE_EXPORT bool obs_module_load(void) {
+    logObsVersion();
     obs_source_info info{};
     // The id stays stable so existing scenes keep their source.
     info.id = "phonecam_usb_v1"; info.type = OBS_SOURCE_TYPE_INPUT;

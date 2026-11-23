@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Build against pinned installed OBS 33.0.x with Apple command-line tools; no full Xcode/CMake."""
+"""Build the Mac OBS plugin with Apple command-line tools; no full Xcode/CMake.
+
+The plugin is compiled against one fixed, checksummed OBS SDK (SDK_VERSION), whatever OBS this Mac has. OBS loads
+a plugin built for its own version or an older one, and refuses one built for a newer OBS (libobs/obs-module.c), so
+building against the oldest supported OBS keeps every user on that OBS or newer working, and an OBS update on the
+build Mac can never quietly raise the minimum. The installed OBS (SDK_VERSION's major.minor or newer) only provides
+libobs to link against and to load the plugin in for the smoke test."""
 from pathlib import Path
 import argparse
 import hashlib
 import platform
 import plistlib
+import re
 import shutil
 import subprocess
 import tarfile
@@ -14,11 +21,17 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "native/build"
 PLUGIN_VERSION = "0.7.0-alpha.1"
+# The OBS headers every build uses (Mac, Intel slice and Windows): the plugin's minimum OBS is this major.minor.
+SDK_VERSION = "33.0.1"
 OBS_ARCHIVES = {
-    "33.0.0": "55c6767b209a00f1859b315bf977df907b19890d132723731e00fd589f6860c0",
     "33.0.1": "9174ee0e3677c92d0d060bdce4c5d44dfee9fd3afddfb6333f098fd029b8de2b",
-    "33.0.2": "628f260c39148bac1ca554207a5766e24d3e3beb3fdd5a292dc623a3fbed7cfc",  # tag 33.0.2 (20 Nov 2026), checksum taken 23 Nov
 }
+
+
+def obs_version(text):
+    """'33.0.2' -> (33, 0, 2); missing parts are 0, extra text such as '-beta1' is ignored."""
+    parts = [int(n) for n in re.findall(r"\d+", text.split("-")[0])[:3]]
+    return tuple(parts + [0] * (3 - len(parts)))
 BUNDLE_ID = "dev.phonecam.obs.usb"
 # Official Intel OBS for macOS (SHA-256 as published on the GitHub release), for the --universal x86_64 slice.
 INTEL_OBS_VERSION = "33.0.1"
@@ -138,7 +151,7 @@ def universal(compiler, sources, apple, info, frameworks):
     """Apple Silicon + Intel plugin: an x86_64 slice against the Intel OBS libobs, joined with lipo. Each slice is
     loaded by OBS's own libobs of that architecture (Intel under Rosetta when this Mac has it)."""
     intel = intel_frameworks()
-    sdk = dependencies(INTEL_OBS_VERSION)
+    sdk = dependencies(SDK_VERSION)  # same headers as the arm64 slice
     headers = ["-I", sdk, "-I", BUILD / "simde"]
     folder = BUILD / "universal"
     folder.mkdir(exist_ok=True)
@@ -173,9 +186,11 @@ def main():
         parser.error("This research build currently supports Apple Silicon macOS only")
     obs = Path("/Applications/OBS.app/Contents")
     version = plistlib.loads((obs / "Info.plist").read_bytes())["CFBundleShortVersionString"]
-    if version not in OBS_ARCHIVES:
-        parser.error(f"Pinned OBS headers support {', '.join(OBS_ARCHIVES)}; installed: {version}")
-    sdk = dependencies(version)
+    if obs_version(version)[:2] < obs_version(SDK_VERSION)[:2]:
+        parser.error(f"OBS {version} is older than PhoneCam's minimum, OBS {SDK_VERSION.rsplit('.', 1)[0]}. Update OBS first.")
+    print(f"Building against the OBS {SDK_VERSION} SDK (plugin loads in OBS {SDK_VERSION.rsplit('.', 1)[0]} and newer); "
+          f"load test in the installed OBS {version}.", flush=True)
+    sdk = dependencies(SDK_VERSION)
     frameworks = obs / "Frameworks"
 
     def compiler(arch):

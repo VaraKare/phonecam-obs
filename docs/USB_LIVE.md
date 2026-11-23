@@ -4,7 +4,7 @@ This is a research implementation, not a completed feasibility gate. On 6 Novemb
 
 ## Build and connect
 
-Reference environment: Apple M1, macOS 26.6.2, OBS **33.0.1** (initially 33.0.0; both pinned header sets supported), Vivo V2437 / Android 16. Android API minimum remains 29. Other phones and profiles are unverified. Native builds currently require Apple Silicon, Apple command-line tools and OBS at `/Applications/OBS.app`; full Xcode and CMake are unnecessary. Python 3.10+ and ADB must be on PATH. These are developer-installed research builds, not a clean-Mac alpha installer.
+Reference environment: Apple M1, macOS 26.6.2, OBS **33.0.1** (initially 33.0.0, now 33.0.2; the plugin builds against the pinned 33.0.1 SDK and loads in OBS 33.0 and newer), Vivo V2437 / Android 16. Android API minimum remains 29. Other phones and profiles are unverified. Native builds currently require Apple Silicon, Apple command-line tools and OBS at `/Applications/OBS.app`; full Xcode and CMake are unnecessary. Python 3.10+ and ADB must be on PATH. These are developer-installed research builds, not a clean-Mac alpha installer.
 
 Run from the repository (prefix shell commands with `rtk` on this host):
 
@@ -73,7 +73,7 @@ The tests in `tools/test_native.py` synthesize AVC/HEVC packets and exercise rea
 
 ## Troubleshooting
 
-- **Source missing:** verify OBS 33.0.0 or 33.0.1, rerun the native build, open OBS outside safe mode and restart it. The local plugin is ad-hoc signed, not a notarized release.
+- **Source missing:** verify OBS 33.0 or newer, rerun the native build, open OBS outside safe mode and restart it. The local plugin is ad-hoc signed, not a notarized release.
 - **Black preview:** keep the source visible; read the source's Status line; choose settings before Start. Another receiver or OBS source may already own the one session.
 - **Timeout/connection lost:** tap Stop if necessary, unlock/re-authorize the phone, and tap Start again; the source reconnects by itself. No source can bypass the explicit phone action.
 - **Hardware decoder or unsupported-format error:** use a declared SDR 1080p profile. AVC and HEVC must each be qualified separately. No silent software fallback is used.

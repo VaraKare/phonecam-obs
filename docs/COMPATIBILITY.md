@@ -48,6 +48,14 @@ For the Mac and the vivo V2437, from the version guides ([v0.5](versions/v0.5.md
 | Direct Wi-Fi | Paired once by QR or typed code; phone and computer on the same network, or the computer on the phone's hotspot | No Developer options for this part. Some routers keep devices apart (guest networks, some mesh or dual-band setups); use the same network name or the hotspot. Windows asks once to allow OBS through the firewall |
 | Wireless debugging | Developer options; same Wi-Fi | ≈50–65 Mb/s through adb in our test; the bitrate lowers itself to fit |
 
+## OBS versions and updates
+
+- **Minimum: OBS 33.0.** Every plugin (Mac, Intel slice, Windows) is built against one pinned, checksummed OBS 33.0.1 SDK (`SDK_VERSION` in `tools/build_native.py`), never against whatever OBS the build computer has.
+- **Newer OBS keeps working.** OBS loads a plugin built for its own version or an older one and refuses one built for a newer OBS (`libobs/obs-module.c`). Building against the oldest supported OBS is what keeps an OBS update from breaking PhoneCam, and keeps an update on the build computer from quietly raising the minimum for everyone. PhoneCam uses only OBS's C plugin interface (no Qt), and OBS's recording controls are looked up at run time, so if a future OBS drops them only the recording options switch off.
+- **Checked every week.** `.github/workflows/newest-obs.yml` loads the plugin in the newest official OBS for Mac (OBS's Apple signature checked) and Windows every Monday. A failure there is an early warning; it never changes a release.
+- **In the OBS log.** At start the plugin writes `[phonecam] Built for OBS 33.0 and newer; running in OBS <version>.` and a warning when OBS is a newer major version than the one it was tested with.
+- Tested on hardware: OBS 33.0.0, 33.0.1 and 33.0.2 on the Mac. Raising the minimum (to use a newer OBS feature) is a deliberate change of `SDK_VERSION`, noted in the release notes.
+
 ## Why other Android phones should work, and what can differ
 
 The app doesn't assume anything about the phone. On first open it asks the phone which cameras, sizes, frame rates and hardware encoders it has, and offers only those. So other phones get their own Best/High/Balanced choices. What varies by maker:
