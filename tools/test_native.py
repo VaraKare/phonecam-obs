@@ -412,6 +412,7 @@ esac
                     client.sendall(packet(3, pcm, sequence=0, pts=1000))
                     seen["command"] = read_message(client)
                     for data in self.encoded_packets(): client.sendall(data)
+                    client.sendall(packet(4, b"bye\nreason=stopped\n"))  # 0.7: a deliberate Stop says goodbye
 
             worker = threading.Thread(target=phone, daemon=True); worker.start()
             result = subprocess.run([str(RECEIVER), str(config), "12"], capture_output=True, text=True, timeout=20,

@@ -17,6 +17,7 @@ PLUGIN_VERSION = "0.7.0-alpha.1"
 OBS_ARCHIVES = {
     "33.0.0": "55c6767b209a00f1859b315bf977df907b19890d132723731e00fd589f6860c0",
     "33.0.1": "9174ee0e3677c92d0d060bdce4c5d44dfee9fd3afddfb6333f098fd029b8de2b",
+    "33.0.2": "628f260c39148bac1ca554207a5766e24d3e3beb3fdd5a292dc623a3fbed7cfc",  # tag 33.0.2 (20 Nov 2026), checksum taken 23 Nov
 }
 BUNDLE_ID = "dev.phonecam.obs.usb"
 # Official Intel OBS for macOS (SHA-256 as published on the GitHub release), for the --universal x86_64 slice.

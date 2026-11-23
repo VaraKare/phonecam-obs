@@ -10,6 +10,17 @@
 // fitting the picture to the canvas, Wireless debugging pairing, and the OBS log sink.
 #include <obs-module.h>
 #include <util/platform.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 #include "adb.hpp"
 #include <string>
 #include <thread>
@@ -144,6 +155,26 @@ void addStatus(obs_properties_t *props, const std::string &status, const std::st
 
 // ---- 0.6: the phone talks back (controls, status, microphone) ----
 
+// OBS's own recording (0.7 options). The frontend API lives in OBS's app library, already loaded; looking it up at
+// run time keeps the plugin linked to libobs only. Runs as an OBS UI task.
+template <class F> F frontendFunction(const char *name) {
+#ifdef _WIN32
+    HMODULE module = GetModuleHandleA("obs-frontend-api.dll");
+    return module ? reinterpret_cast<F>(GetProcAddress(module, name)) : nullptr;
+#else
+    return reinterpret_cast<F>(dlsym(RTLD_DEFAULT, name));
+#endif
+}
+void setRecording(void *start) {
+    auto active = frontendFunction<bool (*)()>("obs_frontend_recording_active");
+    auto change = frontendFunction<void (*)()>(start ? "obs_frontend_recording_start" : "obs_frontend_recording_stop");
+    if (!active || !change) { blog(LOG_WARNING, "[phonecam] OBS's recording controls aren't available here."); return; }
+    if (bool(start) == active()) return;
+    change();
+    blog(LOG_INFO, "[phonecam] %s", start ? "Started OBS recording: the phone went live (option in the source's Properties)."
+                                          : "Stopped OBS recording: the phone stopped live (option in the source's Properties).");
+}
+
 // A PhoneCam source made before 0.6 had no sound, so OBS saved it with no audio tracks: the microphone then shows
 // in the mixer as "unassigned" and is missing from recordings (21 Nov). When the phone's sound starts and the source
 // has no track at all, it gets the tracks a new OBS source gets (1-6). Every session: a "once per source" rule
@@ -182,6 +213,9 @@ struct PhoneControls {
     phonecam::ClockMap clock;                 // under lock
     std::atomic<uint64_t> audioUntil{0};      // OBS clock (ns): the microphone sent audio recently
     std::atomic<bool> tracksChecked{false};
+    // 0.7 options (source Properties → Recording): stop OBS recording when the phone stops on purpose (default on),
+    // start it when the phone goes live (default off).
+    std::atomic<bool> stopRecordingWithPhone{true}, startRecordingWithPhone{false}, startPending{false};
     explicit PhoneControls(obs_source_t *value) : source(value) {
         phonecam::Channel::Callbacks callbacks{
             [this](const std::string &text) { received(text); },
@@ -201,7 +235,13 @@ struct PhoneControls {
     void received(const std::string &text) {
         auto lines = splitList(text, '\n');
         if (lines.empty()) return;
+        if (lines[0] == "bye") {
+            // Only a deliberate Stop says goodbye; a lost cable or Wi-Fi never stops the recording.
+            if (stopRecordingWithPhone) obs_queue_task(OBS_TASK_UI, setRecording, nullptr, false);
+            return;
+        }
         if (lines[0] == "hello") {
+            startPending = startRecordingWithPhone.load();
             { std::lock_guard<std::mutex> guard(lock); info.clear(); clock.reset(); }
             blog(LOG_INFO, "[phonecam] The phone app talks to OBS: camera controls are in this source's Properties → Phone.");
             return;
@@ -226,6 +266,8 @@ struct PhoneControls {
     // is on, so sound and picture line up.
     uint64_t stamp(uint64_t phonePts) {
         uint64_t now = os_gettime_ns();
+        // The first picture of a session: start OBS recording now, if the user chose that (not before the picture).
+        if (startPending.exchange(false)) obs_queue_task(OBS_TASK_UI, setRecording, reinterpret_cast<void *>(1), false);
         if (now >= audioUntil) return now;
         std::lock_guard<std::mutex> guard(lock);
         return clock.map(phonePts, now);
@@ -334,5 +376,23 @@ void registerPhoneHotkeys(obs_source_t *source, PhoneControls *phone) {
     hotkey("phonecam.stop", "PhoneCam: stop live on the phone", [](void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) {
         if (pressed) static_cast<PhoneControls *>(data)->send("stop");
     });
+}
+
+// Recording options, shared by the Mac and Windows plugins.
+void addRecordingOptions(obs_properties_t *props) {
+    obs_properties_t *group = obs_properties_create();
+    obs_property_set_long_description(obs_properties_add_bool(group, "rec_stop_with_phone", "Stop OBS recording when the phone stops live"),
+        "When you tap Stop on the phone (or in its notification, or here in OBS), OBS stops recording too.\nA cable or Wi-Fi drop never stops the recording.\nUntick to keep recording after the phone stops.");
+    obs_property_set_long_description(obs_properties_add_bool(group, "rec_start_with_phone", "Start OBS recording when the phone goes live"),
+        "OBS starts recording with the phone's first picture after you tap the record button on the phone.");
+    obs_properties_add_group(props, "recording", "Recording", OBS_GROUP_NORMAL, group);
+}
+void recordingDefaults(obs_data_t *settings) {
+    obs_data_set_default_bool(settings, "rec_stop_with_phone", true);
+    obs_data_set_default_bool(settings, "rec_start_with_phone", false);
+}
+void applyRecordingOptions(PhoneControls &phone, obs_data_t *settings) {
+    phone.stopRecordingWithPhone = obs_data_get_bool(settings, "rec_stop_with_phone");
+    phone.startRecordingWithPhone = obs_data_get_bool(settings, "rec_start_with_phone");
 }
 }

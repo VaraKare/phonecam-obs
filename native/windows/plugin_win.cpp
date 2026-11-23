@@ -348,6 +348,7 @@ void update(void *value, obs_data_t *settings) {
     }
     self->setWifiWanted(obs_data_get_bool(settings, "wifi_direct"));
     self->setKeepLive(obs_data_get_bool(settings, "keep_live"));
+    applyRecordingOptions(self->phone, settings);
 }
 void *create(obs_data_t *settings, obs_source_t *source) {
     obs_source_set_async_unbuffered(source, true);
@@ -356,7 +357,10 @@ void *create(obs_data_t *settings, obs_source_t *source) {
     update(self, settings);
     return self;
 }
-void defaults(obs_data_t *settings) { obs_data_set_default_bool(settings, "fit_canvas", true); obs_data_set_default_bool(settings, "wifi_direct", true); }
+void defaults(obs_data_t *settings) {
+    obs_data_set_default_bool(settings, "fit_canvas", true); obs_data_set_default_bool(settings, "wifi_direct", true);
+    recordingDefaults(settings);
+}
 void destroy(void *value) {
     auto *self = static_cast<Source *>(value);
     self->end();
@@ -427,6 +431,7 @@ obs_properties_t *properties(void *value) {
     obs_property_set_long_description(obs_properties_add_bool(picture, "keep_live", "Keep the phone live while this source is hidden"),
         "Normally, hiding this source stops the phone and you tap the record button again.\nTick this to keep it sending while hidden, so switching back is instant.\nThe phone gets warmer and uses more battery.");
     obs_properties_add_group(p, "picture", "Picture", OBS_GROUP_NORMAL, picture);
+    addRecordingOptions(p);
     obs_properties_t *advanced = obs_properties_create();
     obs_properties_add_text(advanced, "adb_path", "adb.exe path (found automatically)", OBS_TEXT_DEFAULT);
     obs_properties_add_text(advanced, "adb_help", "Wireless debugging: only needed if this PC was never allowed over USB.", OBS_TEXT_INFO);

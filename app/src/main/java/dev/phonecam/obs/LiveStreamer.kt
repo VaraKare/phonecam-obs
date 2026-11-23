@@ -456,6 +456,8 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         finished = true
         handler.removeCallbacks(startDeadline); handler.removeCallbacks(status)
         audio?.stop(); audio = null
+        // A deliberate stop (not a lost cable or an error): OBS may stop its recording too (0.7 option).
+        if (reason.startsWith("Stopped") || reason.startsWith("PhoneCam was closed")) runCatching { transport.goodbye() }
         transport.close()
         releaseCapture()
         runCatching { virtual?.release() }; virtual = null
