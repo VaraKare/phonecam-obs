@@ -15,4 +15,6 @@ Current scope: Android 10+ capability scanning, explicitly initiated camera-qual
 - Raw recordings and private blind-review mappings stay out of Git.
 - Run `./gradlew testDebugUnitTest lintDebug assembleDebug` and `python3 -m unittest discover -s tools/tests` before a research code handoff.
 
+Helper agents (owner, 23 November 2026) live in `.claude/agents/`: after a behaviour change run `docs-keeper` (follows docs/CHANGE_MAP.md) and `privacy-guard` before committing; `check-runner` for the hand-off checks; `release-gate` before any merge, tag or release. When something is missed, add a row to docs/CHANGE_MAP.md. Start a new session at each minor version (0.7 → 0.8) from docs/HANDOFF.md, which stays short.
+
 See docs/PLAN.md and docs/PHASES.md for gates, and CONTRIBUTING.md for branches.
