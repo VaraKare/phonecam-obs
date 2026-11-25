@@ -14,6 +14,7 @@ Read this first in a new session, then [AGENTS.md](../AGENTS.md) (rules) and [CH
   - both recording options (start with the phone, stop with the phone).
 
   Failed and documented: automatic audio tracks (users tick tracks 1–6). Not run: option unticked / cable pull, clap sync, 2-hour run, 20 replugs, delay measurement, Windows PC, tablet, Intel Mac.
+- **Windows laptop, 25 Nov:** most of [tests/WINDOWS.md](tests/WINDOWS.md) passed with the v0.7 installer over USB and direct Wi-Fi; results and follow-ups (README Windows install with platform-tools at `C:\platform-tools`, the Allow prompts, screenshots) in [research/WINDOWS_V07_TEST.md](research/WINDOWS_V07_TEST.md). The Windows plugin can now ship in v0.7.
 - **New on 23 Nov:**
   - OBS update safety: one pinned SDK, a log line, and a weekly newest-OBS CI check that runs once on `main`.
   - Helper agents in `.claude/agents/` (docs-keeper, check-runner, release-gate, privacy-guard).
