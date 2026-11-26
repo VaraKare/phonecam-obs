@@ -1,6 +1,6 @@
 # Test checklist: a second Android phone (another brand)
 
-Ticket: #TBD. Status in [COMPATIBILITY.md](../COMPATIBILITY.md): Needs a device (ticket).
+Ticket: [#2](https://github.com/VaraKare/phonecam-obs/issues/2). Status in [COMPATIBILITY.md](../COMPATIBILITY.md): Needs a device (ticket).
 
 Use this list to test PhoneCam on an Android phone that is **not** a vivo, for example a Samsung or a Pixel. Everything so far was tested on one vivo V2437. PhoneCam asks the phone what it has, so other phones should work, but phone makers differ in lenses, 60 fps, background limits and menus. Each phone you test makes the tested-phones list longer.
 

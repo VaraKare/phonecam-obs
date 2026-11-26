@@ -220,9 +220,9 @@ esac
         """The known Wireless-debugging phones file lives next to wifi.json: tests never touch the real one."""
         return dict(os.environ, PHONECAM_WIFI_STORE=str(Path(directory) / "wifi.json"))
 
-    def wireless_fake(self, directory, server_port, token, connected_serial="192.168.1.20:41231"):
+    def wireless_fake(self, directory, server_port, token, connected_serial="192.0.2.20:41231"):
         """Fake adb with no phone attached and two Wireless-debugging services on the network: KNOWN at
-        192.168.1.20:41231 and STRANGER at 192.168.1.30:41000. `connect` makes that address a ready device."""
+        192.0.2.20:41231 and STRANGER at 192.0.2.30:41000. `connect` makes that address a ready device."""
         log = Path(directory) / "adb.log"
         fake = Path(directory) / "adb"
         connected = Path(directory) / "connected"
@@ -230,9 +230,9 @@ esac
 echo "$@" >> '{log}'
 case "$*" in
   devices) printf 'List of devices attached\\n'; if [ -e '{connected}' ]; then printf '%s\\tdevice\\n' "$(cat '{connected}')"; fi ;;
-  "mdns services") printf 'List of discovered mdns services\\nadb-STRANGER-q9\\t_adb-tls-connect._tcp\\t192.168.1.30:41000\\nadb-KNOWN-x1\\t_adb-tls-connect._tcp\\t192.168.1.20:41231\\n' ;;
-  "connect 192.168.1.20:41231") printf '{connected_serial}' > '{connected}'; echo 'connected to 192.168.1.20:41231' ;;
-  "connect 192.168.1.30:41000") printf '192.168.1.30:41000' > '{connected}'; echo 'connected to 192.168.1.30:41000' ;;
+  "mdns services") printf 'List of discovered mdns services\\nadb-STRANGER-q9\\t_adb-tls-connect._tcp\\t192.0.2.30:41000\\nadb-KNOWN-x1\\t_adb-tls-connect._tcp\\t192.0.2.20:41231\\n' ;;
+  "connect 192.0.2.20:41231") printf '{connected_serial}' > '{connected}'; echo 'connected to 192.0.2.20:41231' ;;
+  "connect 192.0.2.30:41000") printf '192.0.2.30:41000' > '{connected}'; echo 'connected to 192.0.2.30:41000' ;;
   *"content query"*) printf 'Row: 0 token={token}\\n' ;;
   *"forward tcp:0"*) printf '{server_port}\\n' ;;
 esac
@@ -289,10 +289,10 @@ esac
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(received, [(token + "\n").encode()])
             calls = log.read_text().splitlines()
-            self.assertIn("connect 192.168.1.20:41231", calls)
-            self.assertNotIn("connect 192.168.1.30:41000", calls)
-            self.assertIn("-s 192.168.1.20:41231 shell content query --uri content://dev.phonecam.obs.pairing/token", calls)
-            self.assertIn("-s 192.168.1.20:41231 forward tcp:0 localabstract:phonecam-live-v1", calls)
+            self.assertIn("connect 192.0.2.20:41231", calls)
+            self.assertNotIn("connect 192.0.2.30:41000", calls)
+            self.assertIn("-s 192.0.2.20:41231 shell content query --uri content://dev.phonecam.obs.pairing/token", calls)
+            self.assertIn("-s 192.0.2.20:41231 forward tcp:0 localabstract:phonecam-live-v1", calls)
             self.assertIn("Live over Wi-Fi", result.stderr)
             self.assertEqual((Path(directory) / "wireless-debugging.txt").read_text(), "adb-OTHER-\nadb-KNOWN-x1\n")  # unchanged
 

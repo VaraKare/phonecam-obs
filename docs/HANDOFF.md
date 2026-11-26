@@ -44,7 +44,7 @@ Read this first in a new session, then [AGENTS.md](../AGENTS.md) (rules) and [CH
    - several phones (last);
    - Linux (later).
 
-   Then fill the `#TBD` numbers in COMPATIBILITY.md.
+   Done 26 Nov: issues #1–#11 (devices and the owner's feature ideas), linked from COMPATIBILITY.md and docs/tests/.
 5. **check-runner**, then **release-gate**. Then ask the owner to merge, tag and publish the exact files from 17512b9.
 6. After v0.7 is out, a **new session for v0.8**. Patch versions (0.7.1) stay in the same session.
 

@@ -1,6 +1,6 @@
 # Which phones and computers work
 
-Last updated 22 November 2026, for v0.6.0-alpha.1 and the v0.7 plan. The only combination proven on real hardware is one phone (vivo V2437, Android 16) with one Mac (Apple M1, OBS 33.0.1), plus the v0.4.0 Windows plugin on one Windows 11 laptop.
+Last updated 26 November 2026, for v0.7.0-alpha.1. Proven on real hardware: one phone (vivo V2437, Android 16) with one Mac (Apple M1, OBS 33.0.1), and with one Windows laptop (v0.7 installer, 25 November 2026).
 
 **Tested** means it worked on a real device with real OBS and the result is written in the docs. **Expected** means the code supports it but nobody has proven it. A build, an emulator or a test video never counts as tested.
 
@@ -10,15 +10,15 @@ Every setup has a test checklist in [docs/tests](tests/README.md). Tickets are o
 
 | Setup | Status | What is known | Checklist | Ticket |
 |---|---|---|---|---|
-| **Android + Mac (Apple Silicon)** | **Tested** | vivo V2437 (Android 16) with an Apple M1 Mac and OBS 33.0.1: USB, direct Wi-Fi, background live, OBS controls, microphone and screen sharing, up to 0.6.0-alpha.1 (21–22 November 2026). Not yet: a 30-minute microphone run, sharing the entire screen, and any other phone. | The checks in [v0.6](versions/v0.6.md#tested-on-hardware) | none |
-| **Android + Windows** | To test in v0.7 | The v0.4.0-alpha.1 plugin was tested on one Windows 11 laptop (OBS 33): USB, replug, hide and show, direct Wi-Fi, 13 minutes of 1080p. 4K reached about 24 fps there. The 0.6 and 0.7 plugins pass the automatic checks but have not run on a Windows PC. | [WINDOWS.md](tests/WINDOWS.md) | #TBD |
-| **Android tablet** | To test in v0.7 | Not tried on any tablet. The app asks the device what it has, so it should offer only what a tablet can do. The risks are picture orientation, few cameras and screen layout. | [TABLET.md](tests/TABLET.md) | #TBD |
-| **Android + Intel Mac** | Needs a device (ticket) | The universal plugin (one file for Intel and Apple Silicon) is built. It has never run on an Intel Mac. | [INTEL_MAC.md](tests/INTEL_MAC.md) | #TBD |
-| **Another Android phone (Samsung, Pixel and others)** | Needs a device (ticket) | Expected to work, not verified. Phone makers differ in extra lenses, 60 fps, background limits and menus. | [SECOND_ANDROID.md](tests/SECOND_ANDROID.md) | #TBD |
-| **iPhone + Mac** | After v1.0 | Owner's decision, 22 November 2026. Wi-Fi first, with the existing PCW1 protocol ([Wi-Fi](WIFI.md)), then USB. No iPhone app exists yet. On a Mac, Apple's built-in **Continuity Camera** already does this for free: in OBS, add a **Video Capture Device** and choose the iPhone (macOS 13+, iOS 16+). | [IPHONE.md](tests/IPHONE.md) | #TBD |
-| **iPhone + Windows** | After v1.0 | Same decision and plan as above. This is the case Apple does not cover. USB needs Apple's device software on Windows. | [IPHONE.md](tests/IPHONE.md) | #TBD |
-| **Linux** | Later | Needs a Linux plugin. Same phone app. | none yet | none |
-| **Several phones as several cameras** | Later | Last on the list, after one phone works well for everyone. | none yet | none |
+| **Android + Mac (Apple Silicon)** | **Tested** | vivo V2437 (Android 16) with an Apple M1 Mac and OBS 33.0.1: USB, direct Wi-Fi, background live, OBS controls, microphone and screen sharing, up to 0.7.0-alpha.1 (21–23 November 2026), including the Mac installer, entire screen and one app sharing, phone sound and the recording options. Not yet: a 30-minute microphone run, clap-sync, the 2-hour run, camera-to-OBS delay, and any other phone. | The checks in [v0.6](versions/v0.6.md#tested-on-hardware) | none |
+| **Android + Windows** | **Tested** (25 Nov 2026) | One Windows laptop, v0.7 installer: USB, direct Wi-Fi, recording options, screen sharing with phone sound, microphone, rotation, unplug and replug, leaving the app. 4K (Best) dropped frames on that laptop; Balanced added none. Not run: typed-code pairing, hotkeys, warnings, a 30-minute run, 4K timing. Details: [Windows v0.7 test](research/WINDOWS_V07_TEST.md). | [WINDOWS.md](tests/WINDOWS.md) | [#4](https://github.com/VaraKare/phonecam-obs/issues/4) |
+| **Android tablet** | To test in v0.7 | Not tried on any tablet. The app asks the device what it has, so it should offer only what a tablet can do. The risks are picture orientation, few cameras and screen layout. | [TABLET.md](tests/TABLET.md) | [#1](https://github.com/VaraKare/phonecam-obs/issues/1) |
+| **Android + Intel Mac** | Needs a device (ticket) | The universal plugin (one file for Intel and Apple Silicon) is built. It has never run on an Intel Mac. | [INTEL_MAC.md](tests/INTEL_MAC.md) | [#3](https://github.com/VaraKare/phonecam-obs/issues/3) |
+| **Another Android phone (Samsung, Pixel and others)** | Needs a device (ticket) | Expected to work, not verified. Phone makers differ in extra lenses, 60 fps, background limits and menus. | [SECOND_ANDROID.md](tests/SECOND_ANDROID.md) | [#2](https://github.com/VaraKare/phonecam-obs/issues/2) |
+| **iPhone + Mac** | After v1.0 | Owner's decision, 22 November 2026. Wi-Fi first, with the existing PCW1 protocol ([Wi-Fi](WIFI.md)), then USB. No iPhone app exists yet. On a Mac, Apple's built-in **Continuity Camera** already does this for free: in OBS, add a **Video Capture Device** and choose the iPhone (macOS 13+, iOS 16+). | [IPHONE.md](tests/IPHONE.md) | [#5](https://github.com/VaraKare/phonecam-obs/issues/5) |
+| **iPhone + Windows** | After v1.0 | Same decision and plan as above. This is the case Apple does not cover. USB needs Apple's device software on Windows. | [IPHONE.md](tests/IPHONE.md) | [#5](https://github.com/VaraKare/phonecam-obs/issues/5) |
+| **Linux** | Later | Needs a Linux plugin. Same phone app. | none yet | [#7](https://github.com/VaraKare/phonecam-obs/issues/7) |
+| **Several phones as several cameras** | Later | Last on the list, after one phone works well for everyone. | none yet | [#6](https://github.com/VaraKare/phonecam-obs/issues/6) |
 
 Status words: **Tested**, **To test in v0.7**, **Needs a device (ticket)** (a tester with that device is wanted), **After v1.0**, **Later**.
 
@@ -35,9 +35,11 @@ For the Mac and the vivo V2437, from the version guides ([v0.5](versions/v0.5.md
 | Background live and picture-in-picture | 0.5 | Yes, vivo. Not checked on Android 10 and 11, long sessions, or the "phone closed PhoneCam" message |
 | OBS Phone section and hotkeys | 0.6 | Yes, Mac |
 | Phone microphone with audio tracks | 0.6 | Yes, Mac. Clap-sync and an hour-long run are unmeasured |
-| Screen sharing | 0.6 | Yes, one app. The entire screen is unchecked |
+| Screen sharing, entire screen or one app, phone sound | 0.6, 0.7 | Yes, Mac and one Windows laptop |
+| OBS recording options (stop with the phone, start with the phone) | 0.7 | Yes, Mac and one Windows laptop. A pulled cable keeping the recording running was seen on Windows |
+| Mac installer (.pkg) and Windows installer | 0.7 | Yes (Mac 22 Nov, Windows 25 Nov) |
 | Heat and battery warnings, alert when away, dimming | 0.6 | Yes (owner's report) |
-| Any of the above on Windows with the 0.6 plugin | 0.6 | **No** |
+| Windows: USB, direct Wi-Fi, recording options, screen sharing with phone sound, microphone | 0.7 | Yes, one Windows laptop (4K dropped frames there) |
 | Any of the above on a phone other than the vivo V2437 | | **No** |
 
 ## Connections
@@ -74,7 +76,7 @@ Whether it works or not, please send a **Device report** (GitHub → Issues → 
 
 | Combination | Work needed | Size |
 |---|---|---|
-| Windows + Android: proof | Run the 0.6 and 0.7 plugin on a real Windows PC with the [Windows checklist](tests/WINDOWS.md). The plugin and the preview release exist; 4K speed (about 24 fps on the first laptop) is the known weak point. An installer comes later ([roadmap](ROADMAP.md)). | Medium: testing, fixes |
+| Windows + Android: more PCs | Run the [Windows checklist](tests/WINDOWS.md) on a second PC. 4K drops frames on the laptops tried so far; measure it (check S3) and decide if it needs GPU rotation. | Small to medium |
 | Intel Mac | The universal plugin is built. It needs a run on an Intel Mac with the [Intel Mac checklist](tests/INTEL_MAC.md). | Small |
 | Tablet, other makers' phones | Testing only, with the [tablet](tests/TABLET.md) and [other phone](tests/SECOND_ANDROID.md) checklists. Fixes follow what the tests find. | Small each |
 | Linux + Android | A Linux plugin with VA-API or FFmpeg decoding. Same phone app. | Medium |

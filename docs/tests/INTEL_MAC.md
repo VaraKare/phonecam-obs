@@ -1,6 +1,6 @@
 # Test checklist: Android phone and Intel Mac
 
-Ticket: #TBD. Status in [COMPATIBILITY.md](../COMPATIBILITY.md): Needs a device (ticket).
+Ticket: [#3](https://github.com/VaraKare/phonecam-obs/issues/3). Status in [COMPATIBILITY.md](../COMPATIBILITY.md): Needs a device (ticket).
 
 Use this list to test the PhoneCam OBS plugin on a Mac with an Intel processor. Today's tested plugin runs on Apple Silicon Macs only. The universal plugin (one file for both kinds of Mac) is built, but it has never run on an Intel Mac.
 

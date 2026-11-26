@@ -4,11 +4,11 @@ One checklist for each way people will use PhoneCam OBS. Each one is written for
 
 | File | Setup | Status | Ticket |
 |---|---|---|---|
-| [WINDOWS.md](WINDOWS.md) | Android phone + Windows PC | To test in v0.7 | #TBD |
-| [TABLET.md](TABLET.md) | Android tablet + Mac or Windows | To test in v0.7 | #TBD |
-| [INTEL_MAC.md](INTEL_MAC.md) | Android phone + Intel Mac | Needs a device (ticket) | #TBD |
-| [SECOND_ANDROID.md](SECOND_ANDROID.md) | A phone of another brand (Samsung, Pixel, and so on) + Mac or Windows | Needs a device (ticket) | #TBD |
-| [IPHONE.md](IPHONE.md) | iPhone + Mac or Windows | After v1.0; the app doesn't exist yet | #TBD |
+| [WINDOWS.md](WINDOWS.md) | Android phone + Windows PC | Tested on one laptop (25 Nov 2026); remaining checks open | [#4](https://github.com/VaraKare/phonecam-obs/issues/4) |
+| [TABLET.md](TABLET.md) | Android tablet + Mac or Windows | To test in v0.7 | [#1](https://github.com/VaraKare/phonecam-obs/issues/1) |
+| [INTEL_MAC.md](INTEL_MAC.md) | Android phone + Intel Mac | Needs a device (ticket) | [#3](https://github.com/VaraKare/phonecam-obs/issues/3) |
+| [SECOND_ANDROID.md](SECOND_ANDROID.md) | A phone of another brand (Samsung, Pixel, and so on) + Mac or Windows | Needs a device (ticket) | [#2](https://github.com/VaraKare/phonecam-obs/issues/2) |
+| [IPHONE.md](IPHONE.md) | iPhone + Mac or Windows | After v1.0; the app doesn't exist yet | [#5](https://github.com/VaraKare/phonecam-obs/issues/5) |
 
 The Android + Mac (Apple Silicon) setup has already been tested; its record is in [v0.6](../versions/v0.6.md#tested-on-hardware) and the [research notes](../research/VIVO_V2437_V06_TESTS.md).
 

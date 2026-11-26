@@ -98,7 +98,7 @@ inline std::vector<WirelessService> parseWirelessServices(const std::string &tex
 }
 
 // AUDIT-008 A: phones that answered the pairing-key query before, so the Wireless-debugging search connects only
-// to them. An entry is a service instance name ("adb-R58M12-AbCdEf"), or, for a phone seen over USB, "adb-<serial>-"
+// to them. An entry is a service instance name ("adb-TEST42-AbCdEf"), or, for a phone seen over USB, "adb-<serial>-"
 // (Android names the service "adb-<serial>-<random>"), which matches any instance name starting with it.
 inline bool knownDevice(const std::vector<std::string> &known, const std::string &name) {
     for (const auto &entry : known) {

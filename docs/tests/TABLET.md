@@ -1,6 +1,6 @@
 # Test checklist: Android tablet
 
-Ticket: #TBD. Status in [COMPATIBILITY.md](../COMPATIBILITY.md): To test in v0.7.
+Ticket: [#1](https://github.com/VaraKare/phonecam-obs/issues/1). Status in [COMPATIBILITY.md](../COMPATIBILITY.md): To test in v0.7.
 
 Use this list to test PhoneCam on an Android tablet instead of a phone. PhoneCam asks the device which cameras and sizes it has and offers only those, so a tablet should work. It has not been tried on any tablet yet.
 

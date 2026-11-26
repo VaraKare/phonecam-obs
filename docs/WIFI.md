@@ -34,7 +34,7 @@ The pairings file is read once when the server starts and changed only through t
 - A file that exists but cannot be read is reported and left untouched, never replaced. **Forget paired phones** starts a new one.
 - A new pairing is saved before the phone is told it succeeded.
 
-Windows (test build, [Windows plan](WINDOWS.md) W4) runs the same server code with the same protocol. It announces through Windows' own DNS-SD (`DnsServiceRegister`, Windows 10 1809 or later), uses Windows CNG for the cryptography, and lists addresses of adapters with a default gateway first, so virtual adapters (Hyper-V, WSL) come last in the QR code. The first time the source listens, Windows Defender Firewall asks whether OBS may accept connections: allow it on **private** networks. Below, "Mac" means the computer running OBS.
+Windows (test build, [Windows plan](WINDOWS.md) W4) runs the same server code with the same protocol. It announces through Windows' own DNS-SD (`DnsServiceRegister`, Windows 10 1809 or later), uses Windows CNG for the cryptography, and lists addresses of adapters with a default gateway first, so virtual adapters (Hyper-V, WSL) come last in the QR code. The first time the source listens, Windows Defender Firewall asks whether OBS may accept connections: allow it on **private** networks (tested on a Windows laptop on 25 November 2026: QR pairing and live over direct Wi-Fi passed). Below, "Mac" means the computer running OBS.
 
 ### Pairing secret
 

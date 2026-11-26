@@ -1,6 +1,6 @@
 # Test checklist: iPhone (after v1.0)
 
-Ticket: #TBD. Status in [COMPATIBILITY.md](../COMPATIBILITY.md): After v1.0.
+Ticket: [#5](https://github.com/VaraKare/phonecam-obs/issues/5). Status in [COMPATIBILITY.md](../COMPATIBILITY.md): After v1.0.
 
 **After v1.0. The app doesn't exist yet.** Nothing in this file has been built or tested. It is a list of what an iPhone app must do and how to check it, written now so the work later follows the docs. Do not start testing until the owner says there is an iPhone build.
 

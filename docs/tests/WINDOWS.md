@@ -1,18 +1,18 @@
 # Test checklist: Android phone and Windows
 
-Ticket: #TBD. Status in [COMPATIBILITY.md](../COMPATIBILITY.md): To test in v0.7.
+Ticket: [#4](https://github.com/VaraKare/phonecam-obs/issues/4). Status in [COMPATIBILITY.md](../COMPATIBILITY.md): Tested on one Windows laptop with v0.7 (25 November 2026, [results](../research/WINDOWS_V07_TEST.md)); the checks not run there are open in the ticket.
 
-Use this list to test the PhoneCam OBS plugin on a Windows PC with an Android phone. The v0.4.0 Windows plugin was tested on one Windows 11 laptop, over USB and direct Wi-Fi (1080p smooth, 4K about 24 frames per second). The 0.6 and 0.7 plugins have not run on a real Windows PC yet. This list is how that gets proven.
+Use this list to test the PhoneCam OBS plugin on a Windows PC with an Android phone. The v0.4.0 Windows plugin was tested on one Windows 11 laptop, over USB and direct Wi-Fi (1080p smooth, 4K about 24 frames per second). The 0.7 plugin passed most of this list on one Windows laptop on 25 November 2026 ([results](../research/WINDOWS_V07_TEST.md)). More PCs and the remaining checks are still needed.
 
 Nothing here counts as tested until a real Windows PC, a real phone and real OBS pass it. See [Windows plan](../WINDOWS.md) and [Windows test day](../WINDOWS_TEST.md) for the history.
 
 ## What you need
 
 - A Windows PC: Windows 10 (version 1809 or newer) or Windows 11, 64-bit.
-- [OBS Studio](https://obsproject.com) 33, 64-bit.
+- [OBS Studio](https://obsproject.com) 33 or newer, 64-bit.
 - An Android phone with Android 10 or newer, and a USB **data** cable (some cables only charge).
 - A Wi-Fi network that the phone and the PC are both on (for checks 8 to 11). The Internet is not needed.
-- The PhoneCam APK and the Windows plugin zip the owner names for this test.
+- The PhoneCam APK and the Windows plugin installer (`…-setup.exe`) named for this test.
 - Android platform-tools (`adb`), see "How to install".
 - A text file or paper to write results in. About two hours, plus the 30-minute run.
 
@@ -20,10 +20,10 @@ Nothing here counts as tested until a real Windows PC, a real phone and real OBS
 
 Steps 2 and 3 of the README's [Install section](../../README.md#install-one-time) are the same on Windows: turn on USB debugging on the phone (step 2) and install the phone app (step 3). Use the APK the owner names for this test: the v0.7 release, or a test build.
 
-Steps 1 and 4 of the README are for the Mac. On Windows:
-1. Download [SDK Platform-Tools for Windows](https://developer.android.com/tools/releases/platform-tools) and unzip it to `C:\platform-tools`. The plugin looks there by itself.
-2. Quit OBS. Install the Windows plugin from the zip the owner names for this test (the v0.7 release or a test build), as its `INSTALL.txt` says.
-3. If the release has an installer, use it instead and write down which you used.
+Steps 1 and 4 of the README have a Windows part. On Windows:
+1. Download [SDK Platform-Tools for Windows](https://developer.android.com/tools/releases/platform-tools), unzip it, and put the inner `platform-tools` folder at `C:\platform-tools`, so `C:\platform-tools\adb.exe` exists. The plugin looks there by itself, not in Downloads.
+2. Quit OBS. Run `PhoneCam-OBS-plugin-windows-x64-<version>-setup.exe` from the release (or the test build the owner names). Expect SmartScreen (**More info** → **Run anyway**) and an administrator prompt. It installs into `%ProgramData%\obs-studio\plugins\phonecam-obs`. Start OBS afterwards.
+3. Uninstall with Windows **Settings → Apps → PhoneCam OBS plugin**. Write down any message the installer gave.
 
 A borrowed PC that you do not want to change: the owner has a portable kit that leaves nothing behind, described in [Windows test day](../WINDOWS_TEST.md). Ask first.
 

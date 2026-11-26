@@ -4,7 +4,7 @@ This is a research implementation, not a completed feasibility gate. On 6 Novemb
 
 ## Build and connect
 
-Reference environment: Apple M1, macOS 26.6.2, OBS **33.0.1** (initially 33.0.0, now 33.0.2; the plugin builds against the pinned 33.0.1 SDK and loads in OBS 33.0 and newer), Vivo V2437 / Android 16. Android API minimum remains 29. Other phones and profiles are unverified. Native builds currently require Apple Silicon, Apple command-line tools and OBS at `/Applications/OBS.app`; full Xcode and CMake are unnecessary. Python 3.10+ and ADB must be on PATH. These are developer-installed research builds, not a clean-Mac alpha installer.
+Reference environment: Apple M1, macOS 26.6.2, OBS **33.0.1** (initially 33.0.0, now 33.0.2; the plugin builds against the pinned 33.0.1 SDK and loads in OBS 33.0 and newer), Vivo V2437 / Android 16. Android API minimum remains 29. Other phones and profiles are unverified. Native builds currently require Apple Silicon, Apple command-line tools and OBS at `/Applications/OBS.app`; full Xcode and CMake are unnecessary. Python 3.10+ and ADB must be on PATH. For ordinary use, the release has a Mac installer (`.pkg`) and a Windows installer; this page is the developer view. On Windows the plugin finds `adb.exe` in `ANDROID_HOME`, the Android Studio folder, `C:\platform-tools` and PATH (not Downloads), or at the source's **adb path**.
 
 Run from the repository (prefix shell commands with `rtk` on this host):
 

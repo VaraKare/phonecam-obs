@@ -82,12 +82,20 @@ Built and tested on the vivo V2437 and the Mac on 21–22 Nov ([version guide](v
 - **Heat and battery warnings** with Lower quality; an alert when live ends while away; USB preferred when plugged in; the screen dims while live; faster start.
 - **Icons** on the main screen, with names on a long press and a "What the buttons do" page.
 
+### v0.7 — Clients, easy install, reliability (26 November 2026)
+
+**Done and tested on the vivo V2437:** Mac installer (.pkg, Mac, 22 Nov) and Windows installer (25 Nov); screen sharing as entire screen or one app, with the phone's own sound; OBS recording options (stop with the phone, start with the phone); plugin built against a pinned OBS 33.0 SDK with a weekly check in the newest OBS; faster start (first picture in about 1 s over USB); Windows laptop test: USB, direct Wi-Fi, recording options, screen sharing and sound, unplug and replug, leaving the app ([results](research/WINDOWS_V07_TEST.md), [Mac results](research/V07_MAC_TESTS.md)).
+
+**Not done yet:** Android tablet, Intel Mac, a second Android maker, the 2-hour run, 20 replugs, measured camera-to-OBS delay, clap-sync, 4K timing on Windows (4K dropped frames on the laptop; Balanced did not), typed-code pairing and hotkeys on Windows. Phone sound in OBS still needs tracks 1–6 ticked once (the automatic fix did not work).
+
 ### Later (owner, 21–22 November 2026)
 
 - **Several phones as several cameras:** each phone as its own OBS source, for multi-angle streams. After one phone works well for everyone (the owner: people start with one phone). Builds on the one-source rule (AUDIT-011).
-- **Screen sharing: choose the entire screen or one app** from PhoneCam (Android 14+ lets the user pick in its own prompt; some phones hide the choice), and the phone's own sound with the screen.
-- **Windows phase 2:** installer, and a Windows PC test of the 0.6 plugin.
-- **Mac installer package** (unsigned; see below) and a universal plugin that also runs on Intel Macs.
+- Done in 0.7: screen sharing with a choice of entire screen or one app, the phone's own sound, the Windows installer, the Mac installer package (unsigned) and a universal plugin built for Intel Macs (Intel not yet tested on a real Mac).
+- **Update notices through the OBS plugin** (owner's idea, 25 Nov 2026; needs a decision and a privacy-policy change first): opt-in, at most monthly, only after a privacy-policy change. The phone stays offline. The plugin only, no desktop app.
+- **Version and compatibility messages inside OBS** (for example when OBS is too old or newer than tested).
+- **Continue over Wi-Fi when the cable is pulled** during live, if the computer is paired over Wi-Fi.
+- **Find adb in Downloads** (for example `Downloads\platform-tools*\platform-tools`), or say clearly in the message to use the "adb path" setting. Today the Windows plugin looks only in `ANDROID_HOME`, the Android Studio folder, `C:\platform-tools` and PATH.
 
 ### v1.0 — Stable
 

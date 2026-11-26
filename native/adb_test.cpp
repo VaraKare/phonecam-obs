@@ -7,8 +7,8 @@
 static std::vector<uint8_t> message_for_test(const std::vector<uint8_t> &body) { return phonecam::message(phonecam::Audio, body, 0, 1000); }
 int main() {
     using namespace phonecam;
-    auto d = parseDevices("* daemon not running; starting now at tcp:5037\n* daemon started successfully\nList of devices attached\nABC123\tdevice\n192.168.1.4:5555\tdevice\nXYZ\tunauthorized\nQQ\toffline\n\n");
-    assert(d.ready.size() == 2 && d.ready[0] == "ABC123" && d.ready[1] == "192.168.1.4:5555" && d.unauthorized == 1 && d.offline == 1);
+    auto d = parseDevices("* daemon not running; starting now at tcp:5037\n* daemon started successfully\nList of devices attached\nABC123\tdevice\n192.0.2.4:5555\tdevice\nXYZ\tunauthorized\nQQ\toffline\n\n");
+    assert(d.ready.size() == 2 && d.ready[0] == "ABC123" && d.ready[1] == "192.0.2.4:5555" && d.unauthorized == 1 && d.offline == 1);
     assert(parseDevices("List of devices attached\r\n").ready.empty());
     assert(parseDevices("../evil\tdevice\n").ready.empty());
     std::string hex(64, 'a');
@@ -19,25 +19,25 @@ int main() {
     assert(parseToken("Row: 0 token=" + hex + "b\n").empty());
     assert(parseToken("Row: 0 token=" + std::string(64, 'A') + "\n").empty());
     assert(parsePort("54321\n") == 54321 && parsePort("") == 0 && parsePort("80\n") == 0 && parsePort("error: no devices\n") == 0 && parsePort("99999\n") == 0);
-    auto mixed = parseDevices("List of devices attached\nadb-10BF-xyz._adb-tls-connect._tcp\tdevice\nPHONE0SERIAL\tdevice\n");
+    auto mixed = parseDevices("List of devices attached\nadb-FAKE1-xyz._adb-tls-connect._tcp\tdevice\nPHONE0SERIAL\tdevice\n");
     assert(mixed.ready.size() == 2 && mixed.ready[0] == "PHONE0SERIAL");  // cable first
-    assert(isWireless("adb-10BF-xyz._adb-tls-connect._tcp") && isWireless("192.168.1.4:5555") && !isWireless("PHONE0SERIAL"));
-    assert(validWifiAddress("192.168.1.20:37099") && !validWifiAddress("192.168.1.20") && !validWifiAddress("192.168.1.256:5555"));
+    assert(isWireless("adb-FAKE1-xyz._adb-tls-connect._tcp") && isWireless("192.0.2.4:5555") && !isWireless("PHONE0SERIAL"));
+    assert(validWifiAddress("192.0.2.20:37099") && !validWifiAddress("192.0.2.20") && !validWifiAddress("192.0.2.256:5555"));
     assert(!validWifiAddress("192.168.1:5555") && !validWifiAddress("host.local:5555") && !validWifiAddress("1.2.3.4:70000") && !validWifiAddress("1.2.3.4:-1"));
     assert(validPairingCode("123456") && !validPairingCode("12345") && !validPairingCode("12345a") && !validPairingCode("1234567"));
-    auto services = parseWirelessServices("List of discovered mdns services\nadb-10BF-xyz\t_adb-tls-connect._tcp\t192.168.1.20:41231\n"
-        "adb-10BF-xyz\t_adb-tls-pairing._tcp\t192.168.1.20:37099\nadb-10BF-xyz\t_adb-tls-connect._tcp.\t192.168.1.20:41231\nbad\t_adb-tls-connect._tcp\t;rm -rf\n");
-    assert(services.size() == 1 && services[0].address == "192.168.1.20:41231" && services[0].name == "adb-10BF-xyz");
-    assert(parseWirelessServices("bad;name\t_adb-tls-connect._tcp\t192.168.1.21:4000\n").empty());
+    auto services = parseWirelessServices("List of discovered mdns services\nadb-FAKE1-xyz\t_adb-tls-connect._tcp\t192.0.2.20:41231\n"
+        "adb-FAKE1-xyz\t_adb-tls-pairing._tcp\t192.0.2.20:37099\nadb-FAKE1-xyz\t_adb-tls-connect._tcp.\t192.0.2.20:41231\nbad\t_adb-tls-connect._tcp\t;rm -rf\n");
+    assert(services.size() == 1 && services[0].address == "192.0.2.20:41231" && services[0].name == "adb-FAKE1-xyz");
+    assert(parseWirelessServices("bad;name\t_adb-tls-connect._tcp\t192.0.2.21:4000\n").empty());
 
     // AUDIT-008 A: connect only to phones that answered the key query before.
-    std::vector<std::string> known = {"adb-R58M12-AbCdEf", "adb-USB0SERIAL-"};
-    assert(knownDevice(known, "adb-R58M12-AbCdEf") && !knownDevice(known, "adb-R58M12-Other") && !knownDevice(known, "adb-R58M1"));
+    std::vector<std::string> known = {"adb-TEST42-AbCdEf", "adb-USB0SERIAL-"};
+    assert(knownDevice(known, "adb-TEST42-AbCdEf") && !knownDevice(known, "adb-TEST42-Other") && !knownDevice(known, "adb-TEST4"));
     assert(knownDevice(known, "adb-USB0SERIAL-x1y2z3") && !knownDevice(known, "adb-USB0SERIALX-q"));
     assert(!knownDevice({}, "adb-anything") && !knownDevice({"adb-"}, "adb-anything"));  // "adb-" alone is no prefix
-    std::vector<WirelessService> search = {{"adb-R58M12-AbCdEf", "192.168.1.20:41231"}};
-    assert(deviceEntry("adb-R58M12-AbCdEf._adb-tls-connect._tcp", {}) == "adb-R58M12-AbCdEf");
-    assert(deviceEntry("192.168.1.20:41231", search) == "adb-R58M12-AbCdEf" && deviceEntry("192.168.1.30:5555", search).empty());
+    std::vector<WirelessService> search = {{"adb-TEST42-AbCdEf", "192.0.2.20:41231"}};
+    assert(deviceEntry("adb-TEST42-AbCdEf._adb-tls-connect._tcp", {}) == "adb-TEST42-AbCdEf");
+    assert(deviceEntry("192.0.2.20:41231", search) == "adb-TEST42-AbCdEf" && deviceEntry("192.0.2.30:5555", search).empty());
     assert(deviceEntry("PHONE0SERIAL", {}) == "adb-PHONE0SERIAL-" && deviceEntry("bad serial", {}).empty());
     auto file = parseKnownDevices("adb-A-1\r\n\nnot ok\nadb-A-1\nadb-B-\n");
     assert(file.size() == 2 && file[0] == "adb-A-1" && file[1] == "adb-B-");
