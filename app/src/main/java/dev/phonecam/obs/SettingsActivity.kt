@@ -1,7 +1,6 @@
 package dev.phonecam.obs
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -66,6 +65,15 @@ class SettingsActivity : Activity() {
             toggle("Picture-in-picture when you leave", "The phone preview stays in a small window. Closing the window keeps live running in the background (if the switch above is on).", "pip")
         toggle("Heat and battery warnings", "A notification when the phone gets hot (with Lower quality) and at 20, 15, 10 and 5 % battery.", "warnings")
         toggle("Dim the screen while live", "After 30 seconds without a touch. Saves battery and heat; the video isn't affected.", "dim")
+        if (Build.VERSION.SDK_INT >= 34) {
+            val scopes = listOf("ask" to "Ask each time", "entire" to "Entire screen", "app" to "One app")
+            val current = prefs.getString("screen_scope", "ask")
+            ui.row("Screen sharing shares", null, scopes.firstOrNull { it.first == current }?.second) {
+                val sheet = Sheet(this, "Screen sharing shares")
+                for ((key, label) in scopes) sheet.option(label, selected = key == current) { prefs.edit().putString("screen_scope", key).apply(); build() }
+                sheet.button("Cancel").show()
+            }
+        }
         ui.row("Let PhoneCam run in the background", backgroundHint()) {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
         }
@@ -86,10 +94,10 @@ class SettingsActivity : Activity() {
         ui.section("About")
         ui.row("What the buttons do", "The icons on the main screen") { showLegend() }
         ui.row("Privacy") {
-            AlertDialog.Builder(this).setTitle("Privacy").setMessage(
-                "Video goes only to OBS: over the USB cable, or encrypted over your local Wi-Fi to a computer you paired. " +
-                "Nothing is saved on the phone while live. No microphone, accounts, analytics or Internet servers.")
-                .setPositiveButton("OK", null).show()
+            Sheet(this, "Privacy",
+                "Video and sound go only to OBS: over the USB cable, or encrypted over your local Wi-Fi to a computer you paired. " +
+                "Nothing is saved on the phone. The microphone and the phone's sound are off unless you turn them on. " +
+                "No accounts, analytics or Internet servers.").button("OK", primary = true).show()
         }
         cameraRow("Research tools", "Benchmark recordings for testing") { startActivity(Intent(this, BenchmarkActivity::class.java)) }
         ui.list.addView(TextView(this).apply {
@@ -105,7 +113,8 @@ class SettingsActivity : Activity() {
             R.drawable.ic_screen_share to "Screen: share the phone screen to OBS. Android asks every time.",
             R.drawable.ic_quality to "Quality: Best, High, Balanced or Smooth. The line below the icons shows the current one.",
             R.drawable.ic_mirror to "Mirror: flips the picture in OBS (blue when on). Handy for the front camera.",
-            R.drawable.ic_mic to "Microphone: sends the phone's sound to OBS (blue when on, crossed out when off).",
+            R.drawable.ic_mic to "Microphone: sends the phone's microphone to OBS (blue when on, crossed out when off).",
+            R.drawable.ic_volume to "Phone sound (screen sharing only): sends the sound of the apps on the phone, such as a game, to OBS.",
             R.drawable.ic_switch_camera to "Switch camera: rear, front, and back again. Works while live.",
             R.drawable.ic_tune to "Settings: pairing, background live, warnings and more.",
             R.drawable.ic_stop to "Record button: the red circle goes live; the red square stops.")
@@ -120,8 +129,8 @@ class SettingsActivity : Activity() {
             text = "Tip: press and hold any icon on the main screen to see its name."
             setTextColor(Ui.MUTED); textSize = 14f; setPadding(0, ui.dp(12), 0, ui.dp(4))
         })
-        AlertDialog.Builder(this).setTitle("What the buttons do").setView(android.widget.ScrollView(this).apply { addView(list) })
-            .setPositiveButton("OK", null).show()
+        list.setPadding(0, ui.dp(4), 0, 0)
+        Sheet(this, "What the buttons do").view(list).button("OK", primary = true).show()
     }
 
     /** The paired computers, most recently used first; tapping one offers to forget it. */
@@ -129,21 +138,19 @@ class SettingsActivity : Activity() {
         val pairings = WifiConnector(this).pairings
         val macs = pairings.macs.reversed()
         if (macs.isEmpty()) {
-            AlertDialog.Builder(this).setTitle("No paired computers")
-                .setMessage("Pair once to use direct Wi-Fi. In OBS, open the PhoneCam source's Properties and click Pair a phone over Wi-Fi.")
-                .setNegativeButton("Close", null).setPositiveButton("Pair a computer") { _, _ -> finishWith(SCAN) }.show()
+            Sheet(this, "No paired computers", "Pair once to use direct Wi-Fi. In OBS, open the PhoneCam source's Properties and click Pair a phone over Wi-Fi.")
+                .button("Close").button("Pair a computer", primary = true) { finishWith(SCAN) }.show()
             return
         }
-        val names = macs.mapIndexed { i, mac -> mac.name + if (i == 0) "  ·  last used" else "" }
-        AlertDialog.Builder(this).setTitle("Paired computers")
-            .setItems(names.toTypedArray()) { _, index ->
-                val mac = macs[index]
-                AlertDialog.Builder(this).setTitle("Forget ${mac.name}?")
-                    .setMessage("This phone stops connecting to it over Wi-Fi until you pair again. USB is not affected.")
-                    .setNegativeButton("Cancel") { _, _ -> showPaired() }
-                    .setPositiveButton("Forget") { _, _ -> pairings.forget(mac.id); build(); showPaired() }.show()
+        val sheet = Sheet(this, "Paired computers", "Tap one to forget it. USB is not affected.")
+        macs.forEachIndexed { i, mac ->
+            sheet.option(mac.name, if (i == 0) "Last used" else null, R.drawable.ic_wifi) {
+                Sheet(this, "Forget ${mac.name}?", "This phone stops connecting to it over Wi-Fi until you pair again. USB is not affected.")
+                    .button("Cancel") { showPaired() }
+                    .button("Forget", danger = true) { pairings.forget(mac.id); build(); showPaired() }.show()
             }
-            .setNegativeButton("Close", null).show()
+        }
+        sheet.button("Close").show()
     }
 
     /** vivo (and some other brands) close background apps to save battery unless the app is allowed. */

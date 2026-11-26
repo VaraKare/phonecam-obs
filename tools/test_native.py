@@ -123,10 +123,13 @@ esac
                     except OSError: pass
 
             worker = threading.Thread(target=phone, daemon=True); worker.start()
-            result = subprocess.run([str(RECEIVER), "--auto", "12", str(fake)], capture_output=True, text=True, timeout=30)
+            result = subprocess.run([str(RECEIVER), "--auto", "12", str(fake)], capture_output=True, text=True, timeout=30,
+                                    env=self.isolated(directory))
             worker.join(10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(received, [(token + "\n").encode()])
+            # The phone answered the key query over USB: its Wireless-debugging name prefix is remembered (AUDIT-008 A).
+            self.assertEqual((Path(directory) / "wireless-debugging.txt").read_text(), "adb-FAKE1-\n")
             self.assertEqual(json.loads(result.stdout)["decodedFrames"], 12)
             self.assertIn("Ready. Tap the record button on the phone.", result.stderr)
             calls = log.read_text()
@@ -176,7 +179,8 @@ esac
                             except OSError: pass
 
             worker = threading.Thread(target=phone, daemon=True); worker.start()
-            result = subprocess.run([str(RECEIVER), "--auto", "14", str(fake)], capture_output=True, text=True, timeout=90)
+            result = subprocess.run([str(RECEIVER), "--auto", "14", str(fake)], capture_output=True, text=True, timeout=90,
+                                    env=self.isolated(directory))
             worker.join(10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(sessions, [(token + "\n").encode()] * 2)
@@ -201,7 +205,8 @@ case "$*" in
 esac
 """)
             fake.chmod(0o755)
-            process = subprocess.Popen([str(RECEIVER), "--auto", "1", str(fake)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            process = subprocess.Popen([str(RECEIVER), "--auto", "1", str(fake)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                       env=self.isolated(directory))
             time.sleep(14)
             process.terminate()
             _, stderr = process.communicate(timeout=20)
@@ -209,6 +214,122 @@ esac
             self.assertGreaterEqual(sum(call.startswith("-s STUCK shell content query") for call in calls), 2, calls)
             self.assertNotIn("kill-server", calls)
             self.assertIn("The phone isn't answering over USB", stderr)
+
+    @staticmethod
+    def isolated(directory):
+        """The known Wireless-debugging phones file lives next to wifi.json: tests never touch the real one."""
+        return dict(os.environ, PHONECAM_WIFI_STORE=str(Path(directory) / "wifi.json"))
+
+    def wireless_fake(self, directory, server_port, token, connected_serial="192.0.2.20:41231"):
+        """Fake adb with no phone attached and two Wireless-debugging services on the network: KNOWN at
+        192.0.2.20:41231 and STRANGER at 192.0.2.30:41000. `connect` makes that address a ready device."""
+        log = Path(directory) / "adb.log"
+        fake = Path(directory) / "adb"
+        connected = Path(directory) / "connected"
+        fake.write_text(f"""#!/bin/sh
+echo "$@" >> '{log}'
+case "$*" in
+  devices) printf 'List of devices attached\\n'; if [ -e '{connected}' ]; then printf '%s\\tdevice\\n' "$(cat '{connected}')"; fi ;;
+  "mdns services") printf 'List of discovered mdns services\\nadb-STRANGER-q9\\t_adb-tls-connect._tcp\\t192.0.2.30:41000\\nadb-KNOWN-x1\\t_adb-tls-connect._tcp\\t192.0.2.20:41231\\n' ;;
+  "connect 192.0.2.20:41231") printf '{connected_serial}' > '{connected}'; echo 'connected to 192.0.2.20:41231' ;;
+  "connect 192.0.2.30:41000") printf '192.0.2.30:41000' > '{connected}'; echo 'connected to 192.0.2.30:41000' ;;
+  *"content query"*) printf 'Row: 0 token={token}\\n' ;;
+  *"forward tcp:0"*) printf '{server_port}\\n' ;;
+esac
+""")
+        fake.chmod(0o755)
+        return fake, log
+
+    def test_unknown_wireless_debugging_phone_is_not_connected(self):
+        """AUDIT-008 A: a Wireless-debugging service that never answered the key query on this computer gets no
+        `adb connect`, so no key query and no forward; the status says how to make it known."""
+        with tempfile.TemporaryDirectory() as directory:
+            fake, log = self.wireless_fake(directory, 1, "e" * 64)
+            process = subprocess.Popen([str(RECEIVER), "--auto", "1", str(fake)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, env=self.isolated(directory))
+            # Two Wi-Fi searches (one every 6 s). Wait for them rather than a fixed 9 s: on a slow CI machine
+            # the first search starts late and only one fitted (CI, 25-26 Nov 2026).
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if log.exists() and log.read_text().splitlines().count("mdns services") >= 2: break
+                time.sleep(0.2)
+            time.sleep(0.5)  # anything it would wrongly do after the second search shows up in the log
+            process.terminate()
+            _, stderr = process.communicate(timeout=20)
+            calls = log.read_text().splitlines()
+            self.assertGreaterEqual(calls.count("mdns services"), 2, calls)
+            self.assertFalse([call for call in calls if call.startswith("connect")], calls)
+            self.assertFalse([call for call in calls if "content query" in call or "forward" in call], calls)
+            self.assertIn("A Wireless-debugging phone new to PhoneCam connects after one USB connection", stderr)
+            self.assertFalse((Path(directory) / "wireless-debugging.txt").exists())
+
+    def test_known_wireless_debugging_phone_is_connected(self):
+        """AUDIT-008 A: a service whose name answered the key query before is connected, read and forwarded; the
+        stranger beside it is never connected."""
+        token = "f" * 64
+        packets = self.encoded_packets(True, width=640, height=360)
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as server:
+            server.bind(("127.0.0.1", 0)); server.listen(2); server.settimeout(20)
+            (Path(directory) / "wireless-debugging.txt").write_text("adb-OTHER-\nadb-KNOWN-x1\n")
+            fake, log = self.wireless_fake(directory, server.getsockname()[1], token)
+            received = []
+
+            def phone():
+                with server.accept()[0] as client:
+                    auth = b""
+                    while len(auth) < 65:
+                        value = client.recv(65 - len(auth))
+                        if not value: break
+                        auth += value
+                    received.append(auth)
+                    for data in packets: client.sendall(data)
+                    try: client.recv(1)
+                    except OSError: pass
+
+            worker = threading.Thread(target=phone, daemon=True); worker.start()
+            result = subprocess.run([str(RECEIVER), "--auto", "12", str(fake)], capture_output=True, text=True, timeout=40,
+                                    env=self.isolated(directory))
+            worker.join(10)
+            if result.returncode and os.environ.get("PHONECAM_ALLOW_NO_HW") and "Hardware" in result.stderr and "decod" in result.stderr:
+                self.skipTest("no hardware video decoder on this machine (virtual CI machine)")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(received, [(token + "\n").encode()])
+            calls = log.read_text().splitlines()
+            self.assertIn("connect 192.0.2.20:41231", calls)
+            self.assertNotIn("connect 192.0.2.30:41000", calls)
+            self.assertIn("-s 192.0.2.20:41231 shell content query --uri content://dev.phonecam.obs.pairing/token", calls)
+            self.assertIn("-s 192.0.2.20:41231 forward tcp:0 localabstract:phonecam-live-v1", calls)
+            self.assertIn("Live over Wi-Fi", result.stderr)
+            self.assertEqual((Path(directory) / "wireless-debugging.txt").read_text(), "adb-OTHER-\nadb-KNOWN-x1\n")  # unchanged
+
+    def test_phone_connected_by_adb_itself_is_remembered(self):
+        """A phone adb connected on its own (it was paired with `adb pair`) answers the key query: its service name is
+        remembered, so the plugin's own search may connect it later."""
+        token = "1" * 64
+        packets = self.encoded_packets(True, width=640, height=360)
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as server:
+            server.bind(("127.0.0.1", 0)); server.listen(2); server.settimeout(20)
+            fake, log = self.wireless_fake(directory, server.getsockname()[1], token)
+            (Path(directory) / "connected").write_text("adb-NEW-z7._adb-tls-connect._tcp")
+
+            def phone():
+                with server.accept()[0] as client:
+                    client.recv(65)
+                    for data in packets: client.sendall(data)
+                    try: client.recv(1)
+                    except OSError: pass
+
+            worker = threading.Thread(target=phone, daemon=True); worker.start()
+            result = subprocess.run([str(RECEIVER), "--auto", "12", str(fake)], capture_output=True, text=True, timeout=40,
+                                    env=self.isolated(directory))
+            worker.join(10)
+            if result.returncode and os.environ.get("PHONECAM_ALLOW_NO_HW") and "Hardware" in result.stderr and "decod" in result.stderr:
+                self.skipTest("no hardware video decoder on this machine (virtual CI machine)")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse([call for call in log.read_text().splitlines() if call.startswith("connect")])
+            known = Path(directory) / "wireless-debugging.txt"
+            self.assertEqual(known.read_text(), "adb-NEW-z7\n")
+            self.assertEqual(known.stat().st_mode & 0o777, 0o600)
 
     def test_missing_adb_reports_guidance(self):
         process = subprocess.Popen([str(RECEIVER), "--auto", "1", "/nonexistent/adb"], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
@@ -297,6 +418,7 @@ esac
                     client.sendall(packet(3, pcm, sequence=0, pts=1000))
                     seen["command"] = read_message(client)
                     for data in self.encoded_packets(): client.sendall(data)
+                    client.sendall(packet(4, b"bye\nreason=stopped\n"))  # 0.7: a deliberate Stop says goodbye
 
             worker = threading.Thread(target=phone, daemon=True); worker.start()
             result = subprocess.run([str(RECEIVER), str(config), "12"], capture_output=True, text=True, timeout=20,

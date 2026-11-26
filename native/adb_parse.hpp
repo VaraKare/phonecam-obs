@@ -1,6 +1,7 @@
 #pragma once
 // Pure parsing of adb output and Wi-Fi addresses. Portable (macOS and Windows) and tested under sanitizers.
 #include <algorithm>
+#include <cstddef>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -36,7 +37,8 @@ inline bool validWifiAddress(const std::string &value) {
 }
 inline bool validPairingCode(const std::string &code) { return code.size() == 6 && code.find_first_not_of("0123456789") == std::string::npos; }
 // `adb mdns services`: phones with Wireless debugging on, as "<name> _adb-tls-connect._tcp <ip>:<port>".
-inline std::vector<std::string> parseWirelessServices(const std::string &text);
+struct WirelessService { std::string name, address; };
+inline std::vector<WirelessService> parseWirelessServices(const std::string &text);
 
 struct DeviceList { std::vector<std::string> ready; int unauthorized = 0, offline = 0; };
 
@@ -76,14 +78,64 @@ inline DeviceList parseDevices(const std::string &text) {
     std::stable_partition(list.ready.begin(), list.ready.end(), [](const std::string &s) { return !isWireless(s); });
     return list;
 }
-inline std::vector<std::string> parseWirelessServices(const std::string &text) {
-    std::vector<std::string> out;
+// A Wireless-debugging instance name ("adb-<serial>-<random>") or a USB serial worth remembering: letters, digits,
+// '.', '_' and '-' only, at most 100 characters. Anything else from the network is ignored.
+inline bool validDeviceName(const std::string &name) {
+    if (name.empty() || name.size() > 100) return false;
+    for (char c : name)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) return false;
+    return true;
+}
+inline std::vector<WirelessService> parseWirelessServices(const std::string &text) {
+    std::vector<WirelessService> out;
     for (const auto &line : lines(text)) {
         auto w = words(line);
-        if (w.size() < 3 || w[1].rfind("_adb-tls-connect._tcp", 0) != 0 || !validWifiAddress(w[2])) continue;
-        if (std::find(out.begin(), out.end(), w[2]) == out.end() && out.size() < 8) out.push_back(w[2]);
+        if (w.size() < 3 || w[1].rfind("_adb-tls-connect._tcp", 0) != 0 || !validWifiAddress(w[2]) || !validDeviceName(w[0])) continue;
+        bool listed = std::any_of(out.begin(), out.end(), [&](const WirelessService &s) { return s.address == w[2]; });
+        if (!listed && out.size() < 8) out.push_back({w[0], w[2]});
     }
     return out;
+}
+
+// AUDIT-008 A: phones that answered the pairing-key query before, so the Wireless-debugging search connects only
+// to them. An entry is a service instance name ("adb-TEST42-AbCdEf"), or, for a phone seen over USB, "adb-<serial>-"
+// (Android names the service "adb-<serial>-<random>"), which matches any instance name starting with it.
+inline bool knownDevice(const std::vector<std::string> &known, const std::string &name) {
+    for (const auto &entry : known) {
+        if (entry == name) return true;
+        if (entry.size() > 5 && entry.back() == '-' && name.size() > entry.size() && name.compare(0, entry.size(), entry) == 0) return true;
+    }
+    return false;
+}
+// The entry to remember for a device that answered the key query: serial "adb-X._adb-tls-connect._tcp" gives "adb-X";
+// "ip:port" gives the name the last mDNS search found at that address (none if adb was told the address by hand);
+// a USB serial gives "adb-<serial>-". Empty when there is nothing safe to remember.
+inline std::string deviceEntry(const std::string &serial, const std::vector<WirelessService> &lastSearch) {
+    for (const char *suffix : {"._adb-tls-connect._tcp", "._adb._tcp"}) {
+        auto at = serial.find(suffix);
+        if (at != std::string::npos) return validDeviceName(serial.substr(0, at)) ? serial.substr(0, at) : std::string();
+    }
+    if (isWireless(serial)) {
+        for (const auto &service : lastSearch) if (service.address == serial) return service.name;
+        return {};
+    }
+    return validDeviceName(serial) ? "adb-" + serial + "-" : std::string();
+}
+// The known-phones file: one entry per line, newest last, at most 16; anything not well formed is skipped.
+constexpr size_t maxKnownDevices = 16;
+inline std::vector<std::string> parseKnownDevices(const std::string &text) {
+    std::vector<std::string> out;
+    for (const auto &line : lines(text))
+        if (validDeviceName(line) && std::find(out.begin(), out.end(), line) == out.end()) out.push_back(line);
+    if (out.size() > maxKnownDevices) out.erase(out.begin(), out.end() - std::ptrdiff_t(maxKnownDevices));
+    return out;
+}
+// Adds a new entry at the end; the oldest go once there are more than 16. False if it was already there (or invalid).
+inline bool rememberDevice(std::vector<std::string> &known, const std::string &entry) {
+    if (!validDeviceName(entry) || std::find(known.begin(), known.end(), entry) != known.end()) return false;
+    known.push_back(entry);
+    if (known.size() > maxKnownDevices) known.erase(known.begin(), known.end() - std::ptrdiff_t(maxKnownDevices));
+    return true;
 }
 // `content query` output: "Row: 0 token=<64 lowercase hex>". Anything else is not paired.
 inline std::string parseToken(const std::string &text) {

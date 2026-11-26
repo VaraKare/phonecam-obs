@@ -28,6 +28,21 @@ struct Link {
     bool done = false;
 };
 
+// The direct Wi-Fi server and its thread, handed off the same way (audit/FINDINGS.md AUDIT-002, Wi-Fi part): stopping
+// waits at most half a second; a thread still closing a phone connection, withdrawing the announcement or stuck in a
+// call finishes in the background. The server lives here, so its callbacks never outlive it, and they reach the
+// source only through owner.
+struct WifiLink {
+    std::atomic<bool> stop{false};
+    std::timed_mutex lock;
+    Source *owner = nullptr;  // null once the source no longer waits for this thread
+    std::shared_ptr<phonecam::Channel> channel;  // the phone's controls; outlives the source if the thread is left behind
+    std::unique_ptr<phonecam::wifi::Server> server;
+    std::mutex doneLock;
+    std::condition_variable doneSignal;
+    bool done = false;
+};
+
 void refreshOnUi(void *weakSource);
 
 int64_t steadyMs() {
@@ -40,7 +55,7 @@ struct Source {
     std::mutex linkLock;
     std::shared_ptr<Link> link;
     std::thread worker;
-    bool leaked = false;
+    std::atomic<bool> leaked{false};  // a callback was still inside OBS when the source went away: never freed
     std::mutex lock;
     std::shared_ptr<AdbPath> adb = std::make_shared<AdbPath>();
     std::string status = "Starting…", lastEnded;
@@ -50,8 +65,7 @@ struct Source {
     // over Wi-Fi" switch (applied at once, audit/FINDINGS.md AUDIT-006). The UI thread reads it under the same lock.
     std::mutex wifiLock;
     bool showing = false, wifiWanted = true;
-    std::atomic<bool> wifiStop{false};
-    std::unique_ptr<phonecam::wifi::Server> wifi;
+    std::shared_ptr<WifiLink> wifi;
     std::thread wifiWorker;
     std::atomic<bool> card{false};
     std::atomic<int64_t> cardUntil{0};
@@ -114,7 +128,7 @@ struct Source {
     std::string openPairingCard() {
         if (!wifi) { return std::string("Direct Wi-Fi is off. Turn on \"Allow paired phones over Wi-Fi\" first, and keep this source visible."); }
         phonecam::wifi::PairingWindow window;
-        try { window = wifi->openPairing(); }
+        try { window = wifi->server->openPairing(); }
         catch (const std::exception &error) { return error.what(); }
         const uint32_t width = 1280, height = 720;
         auto pixels = phonecam::wifi::renderPairingCard(window, width, height);
@@ -204,23 +218,47 @@ struct Source {
     // wifiLock held.
     void startWifi() {
         if (wifi || !showing || !wifiWanted) return;
-        wifiStop = false;
-        wifi = std::make_unique<phonecam::wifi::Server>([this](const std::string &value) {
-            setStatus(value, value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0);
-        }, [this](CVPixelBufferRef image, uint64_t, uint64_t pts) { showFrame(image, pts); },
-        [](const std::string &value) { blog(LOG_INFO, "[phonecam] %s", value.c_str()); }, phone.wifi.get());
-        auto *server = wifi.get();
-        wifiWorker = std::thread([server, this] {
-            try { server->run(wifiStop); }  // run() reports its own problems; this is the last line of defence
-            catch (...) { setStatus("Direct Wi-Fi stopped after an unexpected error."); }
+        auto shared = std::make_shared<WifiLink>();
+        shared->owner = this; shared->channel = phone.wifi;
+        WifiLink *handoff = shared.get();  // the server's callbacks live inside the link
+        auto report = [handoff](const std::string &value) {
+            std::lock_guard<std::timed_mutex> guard(handoff->lock);
+            if (handoff->owner) handoff->owner->setStatus(value, value.rfind("Paired with", 0) == 0 || value.rfind("Pairing window closed", 0) == 0);
+        };
+        shared->server = std::make_unique<phonecam::wifi::Server>(report, [handoff](CVPixelBufferRef image, uint64_t, uint64_t pts) {
+            std::lock_guard<std::timed_mutex> guard(handoff->lock);
+            if (handoff->owner) handoff->owner->showFrame(image, pts);
+        }, [](const std::string &value) { blog(LOG_INFO, "[phonecam] %s", value.c_str()); }, shared->channel.get());
+        wifi = shared;
+        wifiWorker = std::thread([shared, report] {
+            // run() reports its own problems; this is the last line of defence (nothing may escape a thread, AUDIT-004).
+            try { shared->server->run(shared->stop); }
+            catch (...) { try { report("Direct Wi-Fi stopped after an unexpected error."); } catch (...) {} }
+            std::lock_guard<std::mutex> guard(shared->doneLock);
+            shared->done = true; shared->doneSignal.notify_all();
         });
     }
-    // wifiLock held.
+    // wifiLock held. Called on OBS's video thread (hide) and from the switch: waits at most half a second for the
+    // Wi-Fi thread. A phone that stopped answering, or a decoder or socket call that never returns, used to hold
+    // OBS's video here without limit.
     void stopWifi() {
-        wifiStop = true;
-        if (wifiWorker.joinable()) wifiWorker.join();
-        wifi.reset();
+        std::shared_ptr<WifiLink> shared = std::move(wifi);
         hidePairingCard();
+        if (!shared) return;
+        shared->stop = true;
+        bool finished;
+        {
+            std::unique_lock<std::mutex> guard(shared->doneLock);
+            finished = shared->doneSignal.wait_for(guard, std::chrono::milliseconds(500), [&] { return shared->done; });
+        }
+        // As for USB: a callback still inside OBS after 2 s keeps this source's memory rather than free it under it.
+        if (shared->lock.try_lock_for(std::chrono::seconds(2))) { shared->owner = nullptr; shared->lock.unlock(); }
+        else leaked = true;
+        if (finished) { if (wifiWorker.joinable()) wifiWorker.join(); return; }
+        const char *step = shared->server->stuckLongerThan(0);
+        blog(LOG_INFO, "[phonecam] The Wi-Fi thread finishes in the background (%s).", step ? step : "ending the Wi-Fi session");
+        phonecam::keepLoaded();
+        if (wifiWorker.joinable()) wifiWorker.detach();  // libobs never unloads plugins, so its code stays loaded
     }
     void setKeepLive(bool keep) {
         keepLive = keep;
@@ -243,7 +281,7 @@ struct Source {
             setStatus("Pairing window closed. Click Pair a phone over Wi-Fi to try again.", true);
         std::unique_lock<std::mutex> guard(wifiLock, std::try_to_lock);
         if (!guard || !wifi) return;
-        const char *stuck = wifi->stuckLongerThan(10000);
+        const char *stuck = wifi->server->stuckLongerThan(10000);
         if (stuck && !wifiWarned) { wifiWarned = true; blog(LOG_WARNING, "[phonecam] Wi-Fi server: no progress for 10 s while %s.", stuck); }
         if (!stuck && wifiWarned) { wifiWarned = false; blog(LOG_INFO, "[phonecam] Wi-Fi server: working again."); }
     }
@@ -270,6 +308,7 @@ void update(void *value, obs_data_t *settings) {
     }
     self->setWifiWanted(obs_data_get_bool(settings, "wifi_direct"));
     self->setKeepLive(obs_data_get_bool(settings, "keep_live"));
+    applyRecordingOptions(self->phone, settings);
 }
 void *create(obs_data_t *settings, obs_source_t *source) {
     obs_source_set_async_unbuffered(source, true);
@@ -278,7 +317,10 @@ void *create(obs_data_t *settings, obs_source_t *source) {
     update(self, settings);
     return self;
 }
-void defaults(obs_data_t *settings) { obs_data_set_default_bool(settings, "fit_canvas", true); obs_data_set_default_bool(settings, "wifi_direct", true); }
+void defaults(obs_data_t *settings) {
+    obs_data_set_default_bool(settings, "fit_canvas", true); obs_data_set_default_bool(settings, "wifi_direct", true);
+    recordingDefaults(settings);
+}
 void destroy(void *value) {
     auto *self = static_cast<Source *>(value);
     self->end();
@@ -307,7 +349,7 @@ obs_properties_t *properties(void *value) {
         {
             // Never wait here: OBS calls properties() synchronously from our own callbacks (18 Nov Mac deadlock).
             std::unique_lock<std::mutex> guard(self->wifiLock, std::try_to_lock);
-            try { if (guard && self->wifi) summary = self->wifi->summary(); } catch (...) {}
+            try { if (guard && self->wifi) summary = self->wifi->server->summary(); } catch (...) {}
         }
         if (!summary.empty()) obs_properties_add_text(connection, "wifi_summary", summary.c_str(), OBS_TEXT_INFO);
     }
@@ -329,7 +371,7 @@ obs_properties_t *properties(void *value) {
         try {
             {
                 std::lock_guard<std::mutex> guard(self->wifiLock);
-                if (self->wifi) self->wifi->forget(); else phonecam::wifi::Server::forgetAll();
+                if (self->wifi) self->wifi->server->forget(); else phonecam::wifi::Server::forgetAll();
             }
             self->setStatus("Forgot all paired phones. Pair again to use Wi-Fi.");
         }
@@ -349,6 +391,7 @@ obs_properties_t *properties(void *value) {
     obs_property_set_long_description(obs_properties_add_bool(picture, "keep_live", "Keep the phone live while this source is hidden"),
         "Normally, hiding this source stops the phone and you tap the record button again.\nTick this to keep it sending while hidden, so switching back is instant.\nThe phone gets warmer and uses more battery.");
     obs_properties_add_group(p, "picture", "Picture", OBS_GROUP_NORMAL, picture);
+    addRecordingOptions(p);
 
     obs_properties_t *advanced = obs_properties_create();
     obs_properties_add_text(advanced, "adb_path", "adb path (found automatically)", OBS_TEXT_DEFAULT);
@@ -370,6 +413,7 @@ obs_properties_t *properties(void *value) {
 }
 }
 MODULE_EXPORT bool obs_module_load(void) {
+    logObsVersion();
     obs_source_info info{};
     // The id stays stable so existing scenes keep their source.
     info.id = "phonecam_usb_v1"; info.type = OBS_SOURCE_TYPE_INPUT;

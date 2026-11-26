@@ -4,7 +4,7 @@ This is a research implementation, not a completed feasibility gate. On 6 Novemb
 
 ## Build and connect
 
-Reference environment: Apple M1, macOS 26.6.2, OBS **33.0.1** (initially 33.0.0; both pinned header sets supported), Vivo V2437 / Android 16. Android API minimum remains 29. Other phones and profiles are unverified. Native builds currently require Apple Silicon, Apple command-line tools and OBS at `/Applications/OBS.app`; full Xcode and CMake are unnecessary. Python 3.10+ and ADB must be on PATH. These are developer-installed research builds, not a clean-Mac alpha installer.
+Reference environment: Apple M1, macOS 26.6.2, OBS **33.0.1** (initially 33.0.0, now 33.0.2; the plugin builds against the pinned 33.0.1 SDK and loads in OBS 33.0 and newer), Vivo V2437 / Android 16. Android API minimum remains 29. Other phones and profiles are unverified. Native builds currently require Apple Silicon, Apple command-line tools and OBS at `/Applications/OBS.app`; full Xcode and CMake are unnecessary. Python 3.10+ and ADB must be on PATH. For ordinary use, the release has a Mac installer (`.pkg`) and a Windows installer; this page is the developer view. On Windows the plugin finds `adb.exe` in `ANDROID_HOME`, the Android Studio folder, `C:\platform-tools` and PATH (not Downloads), or at the source's **adb path**.
 
 Run from the repository (prefix shell commands with `rtk` on this host):
 
@@ -56,6 +56,7 @@ Configuration is sent once before frames, with header flags/sequence/PTS zero. P
 
 - **Hello:** a 0.6 plugin sends one control message right after the key line: `hello`, then `features=control,audio,screen` (one `key=value` per line, UTF-8, at most 4096 bytes). A 0.6 phone reads it within 500 ms and answers with its own `hello` (`features=…`, `app=<version>`). Older phones never read it; with an older plugin a 0.6 phone gets no hello and sends only types 1 and 2.
 - **Phone → computer control:** `status` with `key=value` lines (`camera`, `cameras`, `quality`, `qualities`, `torch` on/off/none, `mirror`, `route`, `battery`, `charging`, `mic`, `mode=screen`, `warning`) whenever something changes; and `timings` once per session (tap → OBS connected → camera open → first frame), written to the OBS log.
+- **Goodbye (0.7):** when the user stops on purpose (the phone's Stop, its notification or small window, or OBS's Stop), the phone sends `bye` with `reason=stopped` just before closing. OBS can then stop its own recording if the user ticked that option. A lost cable or Wi-Fi sends nothing, so a hiccup never stops a recording.
 - **Computer → phone control:** one command per message: `camera next`, `quality <Best|High|Balanced|Smooth>`, `torch on|off`, `mirror on|off`, `stop`. Unknown commands are ignored. OBS cannot start live: only the phone's record button does.
 - **Audio (type 3):** flags 0; sequence counts audio chunks; PTS is the first sample's time in phone microseconds on the same clock as the video frames. Body: u32 sample rate (8000..96000), u16 channels (1–2), u16 format (1 = signed 16-bit little-endian), then the samples. The phone sends 10 ms chunks at 48 kHz mono, only to a 0.6 plugin and only when the user turned the microphone on. With an older plugin the phone refuses the microphone with a message instead of dropping it silently.
 - **Timing in OBS:** without audio, pictures are stamped with their arrival time (lowest delay). While audio flows, pictures and sound are both stamped with the phone's own time mapped to the computer's clock by one offset: the smallest (arrival − phone time) seen, renewed every 30 s.
@@ -72,7 +73,7 @@ The tests in `tools/test_native.py` synthesize AVC/HEVC packets and exercise rea
 
 ## Troubleshooting
 
-- **Source missing:** verify OBS 33.0.0 or 33.0.1, rerun the native build, open OBS outside safe mode and restart it. The local plugin is ad-hoc signed, not a notarized release.
+- **Source missing:** verify OBS 33.0 or newer, rerun the native build, open OBS outside safe mode and restart it. The local plugin is ad-hoc signed, not a notarized release.
 - **Black preview:** keep the source visible; read the source's Status line; choose settings before Start. Another receiver or OBS source may already own the one session.
 - **Timeout/connection lost:** tap Stop if necessary, unlock/re-authorize the phone, and tap Start again; the source reconnects by itself. No source can bypass the explicit phone action.
 - **Hardware decoder or unsupported-format error:** use a declared SDR 1080p profile. AVC and HEVC must each be qualified separately. No silent software fallback is used.

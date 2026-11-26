@@ -1,0 +1,53 @@
+name: Newest OBS check
+# Every week, before users update: does the plugin, built exactly as for a release (against the OBS SDK baseline in
+# tools/build_native.py), still load in the newest official OBS for Mac and Windows? An early warning only; it never
+# changes or publishes a release, and nothing here proves a real phone and OBS. Downloads are the official release
+# assets of obsproject/obs-studio; the Mac app's signature must be OBS's own (Apple team 2MMRE5MTB8).
+on:
+  schedule:
+    - cron: '17 6 * * 1'  # Mondays 06:17 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the newest OBS (official release, OBS's signature checked)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo obsproject/obs-studio --json tagName -q .tagName)
+          echo "Newest OBS: $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p ~/obs-dmg
+          gh release download "$tag" --repo obsproject/obs-studio --pattern '*macOS-Apple.dmg' --dir ~/obs-dmg
+          dmg=$(ls ~/obs-dmg/*.dmg)
+          hdiutil attach -nobrowse -readonly -mountpoint /Volumes/OBS "$dmg"
+          sudo rm -rf /Applications/OBS.app
+          sudo cp -R /Volumes/OBS/OBS.app /Applications/
+          hdiutil detach /Volumes/OBS
+          codesign --verify --deep --strict -R='anchor apple generic and certificate leaf[subject.OU] = "2MMRE5MTB8"' /Applications/OBS.app
+      # Builds against the SDK baseline, links the installed (newest) libobs and loads the plugin in it.
+      - run: python3 tools/build_native.py
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download the newest OBS for Windows (official release)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo obsproject/obs-studio --json tagName -q .tagName)
+          echo "Newest OBS: $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh release download "$tag" --repo obsproject/obs-studio --pattern '*Windows-x64.zip' --dir "$RUNNER_TEMP/obs-newest"
+      # Builds against the SDK baseline, then loads the same plugin file with the newest OBS's own obs.dll.
+      - shell: bash
+        run: python tools/build_windows.py --also-load-in "$(ls "$RUNNER_TEMP"/obs-newest/*.zip)"

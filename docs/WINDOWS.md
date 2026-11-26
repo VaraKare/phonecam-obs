@@ -1,5 +1,7 @@
 # Windows plugin plan (v0.4)
 
+**Update, 26 November 2026 (v0.7):** the Windows plugin now has an installer (`PhoneCam-OBS-plugin-windows-x64-<version>-setup.exe`, into `%ProgramData%\obs-studio\plugins\phonecam-obs`, removed from Windows Settings → Apps) and passed a real-laptop test on 25 November: USB, direct Wi-Fi, recording options, screen sharing with phone sound, unplug and replug ([results](research/WINDOWS_V07_TEST.md)). The text below is the original v0.4 plan and history. The Windows plugin looks for adb in `ANDROID_HOME`, the Android Studio folder, `C:\platform-tools` and PATH, not in Downloads.
+
 Started 11 November 2026 on `feat/v0.4-windows`. The owner has no Windows PC yet, so every step is built and tested automatically on GitHub's Windows machines (`windows-latest`, x64), and nothing is released until a real Windows PC with OBS and a real phone pass the same checks as the Mac ([phase tracker](PHASES.md)).
 
 The phone app does not change: the Windows plugin speaks the same PCAM v3 messages over the same three connections (USB through adb, Wireless debugging, direct Wi-Fi).

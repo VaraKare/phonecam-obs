@@ -1,10 +1,10 @@
 # PhoneCam OBS
 
-**Use your Android phone as a camera in OBS Studio: free, open source, no account, no watermark.** Over a USB cable or Wi-Fi, up to 4K, with the phone's microphone or screen if you want them. Choose the rear or front camera and the quality on the phone (or from OBS), then add masks, filters and overlays and record or stream in OBS. Works on Mac (Apple Silicon) today; Windows is in preview.
+**Use your Android phone as a camera in OBS Studio: free, open source, no account, no watermark.** Over a USB cable or Wi-Fi, up to 4K, with the phone's microphone or screen if you want them. Choose the rear or front camera and the quality on the phone (or from OBS), then add masks, filters and overlays and record or stream in OBS. Works on Mac (Apple Silicon) and Windows.
 
 **[Download the latest release](https://github.com/VaraKare/phonecam-obs/releases)**: the phone app (APK) and the OBS plugin, then follow [Install](#install-one-time).
 
-> **Preview release.** It has been tested on one phone (vivo V2437, Android 16) and one Mac (Apple M1, OBS 33.0.1). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. Windows support is in testing for the next release; see [which phones and computers work](docs/COMPATIBILITY.md) and the [roadmap](docs/ROADMAP.md).
+> **Preview release.** It has been tested on one phone (vivo V2437, Android 16), one Mac (Apple M1, OBS 33.0.1) and one Windows laptop. Windows 10 and 11 work too, with a Windows installer from 0.7 (tested on one Windows laptop). Other phones are expected to work if they support hardware H.264/H.265 video, but they are not yet verified. See [which phones and computers work](docs/COMPATIBILITY.md) and the [roadmap](docs/ROADMAP.md).
 
 - **Rear or front camera**, up to 4K where your phone allows it, encoded in hardware on the phone and decoded in hardware on the Mac.
 - **Any orientation:** portrait or landscape, and turning the phone during a session keeps the picture upright in OBS.
@@ -12,21 +12,39 @@
 - **Keeps going when you leave the app:** switch apps, go Home or lock the phone and OBS keeps the picture, with a notification that has **Stop**. Going Home shows the phone preview in a small floating window (picture-in-picture). Both can be turned off in the phone's Settings.
 - **Control it from OBS:** switch camera, change quality, torch and mirror from the source's Properties or with OBS hotkeys.
 - **Phone microphone (optional):** off unless you turn it on; its sound arrives in OBS in sync with the picture.
-- **Share the phone screen** instead of the camera, for game and app demos. Android asks your permission every time.
+- **Share the phone screen** instead of the camera, for game and app demos: the **entire screen** or **one app** (Android 14 and newer), with the phone's own sound if you want it. Android asks your permission every time.
+- **OBS can record for you:** stop the OBS recording when you stop on the phone, or start it when the phone goes live (see [Recording options](#recording-options)).
 - **Looks after the phone:** warnings when it gets hot (with one-tap Lower quality) and at 20, 15, 10 and 5 % battery; a notification if live ends while you're in another app.
 - **Private:** the phone saves nothing during live sessions. Wi-Fi video is encrypted and stays on your local network. The microphone is off unless you turn it on. No accounts, no analytics.
 
 ## What you need
 
 - An Android phone with Android 10 or newer, and a USB **data** cable (some cables only charge).
-- A Mac with Apple Silicon (M1 or newer) and [OBS Studio](https://obsproject.com) 33.
-- Android platform-tools (`adb`), a small free tool from Google that lets the Mac talk to the phone over USB.
+- A Mac with Apple Silicon (M1 or newer), **or** a Windows 10 (1809 or newer) or Windows 11 64-bit PC, and [OBS Studio](https://obsproject.com) 33 or newer.
+- Android platform-tools (`adb`), a small free tool from Google that lets the computer talk to the phone over USB.
+
+### The "Allow" questions you will see
+
+Installing and connecting asks for permission several times. Each one is normal, and none of them sends anything to us. PhoneCam collects no data: no accounts, no analytics, no servers on the Internet. Wi-Fi video goes only to the computer you paired, on your local network.
+
+| You see | Where | Why it is safe |
+|---|---|---|
+| **Windows protected your PC** (SmartScreen) | Windows, when you run the installer | The installer is not signed yet, and Windows warns about any program it does not know. The source code is public. Click **More info**, then **Run anyway**. |
+| **Do you want to allow this app to make changes?** | Windows, same installer | The plugin goes into OBS's shared plugins folder, which needs an administrator. It writes only that folder and its entry in **Settings → Apps** (for uninstalling). |
+| **"Apple could not verify..." / unidentified developer** | Mac, when you open the installer | Same reason as SmartScreen. See [Install the OBS plugin](#4-install-the-obs-plugin). |
+| **Allow USB debugging?** | The phone, when you first plug it in | Lets this computer talk to the phone over the cable. Allow only computers you trust, and tick **Always allow from this computer** so it asks once. You can turn it off in Developer options. |
+| **Windows Defender Firewall** (allow OBS) | Windows, the first time you use Wi-Fi | Lets the phone reach OBS on your home network. Tick **Private networks**, not Public. Cable-only use never shows it. |
+| **Allow PhoneCam to take pictures and record video?** | The phone | It is the camera. Video is never saved on the phone. |
+| **Allow PhoneCam to record audio?** | The phone, only if you turn on the microphone or phone sound | Asked only then. Choose **While using the app**. |
+
+<!-- IMAGE: docs/images/windows-smartscreen.png — Windows protected your PC, More info, Run anyway -->
+<!-- IMAGE: docs/images/windows-firewall.png — the firewall prompt with Private networks ticked -->
 
 ## Install (one time)
 
-### 1. Install adb on the Mac
+### 1. Install adb
 
-With [Homebrew](https://brew.sh):
+**Mac.** With [Homebrew](https://brew.sh):
 
 ```sh
 brew install android-platform-tools
@@ -34,11 +52,15 @@ brew install android-platform-tools
 
 Or download [SDK Platform-Tools for Mac](https://developer.android.com/tools/releases/platform-tools) and unzip it into `~/Library/Android/sdk/platform-tools`.
 
+**Windows.** Download [SDK Platform-Tools for Windows](https://developer.android.com/tools/releases/platform-tools) and unzip it. Open the unzipped folder and move the inner `platform-tools` folder to `C:\platform-tools`, so that `C:\platform-tools\adb.exe` exists. The plugin looks there. It does not look in your Downloads folder.
+
+<!-- IMAGE: docs/images/windows-platform-tools.png — C:\platform-tools with adb.exe inside -->
+
 ### 2. Turn on USB debugging on the phone
 
 1. Open **Settings → About phone** and tap **Build number** seven times until it says you're a developer. On some phones it's under **Software information**.
 2. Go back to **Settings → System → Developer options** (location varies by phone maker) and turn on **USB debugging**.
-3. Connect the phone to the Mac. When the phone asks **Allow USB debugging?**, tick **Always allow from this computer** and tap **Allow**.
+3. Connect the phone to the computer. When the phone asks **Allow USB debugging?**, tick **Always allow from this computer** and tap **Allow**.
 
 <!-- IMAGE: docs/images/android-build-number.png — tapping Build number -->
 <!-- IMAGE: docs/images/android-usb-debugging.png — Developer options with USB debugging on -->
@@ -54,16 +76,15 @@ Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on t
 
 ### 4. Install the OBS plugin
 
-1. Quit OBS.
-2. Download `PhoneCam-OBS-plugin-macos-arm64-<version>.zip` from the [latest release](../../releases) and unzip it.
-3. Copy `phonecam-usb.plugin` into `~/Library/Application Support/obs-studio/plugins/` (in Finder: **Go → Go to Folder…**, paste the path; create the `plugins` folder if it's missing).
-4. The preview plugin isn't signed by Apple, so macOS blocks downloaded copies. Open **Terminal** and run:
+Download the file for your computer from the [latest release](../../releases). Quit OBS first.
 
-   ```sh
-   xattr -dr com.apple.quarantine ~/Library/Application\ Support/obs-studio/plugins/phonecam-usb.plugin
-   ```
+**Mac.** Open `PhoneCam-OBS-plugin-macos-arm64-<version>.pkg`. It is not signed by Apple, so macOS blocks it the first time: right-click it and choose **Open**, then **Open** again. Or go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. It replaces an older PhoneCam plugin by itself. Prefer to do it by hand? The `.zip` in the same release holds `phonecam-usb.plugin`, to copy into `~/Library/Application Support/obs-studio/plugins/`.
 
-<!-- IMAGE: docs/images/mac-plugins-folder.png — the plugin in the OBS plugins folder -->
+<!-- IMAGE: docs/images/mac-open-anyway.png — System Settings, Privacy & Security, Open Anyway -->
+
+**Windows.** Run `PhoneCam-OBS-plugin-windows-x64-<version>-setup.exe`. Windows shows **Windows protected your PC**: click **More info**, then **Run anyway**. Allow the administrator prompt. It installs into `%ProgramData%\obs-studio\plugins\phonecam-obs`. Then start OBS.
+
+Next, add the source (see [Use it](#use-it)). If you see no **PhoneCam (phone camera)** in the **+** list, check that OBS was closed during install.
 
 ## Use it
 
@@ -80,9 +101,20 @@ Download `PhoneCam-<version>.apk` from the [latest release](../../releases) on t
 <!-- IMAGE: docs/images/obs-bounding-box.png — Edit Transform, Bounding Box Type -->
 <!-- IMAGE: docs/images/obs-filters-mask.png — adding an Image Mask/Blend filter -->
 
-**On the phone,** the row of icons above the record button is, from the left: camera, screen sharing, quality, mirror and microphone (blue means on). Press and hold any icon to see its name; Settings → **What the buttons do** lists them all. While live, the PhoneCam source's **Properties → Phone** section in OBS can switch camera, change quality, and turn the torch and mirror on or off. OBS → Settings → **Hotkeys** has keys for switching camera, the torch and stopping.
+**On the phone,** the row of icons above the record button is, from the left: camera, screen sharing, quality, mirror and microphone (blue means on). Press and hold any icon to see its name; Settings → **What the buttons do** lists them all. In Screen mode a **speaker icon** appears: it sends the phone's own sound (a game, for example) to OBS. It is off by default. The first time, Android asks for audio permission: choose **While using the app**, because **Only this time** stops working when PhoneCam leaves the screen.
+
+**Sharing the screen:** on Android 14 and newer you can choose **Entire screen** or **One app**. Android asks each time, or choose once in Settings → **While live** and PhoneCam remembers. While live, the PhoneCam source's **Properties → Phone** section in OBS can switch camera, change quality, and turn the torch and mirror on or off. OBS → Settings → **Hotkeys** has keys for switching camera, the torch and stopping.
 
 To use the phone in Zoom, Meet or Teams, add it to an OBS scene and click **Start Virtual Camera** in OBS.
+
+### Recording options
+
+In the PhoneCam source's **Properties → Recording**:
+
+- **Stop OBS recording when the phone stops live** (on by default). Only a deliberate **Stop** on the phone counts. A pulled cable or a lost connection never stops your OBS recording.
+- **Start OBS recording when the phone goes live** (off by default). Recording starts with the phone's first picture.
+
+**Tip: name your recordings.** OBS names files itself. In OBS go to **Settings → Advanced → Recording → Filename Formatting** and type, for example, `PhoneCam %CCYY-%MM-%DD %hh-%mm-%ss`. PhoneCam does not change this setting.
 
 ### Without a cable: direct Wi-Fi (recommended)
 
@@ -146,7 +178,7 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 
 | Status or symptom | What to do |
 |---|---|
-| "adb not found" | Install platform-tools (step 1). If it's somewhere unusual, put its full path in the source's **adb path** field. |
+| "adb not found" | Install platform-tools (step 1). On Windows it must be at `C:\platform-tools\adb.exe`. If it's somewhere unusual, put its full path in the source's **adb path** field. |
 | "Ready. Tap Start live on a phone paired over Wi-Fi, or connect one with a USB data cable" | Normal while waiting. For USB, try another cable or port and check USB debugging is on. For Wi-Fi, pair first, then check the phone and Mac are on the same network. |
 | "Wi-Fi pairing failed" | The address and code change every time you open **Pair device with pairing code**. Open it again and type the new ones. |
 | "Link busy" or drops over Wi-Fi | PhoneCam already lowered the bitrate. For a sharper picture choose **High** instead of Best, move closer to the router, or use the cable. If it says the connection is too slow even at the lowest bitrate, choose **Balanced** or use the cable. |
@@ -154,7 +186,7 @@ Open the OBS source's **Properties**. The **Status** line says what the plugin i
 | "Install the PhoneCam app" | Install the phone app (step 3). |
 | "Ready. Tap Start live on the phone." but the phone says "Waiting for OBS" | Make sure the source is visible (eye icon on) and only one PhoneCam source is in use. |
 | Live stops when you switch apps | Check **Settings → Keep live when you leave the app** is on. Some phones (vivo, Xiaomi, OPPO and others) close background apps anyway: allow PhoneCam to run in the background in Android's battery settings for the app. Swiping PhoneCam away from recent apps always stops live. |
-| OBS says the PhoneCam source "is not assigned to any audio tracks" | A PhoneCam source added before 0.6 had no sound, so OBS gave it no tracks. Open **Edit → Advanced Audio Properties**, tick **Tracks 1–6** for the PhoneCam source, and unmute it in the Audio Mixer. Once is enough. (The next plugin update does this by itself.) |
+| No phone sound in OBS, or OBS says the PhoneCam source "is not assigned to any audio tracks" | Open **Edit → Advanced Audio Properties** and tick **Tracks 1–6** for the PhoneCam source. Then, in the **Audio Mixer**, unmute the PhoneCam source (and your desktop audio if you want it). Check the PhoneCam meter moves when you speak near the phone. Once is enough for each source. |
 | Screen sharing shows only one app | Android 14 and later asks "A single app" or "Entire screen" at the top of its permission prompt; choose **Entire screen**. Some phones hide this choice. |
 | Phone says "Warm" or "Hot" | Choose **High** or **Balanced**, take the case off, or keep the phone out of the sun. |
 | Only the middle of the picture shows in OBS | The source was moved or resized by hand. Open its **Properties** → **Fit to canvas now** (or right-click → **Transform → Reset Transform**, then Start live again). |
@@ -168,18 +200,20 @@ Still stuck? Open an issue with your phone model, Android version, OBS version a
 - **Does it need an account, a subscription or Wi-Fi?** No account and no subscription. A USB cable is enough; Wi-Fi is optional and stays on your local network, encrypted.
 - **Is there a watermark or a time limit?** No. The video is your phone's hardware-encoded H.264 or H.265, up to 4K where the phone offers it.
 - **Can I use it in Zoom, Meet or Teams?** Yes, through OBS's **Start Virtual Camera**.
-- **Can I share my phone's screen to OBS?** Yes (0.6): tap the screen icon, then the record button. Android asks your permission every time.
-- **Does it work on Windows or iPhone?** Windows is in preview (see the releases). iPhone isn't supported.
+- **Can I share my phone's screen to OBS?** Yes: tap the screen icon, then the record button. Android asks your permission every time. You can share the entire screen or one app, with the phone's sound if you turn it on.
+- **Will an OBS update break it?** It shouldn't. The plugin is built for the oldest supported OBS (33.0), and OBS keeps loading plugins built for older versions, so you can keep OBS updated (OBS 33 or newer). Every week an automatic check loads PhoneCam in the newest OBS for Mac and Windows, so a problem is found before most people update. The OBS log says which OBS PhoneCam is running in (`[phonecam] Built for OBS 33.0 and newer; running in OBS …`); if something breaks after an update, open an issue with that log.
+- **Does it work on Windows or iPhone?** Windows works from 0.7 (tested on one Windows laptop, with an installer). iPhone is planned after v1.0.
 - **How is it different from other phone-webcam apps (DroidCam, Iriun, Camo and others)?** PhoneCam is built only for OBS, is fully open source (GPL), has no paid tier, account or analytics, decodes in hardware, and lets OBS control the phone. Check the other apps' current features and terms yourself; they change.
 
 ## Privacy
 
-The phone app has the Camera permission and, for direct Wi-Fi, Android's network permission (which Android calls "Internet"). It has no microphone, location or storage access. Live video goes over the USB cable, or over your local Wi-Fi to the Mac you paired, and is never saved on the phone. PhoneCam never contacts servers on the Internet: no accounts, analytics or update checks. USB is protected by a key that only an authorized USB debugging connection can read; Wi-Fi by pairing and per-session encryption ([details](docs/WIFI.md)). The optional **Research tools** in Settings can save test clips on the phone, but only when you tap Record there.
+The phone app has the Camera permission and, for direct Wi-Fi, Android's network permission (which Android calls "Internet"). It asks for the microphone only if you turn on the microphone or the phone's sound, and has no location or storage access. Live video goes over the USB cable, or over your local Wi-Fi to the Mac you paired, and is never saved on the phone. PhoneCam never contacts servers on the Internet: no accounts, analytics or update checks (the phone stays offline except for your own Wi-Fi to the paired computer). USB is protected by a key that only an authorized USB debugging connection can read; Wi-Fi by pairing and per-session encryption ([details](docs/WIFI.md)). The optional **Research tools** in Settings can save test clips on the phone, but only when you tap Record there.
 
 ## Uninstall
 
 - Phone: long-press PhoneCam → **Uninstall**. Turn off USB debugging if you no longer need it.
-- Mac: quit OBS and delete `~/Library/Application Support/obs-studio/plugins/phonecam-usb.plugin`.
+- Mac: quit OBS and delete `~/Library/Application Support/obs-studio/plugins/phonecam-usb.plugin` (the `.pkg` puts it there).
+- Windows: quit OBS, then open **Settings → Apps**, find **PhoneCam OBS plugin** and click **Uninstall**.
 
 ## Project
 

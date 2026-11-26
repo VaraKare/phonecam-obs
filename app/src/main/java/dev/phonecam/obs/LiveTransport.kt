@@ -225,6 +225,18 @@ class LiveTransport(private val token: String, private val connected: (String) -
             controls.addLast(bytes); signal.notifyAll()
         }
     }
+    /**
+     * The user stopped on purpose (the phone's Stop, the notification, OBS's button): tell a 0.6+ plugin before the
+     * connection closes, so OBS can stop its recording if the user asked for that. A lost cable never says goodbye.
+     * Waits at most [timeoutMs] for the message to go out.
+     */
+    fun goodbye(timeoutMs: Long = 300) {
+        if (!talks || closed) return
+        sendControl("bye\nreason=stopped\n")
+        val until = SystemClock.elapsedRealtime() + timeoutMs
+        synchronized(signal) { while (!closed && controls.isNotEmpty() && SystemClock.elapsedRealtime() < until) signal.wait(20) }
+        if (!closed) Thread.sleep(minOf(50L, maxOf(0L, until - SystemClock.elapsedRealtime())))  // the last write leaves the queue first
+    }
     /** 16-bit PCM from the phone microphone ([body] already has the 8-byte audio header); only for 0.6 plugins. */
     fun offerAudio(body: ByteArray, ptsUs: Long) {
         if (!talks) return

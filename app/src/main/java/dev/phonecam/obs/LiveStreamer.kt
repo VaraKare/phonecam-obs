@@ -45,7 +45,9 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                    /** Send the phone microphone too (0.6 plugins only; off unless the user turned it on). */
                    microphone: Boolean = false,
                    /** Screen sharing (0.6): the user's consent for this session; the camera is not used. */
-                   private val screen: android.media.projection.MediaProjection? = null) {
+                   private val screen: android.media.projection.MediaProjection? = null,
+                   /** Screen sharing (0.7): send the phone's own sound too. */
+                   phoneSound: Boolean = false) {
     private var virtual: android.hardware.display.VirtualDisplay? = null
     /** Screen sharing: the screen changed shape (turned); the encoder restarts at the new size on the same connection. */
     fun resizeScreen(width: Int, height: Int) {
@@ -67,15 +69,25 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
     private var audio: AudioSender? = null
     /** The camera stamps frames with elapsedRealtime (boot time) rather than the monotonic clock. */
     private var boottime = false
+    /** Screen sharing only (0.7): the phone's own sound, off unless the user turns it on. */
+    @Volatile private var phoneSoundWanted = phoneSound
     /** Turns the microphone on or off during live. */
     fun setMicrophone(on: Boolean) { handler.post { micWanted = on; if (connectedAt > 0) applyMicrophone() } }
+    /** Turns the phone's own sound on or off while screen sharing. */
+    fun setPhoneSound(on: Boolean) { handler.post { phoneSoundWanted = on; if (connectedAt > 0) applyMicrophone() } }
+    private var audioMic = false
+    private var audioPhone = false
     private fun applyMicrophone() {
         if (finished) return
-        if (micWanted && audio == null) {
-            // Never drop sound silently: an older plugin can't take it, so say so (AGENTS.md).
-            if (!transport.talks) { finish("The PhoneCam plugin in OBS is older than this app and can't take the phone microphone. Update the plugin, or turn the microphone off."); return }
-            audio = AudioSender(boottime, { body, pts -> transport.offerAudio(body, pts) }, { reason -> handler.post { finish(reason) } }).also { it.start() }
-        } else if (!micWanted) { audio?.stop(); audio = null }
+        val mic = micWanted; val phone = phoneSoundWanted && screen != null
+        if (audio != null && mic == audioMic && phone == audioPhone) return
+        audio?.stop(); audio = null
+        if (!mic && !phone) return
+        // Never drop sound silently: an older plugin can't take it, so say so (AGENTS.md).
+        if (!transport.talks) { finish("The PhoneCam plugin in OBS is older than this app and can't take sound from the phone. Update the plugin, or turn the sound off."); return }
+        audioMic = mic; audioPhone = phone
+        audio = AudioSender(boottime, mic, if (phone) screen else null, { body, pts -> transport.offerAudio(body, pts) },
+            { reason -> handler.post { finish(reason) } }).also { it.start() }
     }
     @Volatile private var rotation = initialRotation
     @Volatile private var controls = initialControls
@@ -244,6 +256,9 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                 setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
                 // A still screen sends no new pictures; repeating the last one keeps OBS fed (and the stall check quiet).
                 if (screen != null) setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
+                // The screen draws at up to 120 Hz on some phones: without a cap the encoder sent ~53 fps, the queue
+                // overflowed (262 frames dropped in 32 s) and delay built up (22 Nov). OBS gets the profile's 30 fps.
+                if (screen != null) setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, profile.fps.toFloat())
             }
             encoder.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(c: MediaCodec, index: Int) = Unit
@@ -282,7 +297,8 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
                             if (sequence == 1L) {
                                 handler.post(status)
                                 val now = SystemClock.elapsedRealtime()
-                                transport.sendControl("timings\ntap to OBS connected ${connectedAt - tappedAt} ms, camera open ${cameraAt - tappedAt} ms, " +
+                                transport.sendControl("timings\ntap to OBS connected ${connectedAt - tappedAt} ms, " +
+                                    (if (cameraAt > 0) "camera open ${cameraAt - tappedAt} ms, " else "screen sharing, ") +
                                     "first frame ${now - tappedAt} ms (over $route)")
                             }
                             // At most one early keyframe a second: keyframes are the largest frames, so asking
@@ -440,6 +456,8 @@ class LiveStreamer(private val context: Context, private var profile: Profile,
         finished = true
         handler.removeCallbacks(startDeadline); handler.removeCallbacks(status)
         audio?.stop(); audio = null
+        // A deliberate stop (not a lost cable or an error): OBS may stop its recording too (0.7 option).
+        if (reason.startsWith("Stopped") || reason.startsWith("PhoneCam was closed")) runCatching { transport.goodbye() }
         transport.close()
         releaseCapture()
         runCatching { virtual?.release() }; virtual = null

@@ -2,7 +2,6 @@ package dev.phonecam.obs
 
 import android.Manifest
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -64,6 +63,8 @@ class MainActivity : Activity() {
         var lastStop: String? = null
         const val SETTINGS_REQUEST = 8
         const val SCREEN_REQUEST = 9
+        const val SCREEN_AUDIO_REQUEST = 10
+        const val CAMERA_AUDIO_REQUEST = 11
     }
     private lateinit var prefs: SharedPreferences
     private lateinit var root: LinearLayout
@@ -129,6 +130,9 @@ class MainActivity : Activity() {
     private lateinit var qualityChip: TextView
     private lateinit var mirrorChip: TextView
     private lateinit var micChip: TextView
+    private lateinit var soundChip: TextView
+    /** Screen sharing (0.7): the phone's own sound too; off unless turned on (it needs Android's audio permission). */
+    private var soundOn: Boolean get() = prefs.getBoolean("screen_sound", false); set(v) { prefs.edit().putBoolean("screen_sound", v).apply() }
     /** Phone microphone to OBS (0.6): off unless turned on; RECORD_AUDIO is asked only then. */
     private var micOn: Boolean get() = prefs.getBoolean("mic", false); set(v) { prefs.edit().putBoolean("mic", v).apply() }
     private var serviceStop: ((String) -> Unit)? = null
@@ -183,6 +187,7 @@ class MainActivity : Activity() {
     private var openingSettings = false
     /** Start after the notification permission prompt closes (the prompt pauses this screen). */
     private var startOnResume = false
+    private var startScreenNext = false
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     /** A small white icon before a chip's words (icons drawn for PhoneCam, like the switch-camera one). */
@@ -251,6 +256,7 @@ class MainActivity : Activity() {
         qualityChip = pill { chooseQuality() }
         mirrorChip = pill { toggleMirror() }
         micChip = pill { toggleMic() }
+        soundChip = pill { togglePhoneSound() }
         cameraModeChip = pill { chooseSource(false) }.apply { iconOnly(R.drawable.ic_videocam, "Camera: send the phone camera") }
         screenModeChip = pill { chooseSource(true) }.apply { iconOnly(R.drawable.ic_screen_share, "Screen: share the phone screen") }
         qualityChip.iconOnly(R.drawable.ic_quality, "Quality")
@@ -265,7 +271,7 @@ class MainActivity : Activity() {
                 gap(cameraModeChip, 0); gap(screenModeChip, 6)
                 addView(View(this@MainActivity).apply { setBackgroundColor(0xFF3A3A3A.toInt()) },
                     LinearLayout.LayoutParams(dp(1), dp(28)).apply { marginStart = dp(10); marginEnd = dp(10) })
-                gap(qualityChip, 0); gap(mirrorChip, 6); gap(micChip, 6)
+                gap(qualityChip, 0); gap(mirrorChip, 6); gap(soundChip, 0); gap(micChip, 6)
             })
         })
         detail = TextView(this).apply { setTextColor(0xFF7A7A7A.toInt()); textSize = 12f; gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) }
@@ -405,6 +411,9 @@ class MainActivity : Activity() {
         cameraModeChip.isEnabled = live == null; screenModeChip.isEnabled = live == null
         qualityChip.visibility = if (screen) View.GONE else View.VISIBLE
         mirrorChip.visibility = if (screen) View.GONE else View.VISIBLE
+        soundChip.visibility = if (screen) View.VISIBLE else View.GONE
+        soundChip.iconOnly(if (soundOn) R.drawable.ic_volume else R.drawable.ic_volume_off, "Phone sound ${if (soundOn) "on" else "off"} (screen sharing)")
+        soundChip.background = rounded(if (soundOn) BLUE else 0xFF1E1E1E.toInt(), 20)
         if (screen) { switchButton.isEnabled = false; switchButton.alpha = 0.4f }
         micChip.iconOnly(if (micOn) R.drawable.ic_mic else R.drawable.ic_mic_off, "Phone microphone ${if (micOn) "on" else "off"}")
         micChip.background = rounded(if (micOn) BLUE else 0xFF1E1E1E.toInt(), 20)
@@ -531,10 +540,7 @@ class MainActivity : Activity() {
 
     private fun startLive() {
         if (!foreground || live != null) return
-        if (micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            message.text = "The microphone is on, but PhoneCam isn't allowed to use it. Tap Mic to allow it, or turn it off."
-            micOn = false; refresh(); return
-        }
+        if (micOn && askAudio(CAMERA_AUDIO_REQUEST)) return
         val profile = selected() ?: run { message.text = "This quality isn't available on this camera."; return }
         if (device == Orientation.UNKNOWN) device = Orientation.fromDisplay(displayDegrees())
         val rotation = Orientation.encodedRotation(profile.sensorOrientation, profile.facing, device)
@@ -593,6 +599,19 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---- Sound permission ----
+
+    /**
+     * Asks for RECORD_AUDIO when it's missing (true: asked; the answer continues the start). It says to pick
+     * "While using the app": Android takes "Only this time" back once PhoneCam leaves the screen.
+     */
+    private fun askAudio(request: Int): Boolean {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return false
+        message.text = "Allow audio, and choose \"While using the app\": \"Only this time\" stops the sound when you leave PhoneCam."
+        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), request)
+        return true
+    }
+
     // ---- Screen sharing (v0.6) ----
 
     private fun chooseSource(screen: Boolean) {
@@ -605,12 +624,37 @@ class MainActivity : Activity() {
     /** Android's own consent, every time (AGENTS.md). */
     private fun askScreen() {
         if (live != null) return
-        if (micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            message.text = "The microphone is on, but PhoneCam isn't allowed to use it. Tap Mic to allow it, or turn it off."
-            micOn = false; refresh(); return
+        // "Only this time" ends when PhoneCam leaves the screen, which screen sharing always does: ask again here
+        // rather than quietly dropping the sound (22 Nov: the phone sent no sound at all).
+        if ((micOn || soundOn) && askAudio(SCREEN_AUDIO_REQUEST)) return
+        // Android 14+ can share one app or the entire screen; PhoneCam asks first (or uses the Settings choice).
+        if (Build.VERSION.SDK_INT >= 34) when (prefs.getString("screen_scope", "ask")) {
+            "entire" -> requestScreen(entire = true)
+            "app" -> requestScreen(entire = false)
+            else -> Sheet(this, "Share what?")
+                .option("Entire screen", "Everything on the phone, as you move between apps", R.drawable.ic_screen_share) { requestScreen(entire = true) }
+                .option("One app", "Only the app you pick next", R.drawable.ic_videocam) { requestScreen(entire = false) }
+                .button("Cancel").show()
+        } else requestScreen(entire = true)  // Android 10–13 always share the entire screen
+    }
+    private fun requestScreen(entire: Boolean) {
+        val manager = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+        val intent = if (Build.VERSION.SDK_INT >= 34) manager.createScreenCaptureIntent(
+            if (entire) android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()
+            else android.media.projection.MediaProjectionConfig.createConfigForUserChoice())
+            else manager.createScreenCaptureIntent()
+        @Suppress("DEPRECATION") startActivityForResult(intent, SCREEN_REQUEST)
+    }
+    /** Phone sound while screen sharing. Android files it under audio recording, so that permission is asked first. */
+    private fun togglePhoneSound() {
+        if (!soundOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            message.text = "Android counts the phone's own sound as recording. Allow audio and choose \"While using the app\"; PhoneCam sends it only to OBS."
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 5); return
         }
-        @Suppress("DEPRECATION") startActivityForResult(
-            getSystemService(android.media.projection.MediaProjectionManager::class.java).createScreenCaptureIntent(), SCREEN_REQUEST)
+        soundOn = !soundOn; live?.setPhoneSound(soundOn)
+        serviceStop?.let { stop -> if (screenLive) LiveService.start(applicationContext, stop, LiveService.Uses(screen = true, microphone = micOn || soundOn)) }
+        if (soundOn && live != null && live?.talks == false) message.text = "The PhoneCam plugin in OBS is older than this app and can't take sound from the phone."
+        refresh()
     }
     /** Android 14 wants the screen-sharing service running before the projection is made, so it starts first. */
     private fun beginScreen(code: Int, data: Intent) {
@@ -620,7 +664,8 @@ class MainActivity : Activity() {
         LiveService.onForeground = { ok -> runOnUiThread { if (ok) createScreenSession(code, data, profile) else message.text = "Android didn't allow screen sharing to start. Try again." } }
         val stop = { reason: String -> live?.stop(reason) ?: LiveService.end(applicationContext) }
         serviceStop = stop
-        if (!LiveService.start(applicationContext, stop, LiveService.Uses(screen = true, microphone = micOn))) {
+        // Android counts the phone's own sound as recording too: it keeps the microphone type in the background.
+        if (!LiveService.start(applicationContext, stop, LiveService.Uses(screen = true, microphone = micOn || soundOn))) {
             LiveService.onForeground = null
             message.text = "Android didn't allow screen sharing to start. Try again."
         }
@@ -634,7 +679,8 @@ class MainActivity : Activity() {
         abilities = ScreenSource.noAbilities; controls = Controls(); sliding = null
         warnings.reset(); lastStatus = ""
         live = LiveStreamer(this, profile, false, 0, ScreenSource.noAbilities, Controls(), { null },
-            onCommand = { command -> if (!destroyed) obeyObs(command) }, microphone = micOn, screen = projection, notify = ::onLiveState)
+            onCommand = { command -> if (!destroyed) obeyObs(command) }, microphone = micOn, screen = projection, phoneSound = soundOn,
+            notify = ::onLiveState)
             .also { it.start() }
         LiveService.lower = null
         scheduleDim()
@@ -673,6 +719,7 @@ class MainActivity : Activity() {
             append("charging=").append(if (charging) "yes" else "no").append('\n')
             warnings.current?.let { append("warning=").append(it).append('\n') }
             append("mic=").append(if (micOn) "on" else "off").append('\n')
+            if (screenLive) append("sound=").append(if (soundOn) "on" else "off").append('\n')
         }
         if (text != lastStatus) { lastStatus = text; session.sendStatus(text) }
     }
@@ -865,13 +912,13 @@ class MainActivity : Activity() {
             hint = "e.g. 000G-40R4-0M30-E209"; isSingleLine = true
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
-        AlertDialog.Builder(this).setTitle("Wi-Fi pairing code")
-            .setMessage("In OBS: PhoneCam source → Properties → Pair a phone over Wi-Fi. Type the 16-character code it shows. The phone and computer must be on the same Wi-Fi.")
-            .setView(FrameLayout(this).apply { setPadding(dp(20), 0, dp(20), 0); addView(input) })
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Pair") { _, _ ->
+        input.setTextColor(Color.WHITE); input.setHintTextColor(0xFF6A6A6A.toInt())
+        Sheet(this, "Wi-Fi pairing code", "In OBS: PhoneCam source → Properties → Pair a phone over Wi-Fi. Type the 16-character code it shows. Same Wi-Fi on both.")
+            .view(FrameLayout(this).apply { setPadding(0, dp(8), 0, dp(4)); addView(input) })
+            .button("Cancel")
+            .button("Pair", primary = true) {
                 val code = WifiCrypto.decodeCode(input.text.toString())
-                if (code == null) { message.text = "The code has 16 letters and numbers, like 000G-40R4-0M30-E209. Check it and try again."; return@setPositiveButton }
+                if (code == null) { message.text = "The code has 16 letters and numbers, like 000G-40R4-0M30-E209. Check it and try again."; return@button }
                 message.text = "Looking for OBS on this Wi-Fi…"
                 Thread {
                     val result = runCatching { WifiConnector(this).pair(code) }
@@ -907,25 +954,20 @@ class MainActivity : Activity() {
         if (options.isEmpty() || switching) return
         val id = cameraId ?: return
         val choices = qualityChoices()
-        val labels = choices.map { q -> q.label.substringBefore(" (") + (Quality.pick(options, id, q, customKey)?.let { "  ·  " + Quality.short(it) } ?: "  ·  not on this camera") }
-        AlertDialog.Builder(this).setTitle("Quality")
-            .setSingleChoiceItems(labels.toTypedArray(), choices.indexOf(choice)) { dialog, index ->
-                dialog.dismiss()
-                if (choices[index] == choice) return@setSingleChoiceItems
-                choice = choices[index]; refresh()
+        val hints = mapOf(Quality.BEST to "Sharpest; needs a fast computer", Quality.HIGH to "Best for most streams",
+            Quality.BALANCED to "For busy Wi-Fi", Quality.SMOOTH to "60 fps for motion (experimental)", Quality.CUSTOM to "Your own size and bitrate")
+        val sheet = Sheet(this, "Quality", if (live != null) "Changing it restarts the picture for about a second." else null)
+        for (q in choices) {
+            val profile = Quality.pick(options, id, q, customKey)
+            sheet.option(q.label.substringBefore(" ("), (profile?.let { Quality.short(it) + " · " } ?: "Not on this camera · ") + hints[q],
+                selected = q == choice, enabled = profile != null) {
+                if (q == choice) return@option
+                choice = q; refresh()
                 // Restart only when the picture would change: on some cameras two qualities give the same settings.
                 if (live != null && selected() != liveProfile) restartLive()
             }
-            .setNeutralButton("What's the difference?") { _, _ ->
-                AlertDialog.Builder(this).setTitle("Qualities").setMessage(
-                    "Best: the sharpest picture this camera offers, often 4K. Needs a fast computer; USB is smoothest.\n\n" +
-                    "High: 1080p at a high bitrate. The best choice for most streams.\n\n" +
-                    "Balanced: 1080p at a lower bitrate, for busy Wi-Fi.\n\n" +
-                    "Smooth: 60 frames a second, for motion. Experimental on some phones.\n\n" +
-                    (if (live != null) "While live, changing quality restarts the picture for about 2 seconds." else "You can change quality while live; the picture restarts for about 2 seconds."))
-                    .setPositiveButton("OK", null).show()
-            }
-            .setNegativeButton("Cancel", null).show()
+        }
+        sheet.button("Cancel").show()
     }
 
     /** Next camera (rear, front, …). While live, the session restarts with it. */
@@ -943,6 +985,7 @@ class MainActivity : Activity() {
     /** Phone microphone on or off, also while live. Turning it on asks for the permission the first time. */
     private fun toggleMic() {
         if (!micOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            message.text = "Allow the microphone and choose \"While using the app\": \"Only this time\" stops it when you leave PhoneCam."
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 3); return
         }
         setMic(!micOn)
@@ -951,7 +994,8 @@ class MainActivity : Activity() {
         micOn = on; live?.setMicrophone(on)
         // Background live needs Android's microphone type to keep hearing when PhoneCam is off screen.
         val stop = serviceStop
-        if (live != null && backgroundLive && stop != null) LiveService.start(applicationContext, stop, LiveService.Uses(screen = false, microphone = on))
+        if (live != null && (backgroundLive || screenLive) && stop != null)
+            LiveService.start(applicationContext, stop, LiveService.Uses(screen = screenLive, microphone = on || (screenLive && soundOn)))
         if (on && live != null && live?.talks == false) message.text = "The PhoneCam plugin in OBS is older than this app and can't take the microphone."
         refresh()
     }
@@ -990,19 +1034,34 @@ class MainActivity : Activity() {
         val id = cameraId ?: return
         val list = options.filter { it.cameraId == id }.sortedWith(compareBy<Profile> { it.limited }.thenByDescending { it.width }.thenByDescending { it.bitrate })
         if (list.isEmpty()) return
-        AlertDialog.Builder(this).setTitle("Custom quality")
-            .setItems(list.map { Quality.describe(it) }.toTypedArray()) { _, index ->
-                val profile = list[index]
-                fun apply() { customKey = Quality.key(profile); choice = Quality.CUSTOM; refresh() }
+        val sheet = Sheet(this, "Custom quality")
+        for (profile in list) {
+            fun apply() { customKey = Quality.key(profile); choice = Quality.CUSTOM; refresh() }
+            sheet.option(Quality.describe(profile), if (profile.limited) "Limited" else null, selected = customKey == Quality.key(profile)) {
                 if (!profile.limited) apply()
-                else AlertDialog.Builder(this).setTitle("Limited profile")
-                    .setMessage("This profile is lower resolution or uses a variable frame rate. Use it only if higher qualities fail on this phone.")
-                    .setNegativeButton("Cancel", null).setPositiveButton("Use it") { _, _ -> apply() }.show()
-            }.show()
+                else Sheet(this, "Limited profile", "Lower resolution or a variable frame rate. Use it only if the usual qualities fail on this phone.")
+                    .button("Cancel").button("Use it", primary = true) { apply() }.show()
+            }
+        }
+        sheet.button("Cancel").show()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == SCREEN_AUDIO_REQUEST || requestCode == CAMERA_AUDIO_REQUEST) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                startOnResume = true; startScreenNext = requestCode == SCREEN_AUDIO_REQUEST
+            } else {
+                micOn = false; soundOn = false; refresh()
+                message.text = "Audio wasn't allowed, so the microphone and phone sound are off. Tap the record button to go live without sound."
+            }
+            return
+        }
+        if (requestCode == 5) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) { soundOn = true; live?.setPhoneSound(true); refresh() }
+            else message.text = "Audio permission wasn't allowed, so the phone's sound stays off. The screen is shared as before."
+            return
+        }
         if (requestCode == 3) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) setMic(true)
             else message.text = "Microphone access wasn't allowed, so the microphone stays off. Video works as before."
@@ -1022,7 +1081,7 @@ class MainActivity : Activity() {
         if (openingSettings) { openingSettings = false; updatePip() }
         if (leftLive) leftLive = false
         if (live != null) { window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); scheduleDim() }
-        if (startOnResume) { startOnResume = false; badge.post { if (foreground) { if (screenMode) askScreen() else startLive() } } }
+        if (startOnResume) { startOnResume = false; badge.post { if (foreground) { if (screenMode || startScreenNext) askScreen() else startLive() } } }
         runCatching { getSystemService(PowerManager::class.java).addThermalStatusListener(heatListener) }  // also reports the current status
         if (orientation.canDetectOrientation()) orientation.enable()
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { if (options.isEmpty()) scan() }

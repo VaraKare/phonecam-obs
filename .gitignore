@@ -16,3 +16,12 @@ benchmarks/results/
 *.jks
 dist/
 keystore.properties
+
+# Raw video and sound stay out of Git (AGENTS.md), wherever they are saved
+*.mp4
+*.mov
+*.mkv
+*.h264
+*.h265
+*.hevc
+*.wav
