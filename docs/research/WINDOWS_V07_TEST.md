@@ -14,14 +14,16 @@ A friend's Windows laptop (borrowed for one session), the vivo V2437 (Android 16
 | 16. Microphone off / on / off | **Pass.** |
 | 17. Screen sharing, entire screen, phone sound (0.7) | **Pass.** |
 | 4. Rotation | **Pass.** |
-| 19. Unplug during live | Live ended on the phone and the **OBS recording kept going**, as designed (a lost cable never stops OBS recording). Coming back after the replug and a tap on record was not reported. Wi-Fi was not paired yet, so no Wi-Fi fallback was possible (the app does not switch to Wi-Fi by itself during live). |
+| 19. Unplug during live | **Pass.** Live ended on the phone and the **OBS recording kept going**, as designed (a lost cable never stops OBS recording). After the replug and a tap on record the picture came back. Wi-Fi was not paired yet, so no Wi-Fi fallback was possible (the app does not switch to Wi-Fi by itself during live). |
 | 20. Hide and show | **Pass.** |
 | 12/13. Leaving the app (notification, picture-in-picture, Stop) | **Pass.** |
 | 21. Quit OBS while live | **Pass** (OBS closed, the phone said live ended). |
-| S4. Nothing left running | **Not clear.** An `adb.exe (32 bit)` was still running. The owner had started adb by hand from PowerShell before OBS (`adb devices`); the plugin reuses an adb server it did not start and never ends it, and ends only its own. Not re-checked with no adb running before OBS. |
+| S4. Nothing left running | **Pass** on the re-check. The first time an `adb.exe (32 bit)` stayed: the owner had started adb by hand from PowerShell before OBS, and the plugin reuses an adb server it did not start and never ends it. After `adb kill-server`, OBS live and quitting OBS left no adb running. |
 | 8. Wi-Fi pairing by QR (laptop on the phone's hotspot) | **Pass.** |
 | 10. Live over direct Wi-Fi | **Pass.** |
 | 11. USB preferred when the cable is in | **Pass.** |
+
+Afterwards the laptop was cleaned up: plugin uninstalled, `C:\platform-tools` deleted, firewall entry removed, the phone's USB debugging authorisations revoked and the laptop forgotten in Paired computers.
 
 Not run: 9 (typed code, expiry), 15 (hotkeys), 18 (warnings), 22 (30-minute run), S2 (antivirus noted), S3 (4K timing), O2.
 
