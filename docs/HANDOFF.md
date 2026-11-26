@@ -4,49 +4,21 @@ Read this first in a new session, then [AGENTS.md](../AGENTS.md) (rules) and [CH
 
 ## State
 
-- **Released:** v0.6.0-alpha.1 (22 Nov; app 2e2a0a6, Mac plugin 7f3293f). Windows users are still on the v0.4.0 plugin (laptop-tested, 0b53c03). Ask the owner before every merge, tag or release.
-- **Working on:** v0.7.0-alpha.1 on `feat/v0.7-clients-install-reliability` (app versionCode 15, plugins 0.7.0-alpha.1). Pushed.
-- **Release candidate files:** `dist/0.7.0-alpha.1/` (outside Git), built by `tools/release.py` from **17512b9**. The owner installed and used these exact files on 23 Nov. Later commits are docs and agents only, so ship these files; don't rebuild unless code changes (a rebuild means retesting).
-- **v0.7 hardware results:** [research/V07_MAC_TESTS.md](research/V07_MAC_TESTS.md). Passed:
-  - .pkg install, faster start, screen choice (entire screen or one app);
-  - screen sharing capped at 30 fps, phone sound;
-  - OBS 33.0.2 with the fixed OBS 33.0 SDK;
-  - both recording options (start with the phone, stop with the phone).
+- **Released:** v0.7.0-alpha.1 on 26 Nov 2026 (pre-release; main merged at cce7f82, tag v0.7.0-alpha.1). Files:
+  - the app and the Mac .pkg and .zip, built from 17512b9;
+  - the Windows installer, from CI run 45231935828 (24f89cb).
 
-  Failed and documented: automatic audio tracks (users tick tracks 1–6). Not run: option unticked / cable pull, clap sync, 2-hour run, 20 replugs, delay measurement, Windows PC, tablet, Intel Mac.
-- **Windows laptop, 25 Nov:** most of [tests/WINDOWS.md](tests/WINDOWS.md) passed with the v0.7 installer over USB and direct Wi-Fi; results and follow-ups (README Windows install with platform-tools at `C:\platform-tools`, the Allow prompts, screenshots) in [research/WINDOWS_V07_TEST.md](research/WINDOWS_V07_TEST.md). The Windows plugin can now ship in v0.7.
-- **New on 23 Nov:**
-  - OBS update safety: one pinned SDK, a log line, and a weekly newest-OBS CI check that runs once on `main`.
-  - Helper agents in `.claude/agents/` (docs-keeper, check-runner, release-gate, privacy-guard).
-  - [CHANGE_MAP.md](CHANGE_MAP.md).
+  These are the exact files tested on the vivo V2437 with the Mac (23 Nov) and with a Windows laptop (25 Nov). Ask the owner before every merge, tag or release.
+- **Not released:** the universal (Intel) Mac plugin ([#3](https://github.com/VaraKare/phonecam-obs/issues/3)).
+- **Open work:** GitHub issues #1–#11. Devices: tablet #1, other brands #2, Intel Mac #3, the remaining Windows checks #4. Later: iPhone #5, several phones #6, Linux #7. The owner's ideas: Wi-Fi when the cable is pulled #8, find adb in Downloads #9, update notices #10 (needs a rule and privacy-policy decision first), version messages in OBS #11.
+- **Owner to do:** screenshots for the README `<!-- IMAGE -->` places (SmartScreen, `C:\platform-tools`, Allow USB debugging, firewall, Mac Open Anyway).
+- **OBS 33.0.3** (the owner's Mac updated itself) loads the 33.0-built plugin: checked in the build's load test on 26 Nov.
 
-## Tomorrow (24 Nov): finish and release v0.7
+## Next: v0.8, in a new session
 
-1. **docs-keeper** on this branch against `main`. Known gaps it should find:
-   - the README install step still describes the old zip and Terminal command (now the .pkg);
-   - the recording options, screen choice, phone sound and "OBS 33 or newer" are missing from the README and controls legend;
-   - the in-app Privacy text needs checking for phone sound.
-
-   Then **privacy-guard** on the same range.
-2. **v0.7 docs:**
-   - `docs/versions/v0.7.md`;
-   - `docs/releases/v0.7.0-alpha.1.md`, which ships the app, the Mac .pkg and zip, and the Windows installer (tested 25 Nov). No universal Mac plugin: no Intel Mac test;
-   - ROADMAP.
-3. **Optional two-minute checks with the owner:**
-   - recording option unticked: phone Stop keeps OBS recording;
-   - cable pulled during live: OBS keeps recording.
-4. **GitHub issues** (owner approved), labelled `needs-device` or `later`, each linking its `docs/tests/` checklist:
-   - Windows PC;
-   - Android tablet;
-   - second Android brand;
-   - Intel Mac;
-   - iPhone (after v1.0);
-   - several phones (last);
-   - Linux (later).
-
-   Done 26 Nov: issues #1–#11 (devices and the owner's feature ideas), linked from COMPATIBILITY.md and docs/tests/.
-5. **check-runner**, then **release-gate**. Then ask the owner to merge, tag and publish the exact files from 17512b9.
-6. After v0.7 is out, a **new session for v0.8**. Patch versions (0.7.1) stay in the same session.
+- Start the new session from this file. Cut `feat/v0.8-…` from `main`. Patch versions (0.7.1) stay on `feat/v0.7-clients-install-reliability`.
+- Pick v0.8's scope with the owner from the issues and the reliability list below. Suggested first: #9 (small, came from a real user test) and #8 (the owner's idea).
+- After any change, run the helper agents: docs-keeper and privacy-guard before committing, check-runner for the checks, release-gate before a release.
 
 ## After v0.7 (owner's order)
 
