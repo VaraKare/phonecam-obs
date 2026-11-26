@@ -247,7 +247,13 @@ esac
             fake, log = self.wireless_fake(directory, 1, "e" * 64)
             process = subprocess.Popen([str(RECEIVER), "--auto", "1", str(fake)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        text=True, env=self.isolated(directory))
-            time.sleep(9)  # two Wi-Fi searches (one every 6 s)
+            # Two Wi-Fi searches (one every 6 s). Wait for them rather than a fixed 9 s: on a slow CI machine
+            # the first search starts late and only one fitted (CI, 25-26 Nov 2026).
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if log.exists() and log.read_text().splitlines().count("mdns services") >= 2: break
+                time.sleep(0.2)
+            time.sleep(0.5)  # anything it would wrongly do after the second search shows up in the log
             process.terminate()
             _, stderr = process.communicate(timeout=20)
             calls = log.read_text().splitlines()

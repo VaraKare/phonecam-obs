@@ -30,7 +30,7 @@ Read this first in a new session, then [AGENTS.md](../AGENTS.md) (rules) and [CH
    Then **privacy-guard** on the same range.
 2. **v0.7 docs:**
    - `docs/versions/v0.7.md`;
-   - `docs/releases/v0.7.0-alpha.1.md`, which ships the app plus the Mac .pkg and zip. No Windows plugin and no universal Mac plugin, because neither has been hardware-tested;
+   - `docs/releases/v0.7.0-alpha.1.md`, which ships the app, the Mac .pkg and zip, and the Windows installer (tested 25 Nov). No universal Mac plugin: no Intel Mac test;
    - ROADMAP.
 3. **Optional two-minute checks with the owner:**
    - recording option unticked: phone Stop keeps OBS recording;

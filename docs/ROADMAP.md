@@ -91,7 +91,7 @@ Built and tested on the vivo V2437 and the Mac on 21–22 Nov ([version guide](v
 ### Later (owner, 21–22 November 2026)
 
 - **Several phones as several cameras:** each phone as its own OBS source, for multi-angle streams. After one phone works well for everyone (the owner: people start with one phone). Builds on the one-source rule (AUDIT-011).
-- Done in 0.7: screen sharing with a choice of entire screen or one app, the phone's own sound, the Windows installer, the Mac installer package (unsigned) and a universal plugin built for Intel Macs (Intel not yet tested on a real Mac).
+- Done in 0.7: screen sharing with a choice of entire screen or one app, the phone's own sound, the Windows installer, the Mac installer package (unsigned) A universal (Intel + Apple Silicon) Mac plugin is built in CI but not released until an Intel Mac test ([#3](https://github.com/VaraKare/phonecam-obs/issues/3)).
 - **Update notices through the OBS plugin** (owner's idea, 25 Nov 2026; needs a decision and a privacy-policy change first): opt-in, at most monthly, only after a privacy-policy change. The phone stays offline. The plugin only, no desktop app.
 - **Version and compatibility messages inside OBS** (for example when OBS is too old or newer than tested).
 - **Continue over Wi-Fi when the cable is pulled** during live, if the computer is paired over Wi-Fi.
